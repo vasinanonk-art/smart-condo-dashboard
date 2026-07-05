@@ -18,6 +18,7 @@ MQTT_STATE_TOPIC = os.getenv("MQTT_STATE_TOPIC", "home/lgtv/state")
 TUYA_DEVICES_FILE = os.getenv("TUYA_DEVICES_FILE", "/root/tuya/devices.json")
 TUYA_SNAPSHOT_FILE = os.getenv("TUYA_SNAPSHOT_FILE", "/root/tuya/snapshot.json")
 LAMPTAN_PRODUCT = "LAMPTAN Jarton Bulb CCT+RGB 11w"
+LAST_SEEN_TTL_SEC = 90
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
@@ -25,7 +26,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.3.3")
+app = FastAPI(title="Smart Condo Dashboard", version="1.3.4")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -41,6 +42,7 @@ state: Dict[str, Any] = {
     "last_cmd_ts": None,
     "last_light_cmd": None,
     "last_light_cmd_ts": None,
+    "light_status_cache": {},
     "available_commands": [
         "power_on", "power_off", "youtube", "netflix", "disney", "prime", "appletv",
         "browser", "livetv", "home", "viu", "hbo", "hdmi1", "hdmi2", "hdmi3", "hdmi4",
@@ -196,11 +198,7 @@ def is_retryable_tuya_error(result: Any) -> bool:
     if not isinstance(result, dict):
         return True
     err = str(result.get("Err") or "")
-    if err in ("901", "904", "914"):
-        return True
-    if result.get("Error"):
-        return True
-    return False
+    return err in ("901", "904", "914") or bool(result.get("Error"))
 
 
 def snapshot_dps_by_id() -> Dict[str, Dict[str, Any]]:
@@ -218,21 +216,41 @@ def snapshot_dps_by_id() -> Dict[str, Dict[str, Any]]:
     return found
 
 
+def status_base(dev: Dict[str, Any]) -> Dict[str, Any]:
+    return {"name": dev.get("name"), "target": slug(dev.get("name", "")), "ip": dev.get("ip")}
+
+
+def cache_online(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
+    now = int(time.time())
+    item["last_seen_ts"] = now
+    item["status"] = "online"
+    state["light_status_cache"][dev["id"]] = item
+    return item
+
+
+def cached_or_offline(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
+    cached = state["light_status_cache"].get(dev["id"])
+    now = int(time.time())
+    if cached and now - int(cached.get("last_seen_ts", 0)) <= LAST_SEEN_TTL_SEC:
+        return {**cached, "online": True, "status": "unstable", "source": "last_seen", "last_error": item}
+    return {**item, "online": False, "status": "offline"}
+
+
 def get_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    base = {"name": dev.get("name"), "target": slug(dev.get("name", "")), "ip": dev.get("ip")}
+    base = status_base(dev)
     try:
         result = tuya_device(dev).status()
         if tuya_ok(result):
-            return {**base, "online": True, "source": "direct", "result": result}
+            return cache_online(dev, {**base, "online": True, "source": "direct", "result": result})
         snap_dps = snapshot.get(dev.get("id"))
         if snap_dps:
-            return {**base, "online": True, "source": "snapshot", "result": {"dps": snap_dps}, "direct_error": result}
-        return {**base, "online": False, "source": "direct", "result": result}
+            return cache_online(dev, {**base, "online": True, "source": "snapshot", "result": {"dps": snap_dps}, "direct_error": result})
+        return cached_or_offline(dev, {**base, "source": "direct", "result": result})
     except Exception as exc:
         snap_dps = snapshot.get(dev.get("id"))
         if snap_dps:
-            return {**base, "online": True, "source": "snapshot", "result": {"dps": snap_dps}, "direct_error": repr(exc)}
-        return {**base, "online": False, "source": "direct", "error": repr(exc)}
+            return cache_online(dev, {**base, "online": True, "source": "snapshot", "result": {"dps": snap_dps}, "direct_error": repr(exc)})
+        return cached_or_offline(dev, {**base, "source": "direct", "error": repr(exc)})
 
 
 def set_dp_once(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
