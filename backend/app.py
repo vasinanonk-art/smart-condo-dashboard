@@ -22,8 +22,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
 FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
+FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.2.0")
+app = FastAPI(title="Smart Condo Dashboard", version="1.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -66,6 +67,10 @@ class LightCommand(BaseModel):
 class SceneCommand(BaseModel):
     target: str = "living_1"
     scene: str
+
+
+class FavoriteRunCommand(BaseModel):
+    favorite: str
 
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
@@ -129,6 +134,10 @@ def load_json(path: str) -> Any:
 
 def load_scenes() -> Dict[str, Dict[str, Any]]:
     return load_json(SCENES_FILE)
+
+
+def load_favorites() -> Dict[str, Dict[str, Any]]:
+    return load_json(FAVORITES_FILE)
 
 
 def load_lights() -> List[Dict[str, Any]]:
@@ -197,18 +206,13 @@ def apply_scene_config(dev: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, An
 def apply_light(dev: Dict[str, Any], body: LightCommand) -> Dict[str, Any]:
     action = body.action.strip().lower()
     if action == "brightness":
-        value = clamp(int(body.value or 500), 10, 1000)
-        return set_dp(dev, 22, value)
+        return set_dp(dev, 22, clamp(int(body.value or 500), 10, 1000))
     if action in ("temperature", "temp", "cct"):
-        value = clamp(int(body.value or 500), 0, 1000)
         set_dp(dev, 21, "white")
-        return set_dp(dev, 23, value)
+        return set_dp(dev, 23, clamp(int(body.value or 500), 0, 1000))
     if action == "rgb":
-        h = clamp(int(body.h or 0), 0, 360)
-        s = clamp(int(body.s if body.s is not None else 1000), 0, 1000)
-        v = clamp(int(body.v if body.v is not None else 1000), 0, 1000)
         set_dp(dev, 21, "colour")
-        return set_dp(dev, 24, hsv_hex(h, s, v))
+        return set_dp(dev, 24, hsv_hex(int(body.h or 0), int(body.s if body.s is not None else 1000), int(body.v if body.v is not None else 1000)))
     if action == "scene":
         return apply_scene(dev, body.scene or "relax")
     raise HTTPException(status_code=400, detail=f"unsupported light action: {action}")
@@ -246,16 +250,17 @@ def get_state():
 
 @app.get("/api/lights")
 def lights():
-    return {
-        "ok": True,
-        "devices": [{"name": d.get("name"), "target": slug(d.get("name", "")), "ip": d.get("ip")} for d in load_lights()],
-    }
+    return {"ok": True, "devices": [{"name": d.get("name"), "target": slug(d.get("name", "")), "ip": d.get("ip")} for d in load_lights()]}
 
 
 @app.get("/api/scenes")
 def scenes():
-    data = load_scenes()
-    return {"ok": True, "scenes": data}
+    return {"ok": True, "scenes": load_scenes()}
+
+
+@app.get("/api/favorites")
+def favorites():
+    return {"ok": True, "favorites": load_favorites()}
 
 
 @app.post("/api/scene")
@@ -264,6 +269,19 @@ def scene_control(body: SceneCommand):
     state["last_light_cmd"] = body.model_dump()
     state["last_light_cmd_ts"] = int(time.time())
     return {"ok": all(r["ok"] for r in results), "target": body.target, "scene": body.scene, "results": results}
+
+
+@app.post("/api/favorite/run")
+def favorite_run(body: FavoriteRunCommand):
+    favorites = load_favorites()
+    key = body.favorite.strip().lower()
+    if key not in favorites:
+        raise HTTPException(status_code=404, detail=f"favorite not found: {key}")
+    fav = favorites[key]
+    results = execute_for_target(fav.get("target", "living_1"), lambda dev: apply_scene(dev, fav["scene"]))
+    state["last_light_cmd"] = {"favorite": key, **fav}
+    state["last_light_cmd_ts"] = int(time.time())
+    return {"ok": all(r["ok"] for r in results), "favorite": key, "config": fav, "results": results}
 
 
 @app.post("/api/light")
