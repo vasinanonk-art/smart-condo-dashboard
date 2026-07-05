@@ -21,16 +21,7 @@
         <div class="row"><label>Target</label><select id="lightTarget"><option value="living_1">Living 1</option><option value="living_2">Living 2</option><option value="bedroom_1">Bedroom 1</option><option value="bedroom_2">Bedroom 2</option><option value="bedroom_3">Bedroom 3</option><option value="all">All</option></select></div>
         <div class="row"><label>Brightness</label><input id="brightness" type="range" min="10" max="1000" value="700" onchange="light('brightness',{value:+this.value})"></div>
         <div class="row"><label>Temperature</label><input id="temp" type="range" min="0" max="1000" value="500" onchange="light('temperature',{value:+this.value})"></div>
-        <div class="buttons">
-          <button onclick="light('rgb',{h:0,s:1000,v:1000})">Red</button>
-          <button onclick="light('rgb',{h:120,s:1000,v:1000})">Green</button>
-          <button onclick="light('rgb',{h:240,s:1000,v:1000})">Blue</button>
-          <button onclick="scene('relax')">Relax</button>
-          <button onclick="scene('reading')">Reading</button>
-          <button onclick="scene('night')">Night</button>
-          <button onclick="scene('movie')">Movie</button>
-          <button onclick="scene('party')">Party</button>
-        </div>
+        <div id="sceneButtons" class="buttons"><button disabled>Loading scenes...</button></div>
         <div class="small">เปิด/ปิดไฟใช้ Sonoff เท่านั้น หน้านี้ปรับสี/ความสว่าง/scene ของหลอด</div>
       </section>
 
@@ -98,9 +89,10 @@ function show(t){const el=document.getElementById('toast');el.textContent=t;el.s
 async function cmd(c){try{await post('/api/command',{cmd:c});show('Sent: '+c);setTimeout(loadState,400)}catch(e){show('ERR: '+e.message)}}
 async function aiCmd(){const v=document.getElementById('ai').value.trim();if(!v)return;try{const r=await post('/api/ai-command',{cmd:v});show('AI → '+r.cmd);setTimeout(loadState,400)}catch(e){show('ERR: '+e.message)}}
 async function light(action,data){const target=document.getElementById('lightTarget').value;try{const r=await post('/api/light',Object.assign({target,action},data));show(r.ok?'Light OK':'Light failed');setTimeout(loadState,400)}catch(e){show('ERR: '+e.message)}}
-async function scene(name){await light('scene',{scene:name})}
+async function scene(name){const target=document.getElementById('lightTarget').value;try{const r=await post('/api/scene',{target,scene:name});show(r.ok?'Scene OK':'Scene failed');setTimeout(loadState,400)}catch(e){show('ERR: '+e.message)}}
+async function loadScenes(){try{const r=await fetch('/api/scenes');const j=await r.json();const box=document.getElementById('sceneButtons');box.innerHTML='';Object.entries(j.scenes||{}).forEach(([key,cfg])=>{const b=document.createElement('button');b.textContent=cfg.label||key;b.onclick=()=>scene(key);box.appendChild(b)})}catch(e){document.getElementById('sceneButtons').innerHTML='<button disabled>Scene load failed</button>'}}
 async function loadState(){try{const r=await fetch('/api/state');const j=await r.json();document.getElementById('mqtt').textContent=j.mqtt_connected?'ONLINE':'OFFLINE';document.getElementById('mqtt').className=j.mqtt_connected?'ok':'bad';document.getElementById('status').textContent=JSON.stringify(j,null,2)}catch(e){document.getElementById('status').textContent=e.message}}
-loadState(); setInterval(loadState,2500);
+loadScenes(); loadState(); setInterval(loadState,2500);
 </script>
 </body>
 </html>
