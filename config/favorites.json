@@ -1,0 +1,6 @@
+{
+  "movie_night": {"label": "Movie Night", "scene": "movie", "target": "living_1"},
+  "reading": {"label": "Reading", "scene": "reading", "target": "living_1"},
+  "sleep": {"label": "Sleep", "scene": "night", "target": "bedroom_1"},
+  "work": {"label": "Work", "scene": "working", "target": "living_1"}
+}
