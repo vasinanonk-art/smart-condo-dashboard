@@ -1,0 +1,19 @@
+[Unit]
+Description=Smart Condo Dashboard
+After=network-online.target mosquitto.service lgtv-mqtt.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/smart_condo_dashboard
+Environment=MQTT_HOST=127.0.0.1
+Environment=MQTT_PORT=1883
+Environment=MQTT_CMD_TOPIC=home/lgtv/cmd
+Environment=MQTT_STATE_TOPIC=home/lgtv/state
+ExecStart=/root/smart_condo_dashboard/venv/bin/uvicorn backend.app:app --host 0.0.0.0 --port 8090
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
