@@ -26,14 +26,8 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.3.4")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="Smart Condo Dashboard", version="1.3.5")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
     "mqtt_connected": False,
@@ -43,11 +37,7 @@ state: Dict[str, Any] = {
     "last_light_cmd": None,
     "last_light_cmd_ts": None,
     "light_status_cache": {},
-    "available_commands": [
-        "power_on", "power_off", "youtube", "netflix", "disney", "prime", "appletv",
-        "browser", "livetv", "home", "viu", "hbo", "hdmi1", "hdmi2", "hdmi3", "hdmi4",
-        "volume_up", "volume_down", "mute", "unmute", "up", "down", "left", "right", "ok", "back", "home_key"
-    ],
+    "available_commands": ["power_on", "power_off", "youtube", "netflix", "disney", "prime", "appletv", "browser", "livetv", "home", "viu", "hbo", "hdmi1", "hdmi2", "hdmi3", "hdmi4", "volume_up", "volume_down", "mute", "unmute", "up", "down", "left", "right", "ok", "back", "home_key"],
 }
 
 mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
@@ -153,14 +143,7 @@ def load_favorites() -> Dict[str, Dict[str, Any]]:
 
 def load_lights() -> List[Dict[str, Any]]:
     devices = load_json(TUYA_DEVICES_FILE)
-    lights = []
-    for dev in devices:
-        if dev.get("product_name") != LAMPTAN_PRODUCT:
-            continue
-        if not dev.get("ip") or not dev.get("id") or not dev.get("key"):
-            continue
-        lights.append(dev)
-    return lights
+    return [d for d in devices if d.get("product_name") == LAMPTAN_PRODUCT and d.get("ip") and d.get("id") and d.get("key")]
 
 
 def select_lights(target: str) -> List[Dict[str, Any]]:
@@ -185,20 +168,13 @@ def tuya_device(dev: Dict[str, Any]) -> tinytuya.Device:
 
 
 def tuya_ok(result: Any) -> bool:
-    if not isinstance(result, dict):
-        return False
-    if result.get("Error") or result.get("Err"):
-        return False
-    if "dps" in result or "data" in result:
-        return True
-    return False
+    return isinstance(result, dict) and not result.get("Error") and not result.get("Err") and ("dps" in result or "data" in result)
 
 
 def is_retryable_tuya_error(result: Any) -> bool:
     if not isinstance(result, dict):
         return True
-    err = str(result.get("Err") or "")
-    return err in ("901", "904", "914") or bool(result.get("Error"))
+    return str(result.get("Err") or "") in ("901", "904", "914") or bool(result.get("Error"))
 
 
 def snapshot_dps_by_id() -> Dict[str, Dict[str, Any]]:
@@ -221,8 +197,7 @@ def status_base(dev: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def cache_online(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
-    now = int(time.time())
-    item["last_seen_ts"] = now
+    item["last_seen_ts"] = int(time.time())
     item["status"] = "online"
     state["light_status_cache"][dev["id"]] = item
     return item
@@ -234,6 +209,13 @@ def cached_or_offline(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, An
     if cached and now - int(cached.get("last_seen_ts", 0)) <= LAST_SEEN_TTL_SEC:
         return {**cached, "online": True, "status": "unstable", "source": "last_seen", "last_error": item}
     return {**item, "online": False, "status": "offline"}
+
+
+def read_dps(dev: Dict[str, Any]) -> Dict[str, Any] | None:
+    result = tuya_device(dev).status()
+    if tuya_ok(result):
+        return result.get("dps") or result.get("data", {}).get("dps")
+    return None
 
 
 def get_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
@@ -258,16 +240,23 @@ def set_dp_once(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
 
 
 def set_dp(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
-    first = set_dp_once(dev, dp, value)
-    if tuya_ok(first):
-        return {**first, "attempt": 1}
-    if not is_retryable_tuya_error(first):
-        raise RuntimeError(first)
-    time.sleep(0.35)
-    second = set_dp_once(dev, dp, value)
-    if tuya_ok(second):
-        return {**second, "attempt": 2, "first_error": first}
-    raise RuntimeError({"first": first, "second": second})
+    errors = []
+    for attempt in (1, 2):
+        result = set_dp_once(dev, dp, value)
+        if tuya_ok(result):
+            return {**result, "attempt": attempt, "previous_errors": errors}
+        errors.append(result)
+        if not is_retryable_tuya_error(result):
+            break
+        time.sleep(0.35)
+    time.sleep(0.45)
+    try:
+        dps = read_dps(dev)
+        if dps and str(dps.get(str(dp)) if str(dp) in dps else dps.get(dp)) == str(value):
+            return {"ok": True, "verified_after_error": True, "dp": dp, "value": value, "dps": dps, "errors": errors}
+    except Exception as exc:
+        errors.append({"verify_error": repr(exc)})
+    raise RuntimeError({"errors": errors})
 
 
 def hsv_hex(h: int, s: int, v: int) -> str:
@@ -294,8 +283,9 @@ def apply_light(dev: Dict[str, Any], body: LightCommand) -> Dict[str, Any]:
         set_dp(dev, 21, "white")
         return set_dp(dev, 23, clamp(int(body.value or 500), 0, 1000))
     if action == "rgb":
+        color = hsv_hex(int(body.h or 0), int(body.s if body.s is not None else 1000), int(body.v if body.v is not None else 1000))
         set_dp(dev, 21, "colour")
-        return set_dp(dev, 24, hsv_hex(int(body.h or 0), int(body.s if body.s is not None else 1000), int(body.v if body.v is not None else 1000)))
+        return set_dp(dev, 24, color)
     if action == "scene":
         return apply_scene(dev, body.scene or "relax")
     raise HTTPException(status_code=400, detail=f"unsupported light action: {action}")
@@ -310,12 +300,10 @@ def apply_scene(dev: Dict[str, Any], scene: str) -> Dict[str, Any]:
 
 
 def execute_for_target(target: str, fn):
-    devices = select_lights(target)
     results = []
-    for dev in devices:
+    for dev in select_lights(target):
         try:
-            result = fn(dev)
-            results.append({"name": dev.get("name"), "ok": True, "result": result})
+            results.append({"name": dev.get("name"), "ok": True, "result": fn(dev)})
         except Exception as exc:
             results.append({"name": dev.get("name"), "ok": False, "error": repr(exc)})
     return results
