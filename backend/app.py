@@ -26,7 +26,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.3.5")
+app = FastAPI(title="Smart Condo Dashboard", version="1.3.6")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -203,12 +203,30 @@ def cache_online(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
     return item
 
 
+def cache_dps(dev: Dict[str, Any], dps: Dict[str, Any], source: str = "command") -> Dict[str, Any]:
+    base = status_base(dev)
+    cached = state["light_status_cache"].get(dev["id"], {})
+    old_dps = ((cached.get("result") or {}).get("dps") or {}).copy()
+    old_dps.update({str(k): v for k, v in dps.items()})
+    return cache_online(dev, {**base, "online": True, "source": source, "result": {"dps": old_dps}})
+
+
 def cached_or_offline(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
     cached = state["light_status_cache"].get(dev["id"])
     now = int(time.time())
     if cached and now - int(cached.get("last_seen_ts", 0)) <= LAST_SEEN_TTL_SEC:
         return {**cached, "online": True, "status": "unstable", "source": "last_seen", "last_error": item}
     return {**item, "online": False, "status": "offline"}
+
+
+def fast_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    cached = state["light_status_cache"].get(dev["id"])
+    if cached:
+        return cached
+    snap_dps = snapshot.get(dev.get("id"))
+    if snap_dps:
+        return cache_online(dev, {**status_base(dev), "online": True, "source": "snapshot", "result": {"dps": snap_dps}})
+    return {**status_base(dev), "online": False, "status": "unknown", "source": "cache", "result": {"dps": {}}}
 
 
 def read_dps(dev: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -239,11 +257,17 @@ def set_dp_once(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
     return tuya_device(dev).set_status(value, dp)
 
 
+def extract_dps(result: Dict[str, Any]) -> Dict[str, Any]:
+    return result.get("dps") or result.get("data", {}).get("dps") or {}
+
+
 def set_dp(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
     errors = []
     for attempt in (1, 2):
         result = set_dp_once(dev, dp, value)
         if tuya_ok(result):
+            dps = extract_dps(result) or {str(dp): value}
+            cache_dps(dev, dps, "command")
             return {**result, "attempt": attempt, "previous_errors": errors}
         errors.append(result)
         if not is_retryable_tuya_error(result):
@@ -253,6 +277,7 @@ def set_dp(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
     try:
         dps = read_dps(dev)
         if dps and str(dps.get(str(dp)) if str(dp) in dps else dps.get(dp)) == str(value):
+            cache_dps(dev, dps, "verify")
             return {"ok": True, "verified_after_error": True, "dp": dp, "value": value, "dps": dps, "errors": errors}
     except Exception as exc:
         errors.append({"verify_error": repr(exc)})
@@ -324,10 +349,16 @@ def lights():
     return {"ok": True, "devices": [{"name": d.get("name"), "target": slug(d.get("name", "")), "ip": d.get("ip")} for d in load_lights()]}
 
 
+@app.get("/api/lights/status-fast")
+def lights_status_fast():
+    snap = snapshot_dps_by_id()
+    return {"ok": True, "source": "fast", "devices": [fast_light_status(dev, snap) for dev in load_lights()]}
+
+
 @app.get("/api/lights/status")
 def lights_status():
     snap = snapshot_dps_by_id()
-    return {"ok": True, "devices": [get_light_status(dev, snap) for dev in load_lights()]}
+    return {"ok": True, "source": "live", "devices": [get_light_status(dev, snap) for dev in load_lights()]}
 
 
 @app.get("/api/scenes")
