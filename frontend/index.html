@@ -18,7 +18,7 @@
     <div class="grid">
       <section class="card" style="grid-column:1/-1">
         <h2>Lamptan Lights</h2>
-        <div class="row"><label>Target</label><select id="lightTarget"><option value="living">Living</option><option value="bedroom">Bedroom</option><option value="all">All</option></select></div>
+        <div class="row"><label>Target</label><select id="lightTarget"><option value="living_1">Living 1</option><option value="living_2">Living 2</option><option value="bedroom_1">Bedroom 1</option><option value="bedroom_2">Bedroom 2</option><option value="bedroom_3">Bedroom 3</option><option value="all">All</option></select></div>
         <div class="row"><label>Brightness</label><input id="brightness" type="range" min="10" max="1000" value="700" onchange="light('brightness',{value:+this.value})"></div>
         <div class="row"><label>Temperature</label><input id="temp" type="range" min="0" max="1000" value="500" onchange="light('temperature',{value:+this.value})"></div>
         <div class="buttons">
@@ -97,7 +97,7 @@ async function post(url, data){const r=await fetch(url,{method:'POST',headers:{'
 function show(t){const el=document.getElementById('toast');el.textContent=t;el.style.display='block';setTimeout(()=>el.style.display='none',1800)}
 async function cmd(c){try{await post('/api/command',{cmd:c});show('Sent: '+c);setTimeout(loadState,400)}catch(e){show('ERR: '+e.message)}}
 async function aiCmd(){const v=document.getElementById('ai').value.trim();if(!v)return;try{const r=await post('/api/ai-command',{cmd:v});show('AI → '+r.cmd);setTimeout(loadState,400)}catch(e){show('ERR: '+e.message)}}
-async function light(action,data){const target=document.getElementById('lightTarget').value;try{const r=await post('/api/light',Object.assign({target,action},data));show(r.ok?'Light OK':'Light partial fail');setTimeout(loadState,400)}catch(e){show('ERR: '+e.message)}}
+async function light(action,data){const target=document.getElementById('lightTarget').value;try{const r=await post('/api/light',Object.assign({target,action},data));show(r.ok?'Light OK':'Light failed');setTimeout(loadState,400)}catch(e){show('ERR: '+e.message)}}
 async function scene(name){await light('scene',{scene:name})}
 async function loadState(){try{const r=await fetch('/api/state');const j=await r.json();document.getElementById('mqtt').textContent=j.mqtt_connected?'ONLINE':'OFFLINE';document.getElementById('mqtt').className=j.mqtt_connected?'ok':'bad';document.getElementById('status').textContent=JSON.stringify(j,null,2)}catch(e){document.getElementById('status').textContent=e.message}}
 loadState(); setInterval(loadState,2500);
