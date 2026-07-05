@@ -24,7 +24,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.3.0")
+app = FastAPI(title="Smart Condo Dashboard", version="1.3.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -179,6 +179,18 @@ def tuya_ok(result: Any) -> bool:
     return False
 
 
+def get_light_status(dev: Dict[str, Any]) -> Dict[str, Any]:
+    d = tuya_device(dev)
+    result = d.status()
+    return {
+        "name": dev.get("name"),
+        "target": slug(dev.get("name", "")),
+        "ip": dev.get("ip"),
+        "online": tuya_ok(result),
+        "result": result,
+    }
+
+
 def set_dp(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
     d = tuya_device(dev)
     result = d.set_status(value, dp)
@@ -251,6 +263,18 @@ def get_state():
 @app.get("/api/lights")
 def lights():
     return {"ok": True, "devices": [{"name": d.get("name"), "target": slug(d.get("name", "")), "ip": d.get("ip")} for d in load_lights()]}
+
+
+@app.get("/api/lights/status")
+def lights_status():
+    devices = load_lights()
+    results = []
+    for dev in devices:
+        try:
+            results.append(get_light_status(dev))
+        except Exception as exc:
+            results.append({"name": dev.get("name"), "target": slug(dev.get("name", "")), "ip": dev.get("ip"), "online": False, "error": repr(exc)})
+    return {"ok": True, "devices": results}
 
 
 @app.get("/api/scenes")
