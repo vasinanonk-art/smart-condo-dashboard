@@ -7,9 +7,10 @@ VENV="$APP_RUN/venv"
 PY="$VENV/bin/python"
 
 install -d "$APP_RUN"
-rm -rf "$APP_RUN/backend" "$APP_RUN/frontend"
+rm -rf "$APP_RUN/backend" "$APP_RUN/frontend" "$APP_RUN/config"
 cp -R "$APP_SRC/backend" "$APP_RUN/backend"
 cp -R "$APP_SRC/frontend" "$APP_RUN/frontend"
+cp -R "$APP_SRC/config" "$APP_RUN/config"
 
 if [ ! -x "$PY" ]; then
     rm -rf "$VENV"
