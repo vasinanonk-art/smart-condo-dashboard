@@ -16,6 +16,7 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_CMD_TOPIC = os.getenv("MQTT_CMD_TOPIC", "home/lgtv/cmd")
 MQTT_STATE_TOPIC = os.getenv("MQTT_STATE_TOPIC", "home/lgtv/state")
 TUYA_DEVICES_FILE = os.getenv("TUYA_DEVICES_FILE", "/root/tuya/devices.json")
+TUYA_SNAPSHOT_FILE = os.getenv("TUYA_SNAPSHOT_FILE", "/root/tuya/snapshot.json")
 LAMPTAN_PRODUCT = "LAMPTAN Jarton Bulb CCT+RGB 11w"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -24,7 +25,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.3.1")
+app = FastAPI(title="Smart Condo Dashboard", version="1.3.2")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -132,6 +133,14 @@ def load_json(path: str) -> Any:
         raise HTTPException(status_code=500, detail=f"cannot load {path}: {exc}")
 
 
+def load_json_optional(path: str) -> Any:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
 def load_scenes() -> Dict[str, Dict[str, Any]]:
     return load_json(SCENES_FILE)
 
@@ -166,6 +175,10 @@ def select_lights(target: str) -> List[Dict[str, Any]]:
 def tuya_device(dev: Dict[str, Any]) -> tinytuya.Device:
     d = tinytuya.Device(dev["id"], dev["ip"], dev["key"])
     d.set_version(float(dev.get("version") or 3.3))
+    try:
+        d.set_socketTimeout(2)
+    except Exception:
+        pass
     return d
 
 
@@ -179,21 +192,40 @@ def tuya_ok(result: Any) -> bool:
     return False
 
 
-def get_light_status(dev: Dict[str, Any]) -> Dict[str, Any]:
-    d = tuya_device(dev)
-    result = d.status()
-    return {
-        "name": dev.get("name"),
-        "target": slug(dev.get("name", "")),
-        "ip": dev.get("ip"),
-        "online": tuya_ok(result),
-        "result": result,
-    }
+def snapshot_dps_by_id() -> Dict[str, Dict[str, Any]]:
+    data = load_json_optional(TUYA_SNAPSHOT_FILE)
+    if not isinstance(data, dict):
+        return {}
+    found: Dict[str, Dict[str, Any]] = {}
+    for key, item in data.items():
+        if not isinstance(item, dict):
+            continue
+        dev_id = item.get("gwId") or item.get("id") or item.get("devId") or key
+        dps = item.get("dps") or item.get("data", {}).get("dps")
+        if dev_id and isinstance(dps, dict):
+            found[str(dev_id)] = dps
+    return found
+
+
+def get_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    base = {"name": dev.get("name"), "target": slug(dev.get("name", "")), "ip": dev.get("ip")}
+    try:
+        result = tuya_device(dev).status()
+        if tuya_ok(result):
+            return {**base, "online": True, "source": "direct", "result": result}
+        snap_dps = snapshot.get(dev.get("id"))
+        if snap_dps:
+            return {**base, "online": True, "source": "snapshot", "result": {"dps": snap_dps}, "direct_error": result}
+        return {**base, "online": False, "source": "direct", "result": result}
+    except Exception as exc:
+        snap_dps = snapshot.get(dev.get("id"))
+        if snap_dps:
+            return {**base, "online": True, "source": "snapshot", "result": {"dps": snap_dps}, "direct_error": repr(exc)}
+        return {**base, "online": False, "source": "direct", "error": repr(exc)}
 
 
 def set_dp(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
-    d = tuya_device(dev)
-    result = d.set_status(value, dp)
+    result = tuya_device(dev).set_status(value, dp)
     if not tuya_ok(result):
         raise RuntimeError(result)
     return result
@@ -267,14 +299,8 @@ def lights():
 
 @app.get("/api/lights/status")
 def lights_status():
-    devices = load_lights()
-    results = []
-    for dev in devices:
-        try:
-            results.append(get_light_status(dev))
-        except Exception as exc:
-            results.append({"name": dev.get("name"), "target": slug(dev.get("name", "")), "ip": dev.get("ip"), "online": False, "error": repr(exc)})
-    return {"ok": True, "devices": results}
+    snap = snapshot_dps_by_id()
+    return {"ok": True, "devices": [get_light_status(dev, snap) for dev in load_lights()]}
 
 
 @app.get("/api/scenes")
