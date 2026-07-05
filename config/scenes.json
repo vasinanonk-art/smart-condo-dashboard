@@ -1,0 +1,16 @@
+{
+  "relax": {"label": "Relax", "mode": "white", "brightness": 350, "temperature": 850},
+  "reading": {"label": "Reading", "mode": "white", "brightness": 900, "temperature": 350},
+  "working": {"label": "Working", "mode": "white", "brightness": 1000, "temperature": 250},
+  "warm": {"label": "Warm", "mode": "white", "brightness": 650, "temperature": 1000},
+  "daylight": {"label": "Daylight", "mode": "white", "brightness": 1000, "temperature": 0},
+  "night": {"label": "Night", "mode": "white", "brightness": 80, "temperature": 1000},
+  "movie": {"label": "Movie", "mode": "colour", "h": 240, "s": 700, "v": 250},
+  "party": {"label": "Party", "mode": "colour", "h": 300, "s": 1000, "v": 1000},
+  "red": {"label": "Red", "mode": "colour", "h": 0, "s": 1000, "v": 1000},
+  "green": {"label": "Green", "mode": "colour", "h": 120, "s": 1000, "v": 1000},
+  "blue": {"label": "Blue", "mode": "colour", "h": 240, "s": 1000, "v": 1000},
+  "purple": {"label": "Purple", "mode": "colour", "h": 280, "s": 900, "v": 850},
+  "cyan": {"label": "Cyan", "mode": "colour", "h": 190, "s": 900, "v": 900},
+  "orange": {"label": "Orange", "mode": "colour", "h": 32, "s": 1000, "v": 1000}
+}
