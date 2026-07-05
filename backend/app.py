@@ -21,7 +21,7 @@ LAMPTAN_PRODUCT = "LAMPTAN Jarton Bulb CCT+RGB 11w"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend"))
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.1.0")
+app = FastAPI(title="Smart Condo Dashboard", version="1.1.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -52,7 +52,7 @@ class Command(BaseModel):
 
 
 class LightCommand(BaseModel):
-    target: str = "living"
+    target: str = "living_1"
     action: str
     value: int | None = None
     h: int | None = None
@@ -134,10 +134,6 @@ def select_lights(target: str) -> List[Dict[str, Any]]:
     lights = load_lights()
     if target in ("all", "lamptan"):
         return lights
-    if target == "living":
-        return [d for d in lights if "living" in d.get("name", "").lower()]
-    if target == "bedroom":
-        return [d for d in lights if "bedroom" in d.get("name", "").lower()]
     selected = [d for d in lights if slug(d.get("name", "")) == target]
     if not selected:
         raise HTTPException(status_code=404, detail=f"light target not found: {target}")
@@ -150,9 +146,22 @@ def tuya_device(dev: Dict[str, Any]) -> tinytuya.Device:
     return d
 
 
+def tuya_ok(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if result.get("Error") or result.get("Err"):
+        return False
+    if "dps" in result or "data" in result:
+        return True
+    return False
+
+
 def set_dp(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
     d = tuya_device(dev)
-    return d.set_status(value, dp)
+    result = d.set_status(value, dp)
+    if not tuya_ok(result):
+        raise RuntimeError(result)
+    return result
 
 
 def hsv_hex(h: int, s: int, v: int) -> str:
