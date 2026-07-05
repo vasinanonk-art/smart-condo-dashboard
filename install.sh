@@ -5,7 +5,6 @@ APP_SRC="/opt/smart-condo-dashboard"
 APP_RUN="/opt/smart-condo-dashboard-run"
 VENV="$APP_RUN/venv"
 PY="$VENV/bin/python"
-PIP="$VENV/bin/pip"
 
 install -d "$APP_RUN"
 rm -rf "$APP_RUN/backend" "$APP_RUN/frontend"
@@ -17,12 +16,12 @@ if [ ! -x "$PY" ]; then
     python3 -m venv "$VENV"
 fi
 
-if [ ! -x "$PIP" ]; then
+if ! "$PY" -m pip --version >/dev/null 2>&1; then
     "$PY" -m ensurepip --upgrade || true
 fi
 
-if [ ! -x "$PIP" ]; then
-    echo "ERROR: pip is missing in $VENV"
+if ! "$PY" -m pip --version >/dev/null 2>&1; then
+    echo "ERROR: pip module is missing in $VENV"
     echo "Install python3-venv/python3-pip on the TinkerBoard, then rerun install.sh"
     exit 1
 fi
