@@ -25,7 +25,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.3.2")
+app = FastAPI(title="Smart Condo Dashboard", version="1.3.3")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -192,6 +192,17 @@ def tuya_ok(result: Any) -> bool:
     return False
 
 
+def is_retryable_tuya_error(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return True
+    err = str(result.get("Err") or "")
+    if err in ("901", "904", "914"):
+        return True
+    if result.get("Error"):
+        return True
+    return False
+
+
 def snapshot_dps_by_id() -> Dict[str, Dict[str, Any]]:
     data = load_json_optional(TUYA_SNAPSHOT_FILE)
     if not isinstance(data, dict):
@@ -224,11 +235,21 @@ def get_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -
         return {**base, "online": False, "source": "direct", "error": repr(exc)}
 
 
+def set_dp_once(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
+    return tuya_device(dev).set_status(value, dp)
+
+
 def set_dp(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
-    result = tuya_device(dev).set_status(value, dp)
-    if not tuya_ok(result):
-        raise RuntimeError(result)
-    return result
+    first = set_dp_once(dev, dp, value)
+    if tuya_ok(first):
+        return {**first, "attempt": 1}
+    if not is_retryable_tuya_error(first):
+        raise RuntimeError(first)
+    time.sleep(0.35)
+    second = set_dp_once(dev, dp, value)
+    if tuya_ok(second):
+        return {**second, "attempt": 2, "first_error": first}
+    raise RuntimeError({"first": first, "second": second})
 
 
 def hsv_hex(h: int, s: int, v: int) -> str:
