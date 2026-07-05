@@ -1,9 +1,10 @@
 import json
 import os
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import paho.mqtt.client as mqtt
+import tinytuya
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -14,11 +15,13 @@ MQTT_HOST = os.getenv("MQTT_HOST", "127.0.0.1")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_CMD_TOPIC = os.getenv("MQTT_CMD_TOPIC", "home/lgtv/cmd")
 MQTT_STATE_TOPIC = os.getenv("MQTT_STATE_TOPIC", "home/lgtv/state")
+TUYA_DEVICES_FILE = os.getenv("TUYA_DEVICES_FILE", "/root/tuya/devices.json")
+LAMPTAN_PRODUCT = "LAMPTAN Jarton Bulb CCT+RGB 11w"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend"))
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.0.0")
+app = FastAPI(title="Smart Condo Dashboard", version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,6 +35,8 @@ state: Dict[str, Any] = {
     "last_state": {},
     "last_cmd": None,
     "last_cmd_ts": None,
+    "last_light_cmd": None,
+    "last_light_cmd_ts": None,
     "available_commands": [
         "power_on", "power_off", "youtube", "netflix", "disney", "prime", "appletv",
         "browser", "livetv", "home", "viu", "hbo", "hdmi1", "hdmi2", "hdmi3", "hdmi4",
@@ -40,6 +45,20 @@ state: Dict[str, Any] = {
 }
 
 mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+
+
+class Command(BaseModel):
+    cmd: str
+
+
+class LightCommand(BaseModel):
+    target: str = "living"
+    action: str
+    value: int | None = None
+    h: int | None = None
+    s: int | None = None
+    v: int | None = None
+    scene: str | None = None
 
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
@@ -85,8 +104,99 @@ def shutdown():
         pass
 
 
-class Command(BaseModel):
-    cmd: str
+def clamp(n: int, low: int, high: int) -> int:
+    return max(low, min(high, n))
+
+
+def slug(name: str) -> str:
+    return name.lower().replace("light ", "").replace(" room ", " ").replace(" ", "_").replace("-", "_")
+
+
+def load_lights() -> List[Dict[str, Any]]:
+    try:
+        with open(TUYA_DEVICES_FILE, encoding="utf-8") as f:
+            devices = json.load(f)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"cannot load {TUYA_DEVICES_FILE}: {exc}")
+
+    lights = []
+    for dev in devices:
+        if dev.get("product_name") != LAMPTAN_PRODUCT:
+            continue
+        if not dev.get("ip") or not dev.get("id") or not dev.get("key"):
+            continue
+        lights.append(dev)
+    return lights
+
+
+def select_lights(target: str) -> List[Dict[str, Any]]:
+    target = target.strip().lower().replace(" ", "_")
+    lights = load_lights()
+    if target in ("all", "lamptan"):
+        return lights
+    if target == "living":
+        return [d for d in lights if "living" in d.get("name", "").lower()]
+    if target == "bedroom":
+        return [d for d in lights if "bedroom" in d.get("name", "").lower()]
+    selected = [d for d in lights if slug(d.get("name", "")) == target]
+    if not selected:
+        raise HTTPException(status_code=404, detail=f"light target not found: {target}")
+    return selected
+
+
+def tuya_device(dev: Dict[str, Any]) -> tinytuya.Device:
+    d = tinytuya.Device(dev["id"], dev["ip"], dev["key"])
+    d.set_version(float(dev.get("version") or 3.3))
+    return d
+
+
+def set_dp(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
+    d = tuya_device(dev)
+    return d.set_status(value, dp)
+
+
+def hsv_hex(h: int, s: int, v: int) -> str:
+    return f"{clamp(h, 0, 360):04x}{clamp(s, 0, 1000):04x}{clamp(v, 0, 1000):04x}"
+
+
+def apply_light(dev: Dict[str, Any], body: LightCommand) -> Dict[str, Any]:
+    action = body.action.strip().lower()
+    if action == "brightness":
+        value = clamp(int(body.value or 500), 10, 1000)
+        return set_dp(dev, 22, value)
+    if action in ("temperature", "temp", "cct"):
+        value = clamp(int(body.value or 500), 0, 1000)
+        set_dp(dev, 21, "white")
+        return set_dp(dev, 23, value)
+    if action == "rgb":
+        h = clamp(int(body.h or 0), 0, 360)
+        s = clamp(int(body.s if body.s is not None else 1000), 0, 1000)
+        v = clamp(int(body.v if body.v is not None else 1000), 0, 1000)
+        set_dp(dev, 21, "colour")
+        return set_dp(dev, 24, hsv_hex(h, s, v))
+    if action == "scene":
+        return apply_scene(dev, body.scene or "relax")
+    raise HTTPException(status_code=400, detail=f"unsupported light action: {action}")
+
+
+def apply_scene(dev: Dict[str, Any], scene: str) -> Dict[str, Any]:
+    scene = scene.strip().lower()
+    presets = {
+        "relax": ("white", 350, 850, None),
+        "reading": ("white", 900, 350, None),
+        "night": ("white", 80, 1000, None),
+        "movie": ("colour", None, None, (240, 700, 250)),
+        "party": ("colour", None, None, (300, 1000, 1000)),
+    }
+    if scene not in presets:
+        raise HTTPException(status_code=400, detail=f"unsupported scene: {scene}")
+    mode, bright, temp, hsv = presets[scene]
+    set_dp(dev, 21, mode)
+    if mode == "white":
+        set_dp(dev, 22, bright)
+        return set_dp(dev, 23, temp)
+    h, s, v = hsv
+    return set_dp(dev, 24, hsv_hex(h, s, v))
 
 
 @app.get("/api/health")
@@ -99,14 +209,35 @@ def get_state():
     return state
 
 
+@app.get("/api/lights")
+def lights():
+    return {
+        "ok": True,
+        "devices": [{"name": d.get("name"), "target": slug(d.get("name", "")), "ip": d.get("ip")} for d in load_lights()],
+    }
+
+
+@app.post("/api/light")
+def light_control(body: LightCommand):
+    devices = select_lights(body.target)
+    results = []
+    for dev in devices:
+        try:
+            result = apply_light(dev, body)
+            results.append({"name": dev.get("name"), "ok": True, "result": result})
+        except Exception as exc:
+            results.append({"name": dev.get("name"), "ok": False, "error": repr(exc)})
+    state["last_light_cmd"] = body.model_dump()
+    state["last_light_cmd_ts"] = int(time.time())
+    ok = all(r["ok"] for r in results)
+    return {"ok": ok, "target": body.target, "action": body.action, "results": results}
+
+
 @app.post("/api/command")
 def send_command(body: Command):
     cmd = body.cmd.strip()
     if not cmd:
         raise HTTPException(status_code=400, detail="empty command")
-    if not state["mqtt_connected"]:
-        # Still try once; Mosquitto may reconnect between polls.
-        pass
     try:
         mqttc.publish(MQTT_CMD_TOPIC, cmd, qos=0, retain=False)
         state["last_cmd"] = cmd
