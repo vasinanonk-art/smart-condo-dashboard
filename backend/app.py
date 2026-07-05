@@ -19,9 +19,11 @@ TUYA_DEVICES_FILE = os.getenv("TUYA_DEVICES_FILE", "/root/tuya/devices.json")
 LAMPTAN_PRODUCT = "LAMPTAN Jarton Bulb CCT+RGB 11w"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend"))
+APP_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
+FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
+SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.1.1")
+app = FastAPI(title="Smart Condo Dashboard", version="1.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -59,6 +61,11 @@ class LightCommand(BaseModel):
     s: int | None = None
     v: int | None = None
     scene: str | None = None
+
+
+class SceneCommand(BaseModel):
+    target: str = "living_1"
+    scene: str
 
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
@@ -112,13 +119,20 @@ def slug(name: str) -> str:
     return name.lower().replace("light ", "").replace(" room ", " ").replace(" ", "_").replace("-", "_")
 
 
-def load_lights() -> List[Dict[str, Any]]:
+def load_json(path: str) -> Any:
     try:
-        with open(TUYA_DEVICES_FILE, encoding="utf-8") as f:
-            devices = json.load(f)
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"cannot load {TUYA_DEVICES_FILE}: {exc}")
+        raise HTTPException(status_code=500, detail=f"cannot load {path}: {exc}")
 
+
+def load_scenes() -> Dict[str, Dict[str, Any]]:
+    return load_json(SCENES_FILE)
+
+
+def load_lights() -> List[Dict[str, Any]]:
+    devices = load_json(TUYA_DEVICES_FILE)
     lights = []
     for dev in devices:
         if dev.get("product_name") != LAMPTAN_PRODUCT:
@@ -168,6 +182,18 @@ def hsv_hex(h: int, s: int, v: int) -> str:
     return f"{clamp(h, 0, 360):04x}{clamp(s, 0, 1000):04x}{clamp(v, 0, 1000):04x}"
 
 
+def apply_scene_config(dev: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
+    mode = cfg.get("mode")
+    if mode == "white":
+        set_dp(dev, 21, "white")
+        set_dp(dev, 22, clamp(int(cfg.get("brightness", 500)), 10, 1000))
+        return set_dp(dev, 23, clamp(int(cfg.get("temperature", 500)), 0, 1000))
+    if mode == "colour":
+        set_dp(dev, 21, "colour")
+        return set_dp(dev, 24, hsv_hex(int(cfg.get("h", 0)), int(cfg.get("s", 1000)), int(cfg.get("v", 1000))))
+    raise HTTPException(status_code=400, detail=f"unsupported scene mode: {mode}")
+
+
 def apply_light(dev: Dict[str, Any], body: LightCommand) -> Dict[str, Any]:
     action = body.action.strip().lower()
     if action == "brightness":
@@ -189,23 +215,23 @@ def apply_light(dev: Dict[str, Any], body: LightCommand) -> Dict[str, Any]:
 
 
 def apply_scene(dev: Dict[str, Any], scene: str) -> Dict[str, Any]:
-    scene = scene.strip().lower()
-    presets = {
-        "relax": ("white", 350, 850, None),
-        "reading": ("white", 900, 350, None),
-        "night": ("white", 80, 1000, None),
-        "movie": ("colour", None, None, (240, 700, 250)),
-        "party": ("colour", None, None, (300, 1000, 1000)),
-    }
-    if scene not in presets:
-        raise HTTPException(status_code=400, detail=f"unsupported scene: {scene}")
-    mode, bright, temp, hsv = presets[scene]
-    set_dp(dev, 21, mode)
-    if mode == "white":
-        set_dp(dev, 22, bright)
-        return set_dp(dev, 23, temp)
-    h, s, v = hsv
-    return set_dp(dev, 24, hsv_hex(h, s, v))
+    scenes = load_scenes()
+    key = scene.strip().lower()
+    if key not in scenes:
+        raise HTTPException(status_code=400, detail=f"unsupported scene: {key}")
+    return apply_scene_config(dev, scenes[key])
+
+
+def execute_for_target(target: str, fn):
+    devices = select_lights(target)
+    results = []
+    for dev in devices:
+        try:
+            result = fn(dev)
+            results.append({"name": dev.get("name"), "ok": True, "result": result})
+        except Exception as exc:
+            results.append({"name": dev.get("name"), "ok": False, "error": repr(exc)})
+    return results
 
 
 @app.get("/api/health")
@@ -226,20 +252,26 @@ def lights():
     }
 
 
-@app.post("/api/light")
-def light_control(body: LightCommand):
-    devices = select_lights(body.target)
-    results = []
-    for dev in devices:
-        try:
-            result = apply_light(dev, body)
-            results.append({"name": dev.get("name"), "ok": True, "result": result})
-        except Exception as exc:
-            results.append({"name": dev.get("name"), "ok": False, "error": repr(exc)})
+@app.get("/api/scenes")
+def scenes():
+    data = load_scenes()
+    return {"ok": True, "scenes": data}
+
+
+@app.post("/api/scene")
+def scene_control(body: SceneCommand):
+    results = execute_for_target(body.target, lambda dev: apply_scene(dev, body.scene))
     state["last_light_cmd"] = body.model_dump()
     state["last_light_cmd_ts"] = int(time.time())
-    ok = all(r["ok"] for r in results)
-    return {"ok": ok, "target": body.target, "action": body.action, "results": results}
+    return {"ok": all(r["ok"] for r in results), "target": body.target, "scene": body.scene, "results": results}
+
+
+@app.post("/api/light")
+def light_control(body: LightCommand):
+    results = execute_for_target(body.target, lambda dev: apply_light(dev, body))
+    state["last_light_cmd"] = body.model_dump()
+    state["last_light_cmd_ts"] = int(time.time())
+    return {"ok": all(r["ok"] for r in results), "target": body.target, "action": body.action, "results": results}
 
 
 @app.post("/api/command")
