@@ -23,6 +23,8 @@ LAST_SEEN_TTL_SEC = 180
 POLL_INTERVAL_SEC = 4
 HISTORY_MAX_POINTS = 2000
 HISTORY_TTL_SEC = 86400
+APPLY_ALL_DEVICE_DELAY_SEC = 0.4
+APPLY_ALL_RETRIES = 3
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
@@ -30,7 +32,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="2.0.0")
+app = FastAPI(title="Smart Condo Dashboard", version="2.0.1")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -180,6 +182,10 @@ def slug(name: str) -> str:
     return name.lower().replace("light ", "").replace(" room ", " ").replace(" ", "_").replace("-", "_")
 
 
+def is_all_target(target: str) -> bool:
+    return target.strip().lower().replace(" ", "_") in ("all", "lamptan")
+
+
 def load_json(path: str) -> Any:
     try:
         with open(path, encoding="utf-8") as f:
@@ -278,7 +284,7 @@ def select_lights(target: str) -> List[Dict[str, Any]]:
 
 
 def select_single_light(target: str) -> Dict[str, Any]:
-    if target.strip().lower() in ("all", "lamptan"):
+    if is_all_target(target):
         raise HTTPException(status_code=400, detail="single light status does not support all")
     return select_lights(target)[0]
 
@@ -407,10 +413,10 @@ def extract_dps(result: Dict[str, Any]) -> Dict[str, Any]:
     return result.get("dps") or result.get("data", {}).get("dps") or {}
 
 
-def set_dp(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
+def set_dp(dev: Dict[str, Any], dp: int, value: Any, attempts: int = 2, retry_delay: float = 0.25) -> Dict[str, Any]:
     cache_dps(dev, {str(dp): value}, "pending")
     errors = []
-    for attempt in (1, 2):
+    for attempt in range(1, attempts + 1):
         result = set_dp_once(dev, dp, value)
         if tuya_ok(result):
             dps = extract_dps(result) or {str(dp): value}
@@ -419,8 +425,9 @@ def set_dp(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
         errors.append(result)
         if not is_retryable_tuya_error(result):
             break
-        time.sleep(0.25)
-    time.sleep(0.25)
+        if attempt < attempts:
+            time.sleep(retry_delay)
+    time.sleep(retry_delay)
     try:
         dps = read_dps(dev)
         if dps and str(dps.get(str(dp)) if str(dp) in dps else dps.get(dp)) == str(value):
@@ -463,6 +470,36 @@ def apply_light(dev: Dict[str, Any], body: LightCommand) -> Dict[str, Any]:
     raise HTTPException(status_code=400, detail=f"unsupported light action: {action}")
 
 
+def apply_light_all_once(dev: Dict[str, Any], body: LightCommand) -> Dict[str, Any]:
+    action = body.action.strip().lower()
+    if action == "brightness":
+        return set_dp(dev, 22, clamp(int(body.value or 500), 10, 1000), attempts=1, retry_delay=APPLY_ALL_DEVICE_DELAY_SEC)
+    if action in ("temperature", "temp", "cct"):
+        set_dp(dev, 21, "white", attempts=1, retry_delay=APPLY_ALL_DEVICE_DELAY_SEC)
+        time.sleep(APPLY_ALL_DEVICE_DELAY_SEC)
+        return set_dp(dev, 23, clamp(int(body.value or 500), 0, 1000), attempts=1, retry_delay=APPLY_ALL_DEVICE_DELAY_SEC)
+    if action == "rgb":
+        color = hsv_hex(int(body.h or 0), int(body.s if body.s is not None else 1000), int(body.v if body.v is not None else 1000))
+        set_dp(dev, 21, "colour", attempts=1, retry_delay=APPLY_ALL_DEVICE_DELAY_SEC)
+        return set_dp(dev, 24, color, attempts=1, retry_delay=APPLY_ALL_DEVICE_DELAY_SEC)
+    if action == "scene":
+        return apply_scene(dev, body.scene or "relax")
+    raise HTTPException(status_code=400, detail=f"unsupported light action: {action}")
+
+
+def apply_light_all_reliable(dev: Dict[str, Any], body: LightCommand) -> Dict[str, Any]:
+    errors = []
+    for attempt in range(1, APPLY_ALL_RETRIES + 1):
+        try:
+            result = apply_light_all_once(dev, body)
+            return {**result, "all_attempt": attempt, "all_previous_errors": errors}
+        except Exception as exc:
+            errors.append(repr(exc))
+            if attempt < APPLY_ALL_RETRIES:
+                time.sleep(APPLY_ALL_DEVICE_DELAY_SEC)
+    raise RuntimeError({"errors": errors})
+
+
 def apply_scene(dev: Dict[str, Any], scene: str) -> Dict[str, Any]:
     scenes = load_scenes()
     key = scene.strip().lower()
@@ -471,13 +508,16 @@ def apply_scene(dev: Dict[str, Any], scene: str) -> Dict[str, Any]:
     return apply_scene_config(dev, scenes[key])
 
 
-def execute_for_target(target: str, fn):
+def execute_for_target(target: str, fn, delay_between_devices: float = 0.0):
     results = []
-    for dev in select_lights(target):
+    devices = select_lights(target)
+    for idx, dev in enumerate(devices):
         try:
             results.append({"name": dev.get("name"), "ok": True, "result": fn(dev)})
         except Exception as exc:
             results.append({"name": dev.get("name"), "ok": False, "error": repr(exc)})
+        if delay_between_devices and idx < len(devices) - 1:
+            time.sleep(delay_between_devices)
     return results
 
 
@@ -570,7 +610,14 @@ def favorite_run(body: FavoriteRunCommand):
 
 @app.post("/api/light")
 def light_control(body: LightCommand):
-    results = execute_for_target(body.target, lambda dev: apply_light(dev, body))
+    if is_all_target(body.target):
+        results = execute_for_target(
+            body.target,
+            lambda dev: apply_light_all_reliable(dev, body),
+            delay_between_devices=APPLY_ALL_DEVICE_DELAY_SEC,
+        )
+    else:
+        results = execute_for_target(body.target, lambda dev: apply_light(dev, body))
     state["last_light_cmd"] = body.model_dump()
     state["last_light_cmd_ts"] = int(time.time())
     return {"ok": all(r["ok"] for r in results), "target": body.target, "action": body.action, "results": results}
