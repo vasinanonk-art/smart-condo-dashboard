@@ -7,10 +7,13 @@ VENV="$APP_RUN/venv"
 PY="$VENV/bin/python"
 
 install -d "$APP_RUN"
-rm -rf "$APP_RUN/backend" "$APP_RUN/frontend" "$APP_RUN/config"
+rm -rf "$APP_RUN/backend" "$APP_RUN/frontend" "$APP_RUN/config" "$APP_RUN/scripts"
 cp -R "$APP_SRC/backend" "$APP_RUN/backend"
 cp -R "$APP_SRC/frontend" "$APP_RUN/frontend"
 cp -R "$APP_SRC/config" "$APP_RUN/config"
+if [ -d "$APP_SRC/scripts" ]; then
+    cp -R "$APP_SRC/scripts" "$APP_RUN/scripts"
+fi
 
 if [ ! -x "$PY" ]; then
     rm -rf "$VENV"
@@ -25,6 +28,10 @@ if ! "$PY" -m pip --version >/dev/null 2>&1; then
     echo "ERROR: pip module is missing in $VENV"
     echo "Install python3-venv/python3-pip on the TinkerBoard, then rerun install.sh"
     exit 1
+fi
+
+if [ -f "$APP_RUN/scripts/patch_frontend_numeric.py" ]; then
+    python3 "$APP_RUN/scripts/patch_frontend_numeric.py"
 fi
 
 "$PY" -m pip install --upgrade pip
