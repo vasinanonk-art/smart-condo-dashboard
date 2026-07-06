@@ -26,7 +26,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.3.8")
+app = FastAPI(title="Smart Condo Dashboard", version="1.3.9")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -140,8 +140,50 @@ def load_favorites() -> Dict[str, Dict[str, Any]]:
     return load_json(FAVORITES_FILE)
 
 
+def snapshot_items() -> List[Dict[str, Any]]:
+    data = load_json_optional(TUYA_SNAPSHOT_FILE)
+    if not isinstance(data, dict):
+        return []
+    items = data.get("devices") if isinstance(data.get("devices"), list) else list(data.values())
+    return [x for x in items if isinstance(x, dict)]
+
+
+def snapshot_meta_by_id() -> Dict[str, Dict[str, Any]]:
+    found: Dict[str, Dict[str, Any]] = {}
+    for item in snapshot_items():
+        dev_id = item.get("gwId") or item.get("id") or item.get("devId")
+        if not dev_id:
+            continue
+        found[str(dev_id)] = item
+    return found
+
+
+def sync_devices_from_snapshot(devices: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    snap = snapshot_meta_by_id()
+    changed = False
+    for dev in devices:
+        item = snap.get(str(dev.get("id")))
+        if not item:
+            continue
+        ip = item.get("ip")
+        ver = item.get("ver") or item.get("version")
+        if ip and dev.get("ip") != ip:
+            dev["ip"] = ip
+            changed = True
+        if ver and dev.get("version") != ver:
+            dev["version"] = ver
+            changed = True
+    if changed:
+        try:
+            with open(TUYA_DEVICES_FILE, "w", encoding="utf-8") as f:
+                json.dump(devices, f, indent=4)
+        except Exception as exc:
+            state["tuya_devices_save_error"] = repr(exc)
+    return devices
+
+
 def load_lights() -> List[Dict[str, Any]]:
-    devices = load_json(TUYA_DEVICES_FILE)
+    devices = sync_devices_from_snapshot(load_json(TUYA_DEVICES_FILE))
     return [d for d in devices if d.get("product_name") == LAMPTAN_PRODUCT and d.get("ip") and d.get("id") and d.get("key")]
 
 
@@ -183,16 +225,8 @@ def is_retryable_tuya_error(result: Any) -> bool:
 
 
 def snapshot_dps_by_id() -> Dict[str, Dict[str, Any]]:
-    data = load_json_optional(TUYA_SNAPSHOT_FILE)
-    if not isinstance(data, dict):
-        return {}
-
-    items = data.get("devices") if isinstance(data.get("devices"), list) else list(data.values())
     found: Dict[str, Dict[str, Any]] = {}
-
-    for item in items:
-        if not isinstance(item, dict):
-            continue
+    for item in snapshot_items():
         dev_id = item.get("gwId") or item.get("id") or item.get("devId")
         raw_dps = item.get("dps") or item.get("data", {}).get("dps") or {}
         dps = raw_dps.get("dps") if isinstance(raw_dps, dict) and isinstance(raw_dps.get("dps"), dict) else raw_dps
