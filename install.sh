@@ -7,16 +7,19 @@ VENV="$APP_RUN/venv"
 PY="$VENV/bin/python"
 
 install -d "$APP_RUN"
-rm -rf "$APP_RUN/backend" "$APP_RUN/frontend" "$APP_RUN/config" "$APP_RUN/scripts"
+
+# Rebuild runtime folders from repository files only. Do not copy or run frontend patch scripts.
+[ ! -d "$APP_RUN/backend" ] || rm -r "$APP_RUN/backend"
+[ ! -d "$APP_RUN/frontend" ] || rm -r "$APP_RUN/frontend"
+[ ! -d "$APP_RUN/config" ] || rm -r "$APP_RUN/config"
+[ ! -d "$APP_RUN/scripts" ] || rm -r "$APP_RUN/scripts"
+
 cp -R "$APP_SRC/backend" "$APP_RUN/backend"
 cp -R "$APP_SRC/frontend" "$APP_RUN/frontend"
 cp -R "$APP_SRC/config" "$APP_RUN/config"
-if [ -d "$APP_SRC/scripts" ]; then
-    cp -R "$APP_SRC/scripts" "$APP_RUN/scripts"
-fi
 
 if [ ! -x "$PY" ]; then
-    rm -rf "$VENV"
+    [ ! -d "$VENV" ] || rm -r "$VENV"
     python3 -m venv "$VENV"
 fi
 
@@ -28,13 +31,6 @@ if ! "$PY" -m pip --version >/dev/null 2>&1; then
     echo "ERROR: pip module is missing in $VENV"
     echo "Install python3-venv/python3-pip on the TinkerBoard, then rerun install.sh"
     exit 1
-fi
-
-if [ -d "$APP_RUN/scripts" ]; then
-    for patch in "$APP_RUN"/scripts/patch_*.py; do
-        [ -f "$patch" ] || continue
-        python3 "$patch"
-    done
 fi
 
 "$PY" -m pip install --upgrade pip
