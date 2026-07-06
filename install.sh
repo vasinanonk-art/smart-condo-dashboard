@@ -30,8 +30,11 @@ if ! "$PY" -m pip --version >/dev/null 2>&1; then
     exit 1
 fi
 
-if [ -f "$APP_RUN/scripts/patch_frontend_numeric.py" ]; then
-    python3 "$APP_RUN/scripts/patch_frontend_numeric.py"
+if [ -d "$APP_RUN/scripts" ]; then
+    for patch in "$APP_RUN"/scripts/patch_*.py; do
+        [ -f "$patch" ] || continue
+        python3 "$patch"
+    done
 fi
 
 "$PY" -m pip install --upgrade pip
