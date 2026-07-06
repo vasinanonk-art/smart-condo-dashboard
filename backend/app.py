@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import time
 from typing import Any, Dict, List
 
@@ -18,7 +19,8 @@ MQTT_STATE_TOPIC = os.getenv("MQTT_STATE_TOPIC", "home/lgtv/state")
 TUYA_DEVICES_FILE = os.getenv("TUYA_DEVICES_FILE", "/root/tuya/devices.json")
 TUYA_SNAPSHOT_FILE = os.getenv("TUYA_SNAPSHOT_FILE", "/root/tuya/snapshot.json")
 LAMPTAN_PRODUCT = "LAMPTAN Jarton Bulb CCT+RGB 11w"
-LAST_SEEN_TTL_SEC = 90
+LAST_SEEN_TTL_SEC = 180
+POLL_INTERVAL_SEC = 4
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
@@ -26,7 +28,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.3.9")
+app = FastAPI(title="Smart Condo Dashboard", version="1.4.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -37,6 +39,8 @@ state: Dict[str, Any] = {
     "last_light_cmd": None,
     "last_light_cmd_ts": None,
     "light_status_cache": {},
+    "poller_started": False,
+    "poller_running": False,
     "available_commands": ["power_on", "power_off", "youtube", "netflix", "disney", "prime", "appletv", "browser", "livetv", "home", "viu", "hbo", "hdmi1", "hdmi2", "hdmi3", "hdmi4", "volume_up", "volume_down", "mute", "unmute", "up", "down", "left", "right", "ok", "back", "home_key"],
 }
 
@@ -91,6 +95,8 @@ mqttc.on_message = on_message
 
 @app.on_event("startup")
 def startup():
+    preload_snapshot_cache()
+    start_light_poller()
     try:
         mqttc.connect(MQTT_HOST, MQTT_PORT, 60)
         mqttc.loop_start()
@@ -101,6 +107,7 @@ def startup():
 
 @app.on_event("shutdown")
 def shutdown():
+    state["poller_running"] = False
     try:
         mqttc.loop_stop()
         mqttc.disconnect()
@@ -152,9 +159,19 @@ def snapshot_meta_by_id() -> Dict[str, Dict[str, Any]]:
     found: Dict[str, Dict[str, Any]] = {}
     for item in snapshot_items():
         dev_id = item.get("gwId") or item.get("id") or item.get("devId")
-        if not dev_id:
-            continue
-        found[str(dev_id)] = item
+        if dev_id:
+            found[str(dev_id)] = item
+    return found
+
+
+def snapshot_dps_by_id() -> Dict[str, Dict[str, Any]]:
+    found: Dict[str, Dict[str, Any]] = {}
+    for item in snapshot_items():
+        dev_id = item.get("gwId") or item.get("id") or item.get("devId")
+        raw_dps = item.get("dps") or item.get("data", {}).get("dps") or {}
+        dps = raw_dps.get("dps") if isinstance(raw_dps, dict) and isinstance(raw_dps.get("dps"), dict) else raw_dps
+        if dev_id and isinstance(dps, dict):
+            found[str(dev_id)] = dps
     return found
 
 
@@ -177,13 +194,18 @@ def sync_devices_from_snapshot(devices: List[Dict[str, Any]]) -> List[Dict[str, 
         try:
             with open(TUYA_DEVICES_FILE, "w", encoding="utf-8") as f:
                 json.dump(devices, f, indent=4)
+            state["tuya_devices_last_sync_ts"] = int(time.time())
         except Exception as exc:
             state["tuya_devices_save_error"] = repr(exc)
     return devices
 
 
+def load_all_devices() -> List[Dict[str, Any]]:
+    return sync_devices_from_snapshot(load_json(TUYA_DEVICES_FILE))
+
+
 def load_lights() -> List[Dict[str, Any]]:
-    devices = sync_devices_from_snapshot(load_json(TUYA_DEVICES_FILE))
+    devices = load_all_devices()
     return [d for d in devices if d.get("product_name") == LAMPTAN_PRODUCT and d.get("ip") and d.get("id") and d.get("key")]
 
 
@@ -206,9 +228,9 @@ def select_single_light(target: str) -> Dict[str, Any]:
 
 def tuya_device(dev: Dict[str, Any]) -> tinytuya.Device:
     d = tinytuya.Device(dev["id"], dev["ip"], dev["key"])
-    d.set_version(float(dev.get("version") or 3.3))
+    d.set_version(float(dev.get("version") or dev.get("ver") or 3.3))
     try:
-        d.set_socketTimeout(2)
+        d.set_socketTimeout(1.5)
     except Exception:
         pass
     return d
@@ -221,18 +243,7 @@ def tuya_ok(result: Any) -> bool:
 def is_retryable_tuya_error(result: Any) -> bool:
     if not isinstance(result, dict):
         return True
-    return str(result.get("Err") or "") in ("901", "904", "914") or bool(result.get("Error"))
-
-
-def snapshot_dps_by_id() -> Dict[str, Dict[str, Any]]:
-    found: Dict[str, Dict[str, Any]] = {}
-    for item in snapshot_items():
-        dev_id = item.get("gwId") or item.get("id") or item.get("devId")
-        raw_dps = item.get("dps") or item.get("data", {}).get("dps") or {}
-        dps = raw_dps.get("dps") if isinstance(raw_dps, dict) and isinstance(raw_dps.get("dps"), dict) else raw_dps
-        if dev_id and isinstance(dps, dict):
-            found[str(dev_id)] = dps
-    return found
+    return str(result.get("Err") or "") in ("901", "904", "905", "914") or bool(result.get("Error"))
 
 
 def status_base(dev: Dict[str, Any]) -> Dict[str, Any]:
@@ -242,6 +253,7 @@ def status_base(dev: Dict[str, Any]) -> Dict[str, Any]:
 def cache_online(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
     item["last_seen_ts"] = int(time.time())
     item["status"] = "online"
+    item["online"] = True
     state["light_status_cache"][dev["id"]] = item
     return item
 
@@ -250,7 +262,7 @@ def cache_dps(dev: Dict[str, Any], dps: Dict[str, Any], source: str = "command")
     cached = state["light_status_cache"].get(dev["id"], {})
     old_dps = ((cached.get("result") or {}).get("dps") or {}).copy()
     old_dps.update({str(k): v for k, v in dps.items()})
-    return cache_online(dev, {**status_base(dev), "online": True, "source": source, "result": {"dps": old_dps}})
+    return cache_online(dev, {**status_base(dev), "source": source, "result": {"dps": old_dps}})
 
 
 def cached_or_offline(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
@@ -267,7 +279,7 @@ def fast_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) 
         return cached
     snap_dps = snapshot.get(dev.get("id"))
     if snap_dps:
-        return cache_online(dev, {**status_base(dev), "online": True, "source": "snapshot", "result": {"dps": snap_dps}})
+        return cache_dps(dev, snap_dps, "snapshot")
     return {**status_base(dev), "online": False, "status": "unknown", "source": "cache", "result": {"dps": {}}}
 
 
@@ -278,21 +290,56 @@ def read_dps(dev: Dict[str, Any]) -> Dict[str, Any] | None:
     return None
 
 
-def get_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+def get_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]] | None = None) -> Dict[str, Any]:
+    snapshot = snapshot or snapshot_dps_by_id()
     base = status_base(dev)
     try:
         result = tuya_device(dev).status()
         if tuya_ok(result):
-            return cache_online(dev, {**base, "online": True, "source": "direct", "result": result})
+            return cache_online(dev, {**base, "source": "direct", "result": result})
         snap_dps = snapshot.get(dev.get("id"))
         if snap_dps:
-            return cache_online(dev, {**base, "online": True, "source": "snapshot", "result": {"dps": snap_dps}, "direct_error": result})
+            return cache_dps(dev, snap_dps, "snapshot")
         return cached_or_offline(dev, {**base, "source": "direct", "result": result})
     except Exception as exc:
         snap_dps = snapshot.get(dev.get("id"))
         if snap_dps:
-            return cache_online(dev, {**base, "online": True, "source": "snapshot", "result": {"dps": snap_dps}, "direct_error": repr(exc)})
+            return cache_dps(dev, snap_dps, "snapshot")
         return cached_or_offline(dev, {**base, "source": "direct", "error": repr(exc)})
+
+
+def preload_snapshot_cache():
+    snap = snapshot_dps_by_id()
+    for dev in load_lights():
+        dps = snap.get(dev.get("id"))
+        if dps:
+            cache_dps(dev, dps, "snapshot")
+    state["snapshot_preload_ts"] = int(time.time())
+
+
+def light_poller_loop():
+    state["poller_running"] = True
+    idx = 0
+    while state.get("poller_running"):
+        try:
+            lights = load_lights()
+            if lights:
+                dev = lights[idx % len(lights)]
+                get_light_status(dev)
+                idx += 1
+                state["poller_last_device"] = dev.get("name")
+                state["poller_last_ts"] = int(time.time())
+        except Exception as exc:
+            state["poller_error"] = repr(exc)
+        time.sleep(POLL_INTERVAL_SEC)
+
+
+def start_light_poller():
+    if state.get("poller_started"):
+        return
+    state["poller_started"] = True
+    t = threading.Thread(target=light_poller_loop, daemon=True)
+    t.start()
 
 
 def set_dp_once(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
@@ -304,6 +351,7 @@ def extract_dps(result: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def set_dp(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
+    cache_dps(dev, {str(dp): value}, "pending")
     errors = []
     for attempt in (1, 2):
         result = set_dp_once(dev, dp, value)
@@ -314,8 +362,8 @@ def set_dp(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
         errors.append(result)
         if not is_retryable_tuya_error(result):
             break
-        time.sleep(0.35)
-    time.sleep(0.45)
+        time.sleep(0.25)
+    time.sleep(0.25)
     try:
         dps = read_dps(dev)
         if dps and str(dps.get(str(dp)) if str(dp) in dps else dps.get(dp)) == str(value):
@@ -414,6 +462,12 @@ def lights_status_fast():
 def lights_status_live():
     snap = snapshot_dps_by_id()
     return {"ok": True, "source": "live", "devices": [get_light_status(dev, snap) for dev in load_lights()]}
+
+
+@app.post("/api/lights/refresh")
+def lights_refresh():
+    snap = snapshot_dps_by_id()
+    return {"ok": True, "source": "manual-live", "devices": [get_light_status(dev, snap) for dev in load_lights()]}
 
 
 @app.get("/api/scenes")
