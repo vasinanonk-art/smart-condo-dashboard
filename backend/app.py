@@ -26,7 +26,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.3.6")
+app = FastAPI(title="Smart Condo Dashboard", version="1.3.7")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -83,7 +83,6 @@ def on_message(client, userdata, msg):
         state["last_state"] = {"raw": payload}
     state["last_state_topic"] = msg.topic
     state["last_state_ts"] = int(time.time())
-
 
 mqttc.on_connect = on_connect
 mqttc.on_disconnect = on_disconnect
@@ -157,6 +156,12 @@ def select_lights(target: str) -> List[Dict[str, Any]]:
     return selected
 
 
+def select_single_light(target: str) -> Dict[str, Any]:
+    if target.strip().lower() in ("all", "lamptan"):
+        raise HTTPException(status_code=400, detail="single light status does not support all")
+    return select_lights(target)[0]
+
+
 def tuya_device(dev: Dict[str, Any]) -> tinytuya.Device:
     d = tinytuya.Device(dev["id"], dev["ip"], dev["key"])
     d.set_version(float(dev.get("version") or 3.3))
@@ -204,11 +209,10 @@ def cache_online(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def cache_dps(dev: Dict[str, Any], dps: Dict[str, Any], source: str = "command") -> Dict[str, Any]:
-    base = status_base(dev)
     cached = state["light_status_cache"].get(dev["id"], {})
     old_dps = ((cached.get("result") or {}).get("dps") or {}).copy()
     old_dps.update({str(k): v for k, v in dps.items()})
-    return cache_online(dev, {**base, "online": True, "source": source, "result": {"dps": old_dps}})
+    return cache_online(dev, {**status_base(dev), "online": True, "source": source, "result": {"dps": old_dps}})
 
 
 def cached_or_offline(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
@@ -347,6 +351,13 @@ def get_state():
 @app.get("/api/lights")
 def lights():
     return {"ok": True, "devices": [{"name": d.get("name"), "target": slug(d.get("name", "")), "ip": d.get("ip")} for d in load_lights()]}
+
+
+@app.get("/api/light/status/{target}")
+def light_status_one(target: str):
+    snap = snapshot_dps_by_id()
+    dev = select_single_light(target)
+    return {"ok": True, "source": "single-fast", "device": fast_light_status(dev, snap)}
 
 
 @app.get("/api/lights/status-fast")
