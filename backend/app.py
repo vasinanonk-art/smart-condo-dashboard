@@ -23,8 +23,9 @@ LAST_SEEN_TTL_SEC = 180
 POLL_INTERVAL_SEC = 4
 HISTORY_MAX_POINTS = 2000
 HISTORY_TTL_SEC = 86400
-APPLY_ALL_DEVICE_DELAY_SEC = 0.4
-APPLY_ALL_RETRIES = 3
+APPLY_ALL_DEVICE_DELAY_SEC = 0.8
+APPLY_ALL_STATUS_RETRY_DELAY_SEC = 1.0
+APPLY_ALL_RETRIES = 4
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
@@ -32,7 +33,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="2.0.1")
+app = FastAPI(title="Smart Condo Dashboard", version="2.0.2")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -328,10 +329,16 @@ def cache_dps(dev: Dict[str, Any], dps: Dict[str, Any], source: str = "command")
     return cache_online(dev, {**status_base(dev), "source": source, "result": {"dps": old_dps}})
 
 
-def cached_or_offline(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
+def fresh_cached_status(dev: Dict[str, Any]) -> Dict[str, Any] | None:
     cached = state["light_status_cache"].get(dev["id"])
-    now = int(time.time())
-    if cached and now - int(cached.get("last_seen_ts", 0)) <= LAST_SEEN_TTL_SEC:
+    if cached and int(time.time()) - int(cached.get("last_seen_ts", 0)) <= LAST_SEEN_TTL_SEC:
+        return cached
+    return None
+
+
+def cached_or_offline(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
+    cached = fresh_cached_status(dev)
+    if cached:
         return {**cached, "online": True, "status": "unstable", "source": "last_seen", "last_error": item}
     return {**item, "online": False, "status": "offline"}
 
@@ -353,6 +360,35 @@ def read_dps(dev: Dict[str, Any]) -> Dict[str, Any] | None:
     return None
 
 
+def read_dps_after_command(dev: Dict[str, Any]) -> Dict[str, Any]:
+    errors = []
+    for attempt in (1, 2):
+        try:
+            dps = read_dps(dev)
+            if dps:
+                cache_dps(dev, dps, "verify")
+                return dps
+            errors.append({"attempt": attempt, "status": "empty_or_error"})
+        except Exception as exc:
+            errors.append({"attempt": attempt, "error": repr(exc)})
+        if attempt == 1:
+            time.sleep(APPLY_ALL_STATUS_RETRY_DELAY_SEC)
+    raise RuntimeError({"verify_status_errors": errors})
+
+
+def dps_matches(dps: Dict[str, Any], dp: int, value: Any) -> bool:
+    actual = dps.get(str(dp)) if str(dp) in dps else dps.get(dp)
+    return str(actual) == str(value)
+
+
+def verify_dp_after_command(dev: Dict[str, Any], dp: int, value: Any, command_result: Dict[str, Any]) -> Dict[str, Any]:
+    dps = read_dps_after_command(dev)
+    if not dps_matches(dps, dp, value):
+        actual = dps.get(str(dp)) if str(dp) in dps else dps.get(dp)
+        raise RuntimeError({"verify_failed": True, "dp": dp, "expected": value, "actual": actual, "dps": dps, "command_result": command_result})
+    return {"ok": True, "verified": True, "dp": dp, "value": value, "dps": dps, "command_result": command_result}
+
+
 def get_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]] | None = None) -> Dict[str, Any]:
     snapshot = snapshot or snapshot_dps_by_id()
     base = status_base(dev)
@@ -360,11 +396,17 @@ def get_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]] | 
         result = tuya_device(dev).status()
         if tuya_ok(result):
             return cache_online(dev, {**base, "source": "direct", "result": result})
+        cached = fresh_cached_status(dev)
+        if cached:
+            return {**cached, "online": True, "status": "unstable", "source": "last_seen", "last_error": {**base, "source": "direct", "result": result}}
         snap_dps = snapshot.get(dev.get("id"))
         if snap_dps:
             return cache_dps(dev, snap_dps, "snapshot")
         return cached_or_offline(dev, {**base, "source": "direct", "result": result})
     except Exception as exc:
+        cached = fresh_cached_status(dev)
+        if cached:
+            return {**cached, "online": True, "status": "unstable", "source": "last_seen", "last_error": {**base, "source": "direct", "error": repr(exc)}}
         snap_dps = snapshot.get(dev.get("id"))
         if snap_dps:
             return cache_dps(dev, snap_dps, "snapshot")
@@ -438,8 +480,22 @@ def set_dp(dev: Dict[str, Any], dp: int, value: Any, attempts: int = 2, retry_de
     raise RuntimeError({"errors": errors})
 
 
+def set_dp_for_apply_all(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
+    cache_dps(dev, {str(dp): value}, "pending")
+    result = set_dp_once(dev, dp, value)
+    if not tuya_ok(result):
+        raise RuntimeError({"command_failed": True, "dp": dp, "value": value, "result": result})
+    dps = extract_dps(result) or {str(dp): value}
+    cache_dps(dev, dps, "command")
+    return result
+
+
 def hsv_hex(h: int, s: int, v: int) -> str:
     return f"{clamp(h, 0, 360):04x}{clamp(s, 0, 1000):04x}{clamp(v, 0, 1000):04x}"
+
+
+def body_value(body: LightCommand, fallback: int) -> int:
+    return int(body.value if body.value is not None else fallback)
 
 
 def apply_scene_config(dev: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -457,10 +513,10 @@ def apply_scene_config(dev: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, An
 def apply_light(dev: Dict[str, Any], body: LightCommand) -> Dict[str, Any]:
     action = body.action.strip().lower()
     if action == "brightness":
-        return set_dp(dev, 22, clamp(int(body.value or 500), 10, 1000))
+        return set_dp(dev, 22, clamp(body_value(body, 500), 10, 1000))
     if action in ("temperature", "temp", "cct"):
         set_dp(dev, 21, "white")
-        return set_dp(dev, 23, clamp(int(body.value or 500), 0, 1000))
+        return set_dp(dev, 23, clamp(body_value(body, 500), 0, 1000))
     if action == "rgb":
         color = hsv_hex(int(body.h or 0), int(body.s if body.s is not None else 1000), int(body.v if body.v is not None else 1000))
         set_dp(dev, 21, "colour")
@@ -470,20 +526,51 @@ def apply_light(dev: Dict[str, Any], body: LightCommand) -> Dict[str, Any]:
     raise HTTPException(status_code=400, detail=f"unsupported light action: {action}")
 
 
+def apply_scene_all_once(dev: Dict[str, Any], scene: str) -> Dict[str, Any]:
+    scenes = load_scenes()
+    key = scene.strip().lower()
+    if key not in scenes:
+        raise HTTPException(status_code=400, detail=f"unsupported scene: {key}")
+    cfg = scenes[key]
+    mode = cfg.get("mode")
+    if mode == "white":
+        set_dp_for_apply_all(dev, 21, "white")
+        time.sleep(APPLY_ALL_DEVICE_DELAY_SEC)
+        brightness = clamp(int(cfg.get("brightness", 500)), 10, 1000)
+        set_dp_for_apply_all(dev, 22, brightness)
+        time.sleep(APPLY_ALL_DEVICE_DELAY_SEC)
+        temperature = clamp(int(cfg.get("temperature", 500)), 0, 1000)
+        result = set_dp_for_apply_all(dev, 23, temperature)
+        return verify_dp_after_command(dev, 23, temperature, result)
+    if mode == "colour":
+        set_dp_for_apply_all(dev, 21, "colour")
+        time.sleep(APPLY_ALL_DEVICE_DELAY_SEC)
+        color = hsv_hex(int(cfg.get("h", 0)), int(cfg.get("s", 1000)), int(cfg.get("v", 1000)))
+        result = set_dp_for_apply_all(dev, 24, color)
+        return verify_dp_after_command(dev, 24, color, result)
+    raise HTTPException(status_code=400, detail=f"unsupported scene mode: {mode}")
+
+
 def apply_light_all_once(dev: Dict[str, Any], body: LightCommand) -> Dict[str, Any]:
     action = body.action.strip().lower()
     if action == "brightness":
-        return set_dp(dev, 22, clamp(int(body.value or 500), 10, 1000), attempts=1, retry_delay=APPLY_ALL_DEVICE_DELAY_SEC)
+        value = clamp(body_value(body, 500), 10, 1000)
+        result = set_dp_for_apply_all(dev, 22, value)
+        return verify_dp_after_command(dev, 22, value, result)
     if action in ("temperature", "temp", "cct"):
-        set_dp(dev, 21, "white", attempts=1, retry_delay=APPLY_ALL_DEVICE_DELAY_SEC)
+        set_dp_for_apply_all(dev, 21, "white")
         time.sleep(APPLY_ALL_DEVICE_DELAY_SEC)
-        return set_dp(dev, 23, clamp(int(body.value or 500), 0, 1000), attempts=1, retry_delay=APPLY_ALL_DEVICE_DELAY_SEC)
+        value = clamp(body_value(body, 500), 0, 1000)
+        result = set_dp_for_apply_all(dev, 23, value)
+        return verify_dp_after_command(dev, 23, value, result)
     if action == "rgb":
+        set_dp_for_apply_all(dev, 21, "colour")
+        time.sleep(APPLY_ALL_DEVICE_DELAY_SEC)
         color = hsv_hex(int(body.h or 0), int(body.s if body.s is not None else 1000), int(body.v if body.v is not None else 1000))
-        set_dp(dev, 21, "colour", attempts=1, retry_delay=APPLY_ALL_DEVICE_DELAY_SEC)
-        return set_dp(dev, 24, color, attempts=1, retry_delay=APPLY_ALL_DEVICE_DELAY_SEC)
+        result = set_dp_for_apply_all(dev, 24, color)
+        return verify_dp_after_command(dev, 24, color, result)
     if action == "scene":
-        return apply_scene(dev, body.scene or "relax")
+        return apply_scene_all_once(dev, body.scene or "relax")
     raise HTTPException(status_code=400, detail=f"unsupported light action: {action}")
 
 
