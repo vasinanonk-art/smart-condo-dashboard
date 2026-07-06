@@ -26,7 +26,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.3.7")
+app = FastAPI(title="Smart Condo Dashboard", version="1.3.8")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -186,12 +186,16 @@ def snapshot_dps_by_id() -> Dict[str, Dict[str, Any]]:
     data = load_json_optional(TUYA_SNAPSHOT_FILE)
     if not isinstance(data, dict):
         return {}
+
+    items = data.get("devices") if isinstance(data.get("devices"), list) else list(data.values())
     found: Dict[str, Dict[str, Any]] = {}
-    for key, item in data.items():
+
+    for item in items:
         if not isinstance(item, dict):
             continue
-        dev_id = item.get("gwId") or item.get("id") or item.get("devId") or key
-        dps = item.get("dps") or item.get("data", {}).get("dps")
+        dev_id = item.get("gwId") or item.get("id") or item.get("devId")
+        raw_dps = item.get("dps") or item.get("data", {}).get("dps") or {}
+        dps = raw_dps.get("dps") if isinstance(raw_dps, dict) and isinstance(raw_dps.get("dps"), dict) else raw_dps
         if dev_id and isinstance(dps, dict):
             found[str(dev_id)] = dps
     return found
@@ -360,14 +364,20 @@ def light_status_one(target: str):
     return {"ok": True, "source": "single-fast", "device": fast_light_status(dev, snap)}
 
 
+@app.get("/api/lights/status")
+def lights_status():
+    snap = snapshot_dps_by_id()
+    return {"ok": True, "source": "fast", "devices": [fast_light_status(dev, snap) for dev in load_lights()]}
+
+
 @app.get("/api/lights/status-fast")
 def lights_status_fast():
     snap = snapshot_dps_by_id()
     return {"ok": True, "source": "fast", "devices": [fast_light_status(dev, snap) for dev in load_lights()]}
 
 
-@app.get("/api/lights/status")
-def lights_status():
+@app.get("/api/lights/status-live")
+def lights_status_live():
     snap = snapshot_dps_by_id()
     return {"ok": True, "source": "live", "devices": [get_light_status(dev, snap) for dev in load_lights()]}
 
