@@ -21,6 +21,8 @@ TUYA_SNAPSHOT_FILE = os.getenv("TUYA_SNAPSHOT_FILE", "/root/tuya/snapshot.json")
 LAMPTAN_PRODUCT = "LAMPTAN Jarton Bulb CCT+RGB 11w"
 LAST_SEEN_TTL_SEC = 180
 POLL_INTERVAL_SEC = 4
+HISTORY_MAX_POINTS = 2000
+HISTORY_TTL_SEC = 86400
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
@@ -28,7 +30,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="1.4.0")
+app = FastAPI(title="Smart Condo Dashboard", version="2.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -41,6 +43,9 @@ state: Dict[str, Any] = {
     "light_status_cache": {},
     "poller_started": False,
     "poller_running": False,
+    "condo_sensor": {},
+    "condo_presence": {},
+    "condo_history": [],
     "available_commands": ["power_on", "power_off", "youtube", "netflix", "disney", "prime", "appletv", "browser", "livetv", "home", "viu", "hbo", "hdmi1", "hdmi2", "hdmi3", "hdmi4", "volume_up", "volume_down", "mute", "unmute", "up", "down", "left", "right", "ok", "back", "home_key"],
 }
 
@@ -79,14 +84,66 @@ def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=No
     state["mqtt_connected"] = False
 
 
+def to_float(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def first_value(data: Dict[str, Any], keys: List[str]) -> Any:
+    for key in keys:
+        if key in data and data[key] is not None:
+            return data[key]
+    return None
+
+
+def update_condo_state(payload: Any) -> None:
+    if not isinstance(payload, dict):
+        return
+    now = int(time.time())
+    sensor_src = payload.get("sensor") if isinstance(payload.get("sensor"), dict) else payload
+    temp = first_value(sensor_src, ["temperature", "temp", "t"])
+    hum = first_value(sensor_src, ["humidity", "hum", "h"])
+    sensor: Dict[str, Any] = {}
+    if temp is not None:
+        sensor["temperature"] = to_float(temp)
+    if hum is not None:
+        sensor["humidity"] = to_float(hum)
+    for key in ("ip", "source", "name"):
+        if sensor_src.get(key) is not None:
+            sensor[key] = sensor_src.get(key)
+    if sensor:
+        sensor["ts"] = now
+        state["condo_sensor"] = sensor
+        if sensor.get("temperature") is not None or sensor.get("humidity") is not None:
+            history = state.setdefault("condo_history", [])
+            history.append({"ts": now, "temperature": sensor.get("temperature"), "humidity": sensor.get("humidity")})
+            cutoff = now - HISTORY_TTL_SEC
+            state["condo_history"] = [x for x in history if int(x.get("ts", 0)) >= cutoff][-HISTORY_MAX_POINTS:]
+    presence = payload.get("presence")
+    if isinstance(presence, dict):
+        state["condo_presence"] = {**presence, "ts": now}
+    else:
+        presence_keys = ["occupancy", "motion", "present", "home", "living", "bedroom", "door", "person", "persons"]
+        extracted = {k: payload[k] for k in presence_keys if k in payload}
+        if extracted:
+            state["condo_presence"] = {**extracted, "ts": now}
+
+
 def on_message(client, userdata, msg):
     payload = msg.payload.decode(errors="ignore")
     try:
-        state["last_state"] = json.loads(payload)
+        parsed = json.loads(payload)
+        state["last_state"] = parsed
+        update_condo_state(parsed)
     except Exception:
         state["last_state"] = {"raw": payload}
     state["last_state_topic"] = msg.topic
     state["last_state_ts"] = int(time.time())
+
 
 mqttc.on_connect = on_connect
 mqttc.on_disconnect = on_disconnect
@@ -432,6 +489,16 @@ def health():
 @app.get("/api/state")
 def get_state():
     return state
+
+
+@app.get("/api/condo/status")
+def condo_status():
+    return {"ok": True, "sensor": state.get("condo_sensor", {}), "presence": state.get("condo_presence", {})}
+
+
+@app.get("/api/condo/history")
+def condo_history():
+    return {"ok": True, "history": state.get("condo_history", [])}
 
 
 @app.get("/api/lights")
