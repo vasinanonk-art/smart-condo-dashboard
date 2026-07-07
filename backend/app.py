@@ -24,7 +24,11 @@ CONDO_PRESENCE_SEEM_TOPIC = "condo/presence/seem"
 CONDO_MQTT_TOPICS = [CONDO_SENSOR_TOPIC, CONDO_PRESENCE_BEER_TOPIC, CONDO_PRESENCE_SEEM_TOPIC]
 TUYA_DEVICES_FILE = os.getenv("TUYA_DEVICES_FILE", "/root/tuya/devices.json")
 TUYA_SNAPSHOT_FILE = os.getenv("TUYA_SNAPSHOT_FILE", "/root/tuya/snapshot.json")
-CAMERA_CONFIG_FILE = os.getenv("CAMERA_CONFIG_FILE", "/opt/smart-condo-dashboard-run/config/cameras.local.json")
+CAMERA_CONFIG_PATHS = [
+    os.getenv("CAMERA_CONFIG_FILE", "/opt/smart-condo-dashboard-run/config/cameras.local.json"),
+    "/root/.smart-condo-dashboard/cameras.local.json",
+    os.path.abspath(os.path.join(os.getcwd(), "config", "cameras.local.json")),
+]
 LAMPTAN_PRODUCT = "LAMPTAN Jarton Bulb CCT+RGB 11w"
 LAST_SEEN_TTL_SEC = 300
 CACHE_ONLINE_TTL_SEC = 300
@@ -47,7 +51,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="2.1.0")
+app = FastAPI(title="Smart Condo Dashboard", version="2.1.1")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -61,6 +65,9 @@ state: Dict[str, Any] = {
     "light_status_cache": {},
     "tuya_log_tail": [],
     "tuya_snapshot_sync_log": [],
+    "camera_config_loaded": False,
+    "camera_config_path": None,
+    "camera_count": 0,
     "poller_started": False,
     "poller_running": False,
     "condo_sensor": {},
@@ -232,6 +239,7 @@ mqttc.on_message = on_message
 @app.on_event("startup")
 def startup():
     preload_snapshot_cache()
+    log_camera_config_startup()
     start_light_poller()
     state["mqtt_subscription_log"] = "subscribed MQTT topics: " + ", ".join(CONDO_MQTT_TOPICS)
     print(state["mqtt_subscription_log"], flush=True)
@@ -422,16 +430,35 @@ def load_lights() -> List[Dict[str, Any]]:
     return [d for d in devices if d.get("product_name") == LAMPTAN_PRODUCT and d.get("ip") and d.get("id") and d.get("key")]
 
 
-def load_camera_config() -> List[Dict[str, Any]]:
-    data = load_json_optional(CAMERA_CONFIG_FILE)
-    if not data:
-        return []
-    if isinstance(data, list):
-        return [x for x in data if isinstance(x, dict)]
-    if isinstance(data, dict):
-        cameras = data.get("cameras", [])
-        return [x for x in cameras if isinstance(x, dict)] if isinstance(cameras, list) else []
-    return []
+def camera_config_payload() -> Dict[str, Any]:
+    for path in CAMERA_CONFIG_PATHS:
+        if path and os.path.exists(path):
+            data = load_json_optional(path)
+            if isinstance(data, list):
+                cameras = [x for x in data if isinstance(x, dict)]
+            elif isinstance(data, dict):
+                raw = data.get("cameras", [])
+                cameras = [x for x in raw if isinstance(x, dict)] if isinstance(raw, list) else []
+            else:
+                cameras = []
+            return {"loaded": True, "path": path, "cameras": cameras}
+    return {"loaded": False, "path": None, "cameras": []}
+
+
+def load_camera_config() -> Dict[str, Any]:
+    payload = camera_config_payload()
+    state["camera_config_loaded"] = bool(payload["loaded"])
+    state["camera_config_path"] = payload["path"]
+    state["camera_count"] = len(payload["cameras"])
+    return payload
+
+
+def log_camera_config_startup() -> None:
+    payload = load_camera_config()
+    path = payload["path"] or "not found"
+    log = f"Loaded {len(payload['cameras'])} cameras from {path}"
+    state["camera_config_log"] = log
+    print(log, flush=True)
 
 
 def tcp_check(ip: str, port: int, timeout: float = CAMERA_TCP_TIMEOUT_SEC) -> bool:
@@ -987,7 +1014,15 @@ def lights_refresh():
 
 @app.get("/api/cameras")
 def cameras():
-    return {"ok": True, "cameras": [public_camera(cam) for cam in load_camera_config()]}
+    payload = load_camera_config()
+    public = [public_camera(cam) for cam in payload["cameras"]]
+    return {
+        "ok": True,
+        "config_loaded": bool(payload["loaded"]),
+        "config_path": payload["path"],
+        "camera_count": len(public),
+        "cameras": public,
+    }
 
 
 @app.get("/api/scenes")
