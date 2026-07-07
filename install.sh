@@ -13,10 +13,12 @@ install -d "$APP_RUN"
 [ ! -d "$APP_RUN/frontend" ] || rm -r "$APP_RUN/frontend"
 [ ! -d "$APP_RUN/config" ] || rm -r "$APP_RUN/config"
 [ ! -d "$APP_RUN/scripts" ] || rm -r "$APP_RUN/scripts"
+[ ! -f "$APP_RUN/sonoff_client.py" ] || rm "$APP_RUN/sonoff_client.py"
 
 cp -R "$APP_SRC/backend" "$APP_RUN/backend"
 cp -R "$APP_SRC/frontend" "$APP_RUN/frontend"
 cp -R "$APP_SRC/config" "$APP_RUN/config"
+cp "$APP_SRC/sonoff_client.py" "$APP_RUN/sonoff_client.py"
 
 if [ ! -x "$PY" ]; then
     [ ! -d "$VENV" ] || rm -r "$VENV"
