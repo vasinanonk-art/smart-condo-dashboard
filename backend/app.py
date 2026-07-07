@@ -24,8 +24,8 @@ CONDO_MQTT_TOPICS = [CONDO_SENSOR_TOPIC, CONDO_PRESENCE_BEER_TOPIC, CONDO_PRESEN
 TUYA_DEVICES_FILE = os.getenv("TUYA_DEVICES_FILE", "/root/tuya/devices.json")
 TUYA_SNAPSHOT_FILE = os.getenv("TUYA_SNAPSHOT_FILE", "/root/tuya/snapshot.json")
 LAMPTAN_PRODUCT = "LAMPTAN Jarton Bulb CCT+RGB 11w"
-LAST_SEEN_TTL_SEC = 180
-CACHE_ONLINE_TTL_SEC = 120
+LAST_SEEN_TTL_SEC = 300
+CACHE_ONLINE_TTL_SEC = 300
 ERR_905_LAST_SEEN_TTL_SEC = 60
 POLL_INTERVAL_SEC = 4
 HISTORY_MAX_POINTS = 2000
@@ -43,7 +43,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="2.0.8")
+app = FastAPI(title="Smart Condo Dashboard", version="2.0.9")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -505,29 +505,15 @@ def dpsOf(item: Dict[str, Any]) -> Dict[str, Any]:
     return ((item or {}).get("result") or {}).get("dps") or {}
 
 
-def fresh_cached_status(dev: Dict[str, Any], ttl: int = LAST_SEEN_TTL_SEC) -> Dict[str, Any] | None:
-    cached = state["light_status_cache"].get(dev["id"])
-    if cached and cached.get("source") != "snapshot" and int(time.time()) - int(cached.get("last_seen_ts", 0)) <= ttl:
-        return cached
-    return None
-
-
 def any_cached_status_with_dps(dev: Dict[str, Any]) -> Dict[str, Any] | None:
     cached = state["light_status_cache"].get(dev["id"])
-    if cached and cached.get("source") != "snapshot" and dpsOf(cached):
+    if cached and dpsOf(cached):
         return cached
     return None
-
-
-def cached_or_offline(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
-    cached = fresh_cached_status(dev)
-    if cached:
-        return {**cached, "online": True, "status": "unstable", "source": "last_seen", "last_error": item}
-    return {**item, "online": False, "status": "offline"}
 
 
 def snapshot_status(dev: Dict[str, Any], snap_dps: Dict[str, Any]) -> Dict[str, Any]:
-    return {**status_base(dev), "source": "snapshot", "result": {"dps": snap_dps}, "online": True, "status": "unstable"}
+    return cache_dps(dev, snap_dps, "snapshot")
 
 
 def fast_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
@@ -537,7 +523,7 @@ def fast_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) 
     snap_dps = snapshot.get(dev.get("id"))
     if snap_dps:
         return snapshot_status(dev, snap_dps)
-    return {**status_base(dev), "online": False, "status": "unknown", "source": "cache", "result": {"dps": {}}}
+    return {**status_base(dev), "online": False, "status": "offline", "source": "cache", "result": {"dps": {}}}
 
 
 def cache_first_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
@@ -546,10 +532,12 @@ def cache_first_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]])
     now = int(time.time())
     if cached:
         age = max(0, now - int(cached.get("last_seen_ts", 0)))
-        return {**base, "source": "last_seen", "result": {"dps": dpsOf(cached)}, "last_seen_ts": cached.get("last_seen_ts"), "age_sec": age, "online": True, "status": "online" if age < CACHE_ONLINE_TTL_SEC else "unstable"}
+        status = "online" if age <= CACHE_ONLINE_TTL_SEC else "stale"
+        return {**base, "source": cached.get("source", "cache"), "result": {"dps": dpsOf(cached)}, "last_seen_ts": cached.get("last_seen_ts"), "age_sec": age, "online": True, "status": status}
     snap_dps = snapshot.get(dev.get("id"))
     if snap_dps:
-        return snapshot_status(dev, snap_dps)
+        cached = snapshot_status(dev, snap_dps)
+        return cache_first_status(dev, snapshot)
     return {**base, "source": "cache", "result": {"dps": {}}, "online": False, "status": "offline"}
 
 
@@ -559,22 +547,13 @@ def cache_first_status_devices() -> List[Dict[str, Any]]:
     return [cache_first_status(dev, snap) for dev in load_lights()]
 
 
-def unstable_from_cached(dev: Dict[str, Any], cached: Dict[str, Any], last_error: Dict[str, Any]) -> Dict[str, Any]:
-    return {**cached, "online": True, "status": "unstable", "source": "last_seen", "last_error": last_error}
-
-
-def unstable_from_snapshot(dev: Dict[str, Any], snap_dps: Dict[str, Any], last_error: Dict[str, Any]) -> Dict[str, Any]:
-    return {**snapshot_status(dev, snap_dps), "last_error": last_error}
-
-
 def fallback_status(dev: Dict[str, Any], base: Dict[str, Any], error_item: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    last_error = {**base, "source": "direct", "result": error_item}
     cached = any_cached_status_with_dps(dev)
     if cached:
-        return unstable_from_cached(dev, cached, last_error)
+        return cache_first_status(dev, snapshot)
     snap_dps = snapshot.get(dev.get("id"))
     if snap_dps:
-        return unstable_from_snapshot(dev, snap_dps, last_error)
+        return snapshot_status(dev, snap_dps)
     return {**base, "source": "direct", "result": error_item, "online": False, "status": "offline"}
 
 
