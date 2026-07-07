@@ -5,13 +5,13 @@ APP_SRC="/opt/smart-condo-dashboard"
 APP_RUN="/opt/smart-condo-dashboard-run"
 VENV="$APP_RUN/venv"
 PY="$VENV/bin/python"
-LOCAL_CONFIG_TMP="$APP_RUN/.local-config-preserve"
+LOCAL_CONFIG_TMP="/tmp/smart-condo-dashboard-local-config-backup"
 
 install -d "$APP_RUN"
 rm -rf "$LOCAL_CONFIG_TMP"
 install -d "$LOCAL_CONFIG_TMP"
 
-# Preserve local runtime configs. These may contain credentials and must not come from git.
+# Preserve local runtime configs outside the run path before rebuilding config.
 [ ! -f "$APP_RUN/config/cameras.local.json" ] || cp "$APP_RUN/config/cameras.local.json" "$LOCAL_CONFIG_TMP/cameras.local.json"
 [ ! -f "$APP_RUN/config/ewelink.local.json" ] || cp "$APP_RUN/config/ewelink.local.json" "$LOCAL_CONFIG_TMP/ewelink.local.json"
 
