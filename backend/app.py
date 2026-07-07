@@ -17,6 +17,10 @@ MQTT_HOST = os.getenv("MQTT_HOST", "127.0.0.1")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_CMD_TOPIC = os.getenv("MQTT_CMD_TOPIC", "home/lgtv/cmd")
 MQTT_STATE_TOPIC = os.getenv("MQTT_STATE_TOPIC", "home/lgtv/state")
+CONDO_SENSOR_TOPIC = "condo/t3/state"
+CONDO_PRESENCE_BEER_TOPIC = "condo/presence/beer"
+CONDO_PRESENCE_SEEM_TOPIC = "condo/presence/seem"
+CONDO_MQTT_TOPICS = [CONDO_SENSOR_TOPIC, CONDO_PRESENCE_BEER_TOPIC, CONDO_PRESENCE_SEEM_TOPIC]
 TUYA_DEVICES_FILE = os.getenv("TUYA_DEVICES_FILE", "/root/tuya/devices.json")
 TUYA_SNAPSHOT_FILE = os.getenv("TUYA_SNAPSHOT_FILE", "/root/tuya/snapshot.json")
 LAMPTAN_PRODUCT = "LAMPTAN Jarton Bulb CCT+RGB 11w"
@@ -39,11 +43,12 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="2.0.5")
+app = FastAPI(title="Smart Condo Dashboard", version="2.0.6")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
     "mqtt_connected": False,
+    "mqtt_subscribed_topics": [],
     "last_state": {},
     "last_cmd": None,
     "last_cmd_ts": None,
@@ -55,6 +60,11 @@ state: Dict[str, Any] = {
     "poller_running": False,
     "condo_sensor": {},
     "condo_presence": {},
+    "condo_sensor_history": [],
+    "condo_history": [],
+    "sensor": {},
+    "presence": {},
+    "sensor_history": [],
     "condo_history": [],
     "available_commands": ["power_on", "power_off", "youtube", "netflix", "disney", "prime", "appletv", "browser", "livetv", "home", "viu", "hbo", "hdmi1", "hdmi2", "hdmi3", "hdmi4", "volume_up", "volume_down", "mute", "unmute", "up", "down", "left", "right", "ok", "back", "home_key"],
 }
@@ -86,9 +96,49 @@ class FavoriteRunCommand(BaseModel):
     favorite: str
 
 
+def parse_json_payload(payload: str) -> Dict[str, Any]:
+    try:
+        parsed = json.loads(payload)
+        return parsed if isinstance(parsed, dict) else {"value": parsed}
+    except Exception:
+        return {"raw": payload}
+
+
+def prune_history(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    cutoff = int(time.time()) - HISTORY_TTL_SEC
+    return [x for x in items if int(x.get("ts", 0)) >= cutoff][-HISTORY_MAX_POINTS:]
+
+
+def update_condo_sensor_from_topic(data: Dict[str, Any]) -> None:
+    now = int(time.time())
+    sensor = {**data, "ts": now, "topic": CONDO_SENSOR_TOPIC}
+    state["condo_sensor"] = sensor
+    state["sensor"] = sensor
+    point = {**sensor}
+    history = state.setdefault("condo_sensor_history", [])
+    history.append(point)
+    history = prune_history(history)
+    state["condo_sensor_history"] = history
+    state["sensor_history"] = history
+    state["condo_history"] = history
+
+
+def update_condo_presence_from_topic(person: str, data: Dict[str, Any], topic: str) -> None:
+    now = int(time.time())
+    presence = {**data, "ts": now, "topic": topic}
+    state.setdefault("condo_presence", {})[person] = presence
+    state.setdefault("presence", {})[person] = presence
+
+
 def on_connect(client, userdata, flags, reason_code, properties=None):
     state["mqtt_connected"] = True
     client.subscribe(MQTT_STATE_TOPIC)
+    for topic in CONDO_MQTT_TOPICS:
+        client.subscribe(topic)
+    state["mqtt_subscribed_topics"] = [MQTT_STATE_TOPIC, *CONDO_MQTT_TOPICS]
+    log = "subscribed MQTT topics: " + ", ".join(CONDO_MQTT_TOPICS)
+    state["mqtt_subscription_log"] = log
+    print(log, flush=True)
 
 
 def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=None):
@@ -129,31 +179,46 @@ def update_condo_state(payload: Any) -> None:
     if sensor:
         sensor["ts"] = now
         state["condo_sensor"] = sensor
-        if sensor.get("temperature") is not None or sensor.get("humidity") is not None:
-            history = state.setdefault("condo_history", [])
-            history.append({"ts": now, "temperature": sensor.get("temperature"), "humidity": sensor.get("humidity")})
-            cutoff = now - HISTORY_TTL_SEC
-            state["condo_history"] = [x for x in history if int(x.get("ts", 0)) >= cutoff][-HISTORY_MAX_POINTS:]
+        state["sensor"] = sensor
+        history = state.setdefault("condo_sensor_history", [])
+        history.append({"ts": now, "temperature": sensor.get("temperature"), "humidity": sensor.get("humidity")})
+        history = prune_history(history)
+        state["condo_sensor_history"] = history
+        state["sensor_history"] = history
+        state["condo_history"] = history
     presence = payload.get("presence")
     if isinstance(presence, dict):
         state["condo_presence"] = {**presence, "ts": now}
+        state["presence"] = state["condo_presence"]
     else:
         presence_keys = ["occupancy", "motion", "present", "home", "living", "bedroom", "door", "person", "persons"]
         extracted = {k: payload[k] for k in presence_keys if k in payload}
         if extracted:
             state["condo_presence"] = {**extracted, "ts": now}
+            state["presence"] = state["condo_presence"]
 
 
 def on_message(client, userdata, msg):
     payload = msg.payload.decode(errors="ignore")
-    try:
-        parsed = json.loads(payload)
+    topic = msg.topic
+    parsed = parse_json_payload(payload)
+    state["last_state_topic"] = topic
+    state["last_state_ts"] = int(time.time())
+    if topic == CONDO_SENSOR_TOPIC:
+        state["last_state"] = parsed
+        update_condo_sensor_from_topic(parsed)
+        return
+    if topic == CONDO_PRESENCE_BEER_TOPIC:
+        update_condo_presence_from_topic("beer", parsed, topic)
+        return
+    if topic == CONDO_PRESENCE_SEEM_TOPIC:
+        update_condo_presence_from_topic("seem", parsed, topic)
+        return
+    if topic == MQTT_STATE_TOPIC:
         state["last_state"] = parsed
         update_condo_state(parsed)
-    except Exception:
-        state["last_state"] = {"raw": payload}
-    state["last_state_topic"] = msg.topic
-    state["last_state_ts"] = int(time.time())
+        return
+    state["last_state"] = parsed
 
 
 mqttc.on_connect = on_connect
@@ -165,6 +230,8 @@ mqttc.on_message = on_message
 def startup():
     preload_snapshot_cache()
     start_light_poller()
+    state["mqtt_subscription_log"] = "subscribed MQTT topics: " + ", ".join(CONDO_MQTT_TOPICS)
+    print(state["mqtt_subscription_log"], flush=True)
     try:
         mqttc.connect(MQTT_HOST, MQTT_PORT, 60)
         mqttc.loop_start()
@@ -392,15 +459,7 @@ def cache_first_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]])
     now = int(time.time())
     if cached:
         age = max(0, now - int(cached.get("last_seen_ts", 0)))
-        return {
-            **base,
-            "source": "last_seen",
-            "result": {"dps": dpsOf(cached)},
-            "last_seen_ts": cached.get("last_seen_ts"),
-            "age_sec": age,
-            "online": True,
-            "status": "online" if age < CACHE_ONLINE_TTL_SEC else "unstable",
-        }
+        return {**base, "source": "last_seen", "result": {"dps": dpsOf(cached)}, "last_seen_ts": cached.get("last_seen_ts"), "age_sec": age, "online": True, "status": "online" if age < CACHE_ONLINE_TTL_SEC else "unstable"}
     snap_dps = snapshot.get(dev.get("id"))
     if snap_dps:
         return snapshot_status(dev, snap_dps)
@@ -453,15 +512,7 @@ def tuya_request(dev: Dict[str, Any], send: Dict[str, Any], source: str, fn, ret
         reply = {"exception": repr(exc)}
         raise
     finally:
-        record_tuya_log({
-            "target": device_target(dev),
-            "send": send,
-            "reply": reply,
-            "duration_ms": int((time.time() - start) * 1000),
-            "retry_count": retry_count,
-            "source": source,
-            "timeout": False,
-        })
+        record_tuya_log({"target": device_target(dev), "send": send, "reply": reply, "duration_ms": int((time.time() - start) * 1000), "retry_count": retry_count, "source": source, "timeout": False})
 
 
 def _tuya_status_worker(dev: Dict[str, Any], queue) -> None:
@@ -490,10 +541,9 @@ def read_status_once(dev: Dict[str, Any], source: str, retry_count: int = 0, tim
             reply = {"Err": "905", "Error": f"status_timeout_{timeout_sec}s", "timeout": True}
         elif not queue.empty():
             msg = queue.get_nowait()
-            if msg.get("ok"):
-                reply = msg.get("result") or {"Err": "905", "Error": "status_empty_result"}
-            else:
-                reply = {"Err": "905", "Error": msg.get("exception") or "status_exception"}
+            reply = msg.get("result") if msg.get("ok") else {"Err": "905", "Error": msg.get("exception") or "status_exception"}
+            if not reply:
+                reply = {"Err": "905", "Error": "status_empty_result"}
         return reply
     finally:
         try:
@@ -508,15 +558,7 @@ def read_status_once(dev: Dict[str, Any], source: str, retry_count: int = 0, tim
         except Exception:
             pass
         tuya_semaphore.release()
-        record_tuya_log({
-            "target": device_target(dev),
-            "send": send,
-            "reply": reply,
-            "duration_ms": int((time.time() - start) * 1000),
-            "retry_count": retry_count,
-            "source": source,
-            "timeout": timeout,
-        })
+        record_tuya_log({"target": device_target(dev), "send": send, "reply": reply, "duration_ms": int((time.time() - start) * 1000), "retry_count": retry_count, "source": source, "timeout": timeout})
 
 
 def read_dps(dev: Dict[str, Any], source: str = "status") -> Dict[str, Any] | None:
@@ -789,7 +831,7 @@ def condo_status():
 
 @app.get("/api/condo/history")
 def condo_history():
-    return {"ok": True, "history": state.get("condo_history", [])}
+    return {"ok": True, "history": state.get("condo_sensor_history", [])}
 
 
 @app.get("/api/lights")
@@ -863,11 +905,7 @@ def favorite_run(body: FavoriteRunCommand):
 @app.post("/api/light")
 def light_control(body: LightCommand):
     if is_all_target(body.target):
-        results = execute_for_target(
-            body.target,
-            lambda dev: apply_light_all_reliable(dev, body),
-            delay_between_devices=APPLY_ALL_DEVICE_DELAY_SEC,
-        )
+        results = execute_for_target(body.target, lambda dev: apply_light_all_reliable(dev, body), delay_between_devices=APPLY_ALL_DEVICE_DELAY_SEC)
     else:
         results = execute_for_target(body.target, lambda dev: apply_light(dev, body))
     state["last_light_cmd"] = body.model_dump()
