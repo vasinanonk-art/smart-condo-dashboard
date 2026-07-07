@@ -12,3 +12,8 @@ venv/
 cameras.local.json
 config/cameras.local.json
 *-run/config/cameras.local.json
+
+# Local runtime config with eWeLink credentials
+ewelink.local.json
+config/ewelink.local.json
+*-run/config/ewelink.local.json
