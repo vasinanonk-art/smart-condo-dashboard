@@ -7,6 +7,7 @@ import time
 from typing import Any, Dict, List
 
 import paho.mqtt.client as mqtt
+import sonoff_client
 import tinytuya
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,7 +52,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="2.1.1")
+app = FastAPI(title="Smart Condo Dashboard", version="2.1.2")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -68,6 +69,10 @@ state: Dict[str, Any] = {
     "camera_config_loaded": False,
     "camera_config_path": None,
     "camera_count": 0,
+    "ewelink_config_loaded": False,
+    "ewelink_config_path": None,
+    "sonoff_devices": [],
+    "sonoff_last_sync_ts": None,
     "poller_started": False,
     "poller_running": False,
     "condo_sensor": {},
@@ -105,6 +110,11 @@ class SceneCommand(BaseModel):
 
 class FavoriteRunCommand(BaseModel):
     favorite: str
+
+
+class SonoffCommand(BaseModel):
+    deviceid: str
+    action: str
 
 
 def parse_json_payload(payload: str) -> Dict[str, Any]:
@@ -448,7 +458,7 @@ def camera_config_payload() -> Dict[str, Any]:
                 cameras = [x for x in data if isinstance(x, dict)]
             elif isinstance(data, dict):
                 raw = data.get("cameras", [])
-                cameras = [x for x in raw if isinstance(x, dict)] if isinstance(raw, list) else []
+                cameras = [x for x in raw if isinstance(raw, list) and isinstance(x, dict)] if isinstance(raw, list) else []
             else:
                 cameras = []
             return {"loaded": True, "path": path, "cameras": cameras}
@@ -509,6 +519,15 @@ def public_camera(cam: Dict[str, Any]) -> Dict[str, Any]:
         "online": camera_online(cam, has_rtsp),
         "has_rtsp": has_rtsp,
     }
+
+
+def sync_sonoff_state() -> Dict[str, Any]:
+    data = sonoff_client.devices()
+    state["ewelink_config_loaded"] = bool(data.get("config_loaded"))
+    state["ewelink_config_path"] = data.get("config_path")
+    state["sonoff_devices"] = data.get("devices", [])
+    state["sonoff_last_sync_ts"] = int(time.time())
+    return data
 
 
 def select_lights(target: str) -> List[Dict[str, Any]]:
@@ -973,6 +992,7 @@ def health():
 
 @app.get("/api/state")
 def get_state():
+    load_camera_config()
     return JSONResponse(content=json_safe(state), status_code=200)
 
 
@@ -1026,13 +1046,24 @@ def lights_refresh():
 def cameras():
     payload = load_camera_config()
     public = [public_camera(cam) for cam in payload["cameras"]]
-    return {
-        "ok": True,
-        "config_loaded": bool(payload["loaded"]),
-        "config_path": payload["path"],
-        "camera_count": len(public),
-        "cameras": public,
-    }
+    state["camera_count"] = len(public)
+    return {"ok": True, "config_loaded": bool(payload["loaded"]), "config_path": payload["path"], "camera_count": len(public), "cameras": public}
+
+
+@app.get("/api/sonoff")
+def sonoff_status():
+    data = sync_sonoff_state()
+    return {"ok": True, "devices": data.get("devices", [])}
+
+
+@app.post("/api/sonoff")
+def sonoff_control(body: SonoffCommand):
+    result = sonoff_client.set_state(body.deviceid, body.action)
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result.get("error", "sonoff command failed"))
+    state["sonoff_devices"] = result.get("devices", state.get("sonoff_devices", []))
+    state["sonoff_last_sync_ts"] = int(time.time())
+    return {"ok": True, "deviceid": body.deviceid, "action": body.action.lower(), "devices": state.get("sonoff_devices", [])}
 
 
 @app.get("/api/scenes")
