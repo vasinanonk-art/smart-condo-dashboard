@@ -43,7 +43,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="2.0.9")
+app = FastAPI(title="Smart Condo Dashboard", version="2.0.10")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -227,7 +227,6 @@ mqttc.on_message = on_message
 
 @app.on_event("startup")
 def startup():
-    sync_snapshot_ip_and_cache()
     preload_snapshot_cache()
     start_light_poller()
     state["mqtt_subscription_log"] = "subscribed MQTT topics: " + ", ".join(CONDO_MQTT_TOPICS)
@@ -329,15 +328,6 @@ def item_version(item: Dict[str, Any]) -> Any:
     return item.get("ver") or item.get("version")
 
 
-def snapshot_meta_by_id() -> Dict[str, Dict[str, Any]]:
-    found: Dict[str, Dict[str, Any]] = {}
-    for item in snapshot_items():
-        dev_id = item_device_id(item)
-        if dev_id:
-            found[dev_id] = item
-    return found
-
-
 def snapshot_dps_by_id() -> Dict[str, Dict[str, Any]]:
     found: Dict[str, Dict[str, Any]] = {}
     for item in snapshot_items():
@@ -420,7 +410,7 @@ def sync_snapshot_ip_and_cache() -> None:
 
 
 def load_all_devices() -> List[Dict[str, Any]]:
-    return sync_devices_from_snapshot(load_json(TUYA_DEVICES_FILE))
+    return load_json(TUYA_DEVICES_FILE)
 
 
 def load_lights() -> List[Dict[str, Any]]:
@@ -512,21 +502,7 @@ def any_cached_status_with_dps(dev: Dict[str, Any]) -> Dict[str, Any] | None:
     return None
 
 
-def snapshot_status(dev: Dict[str, Any], snap_dps: Dict[str, Any]) -> Dict[str, Any]:
-    return cache_dps(dev, snap_dps, "snapshot")
-
-
-def fast_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    cached = any_cached_status_with_dps(dev)
-    if cached:
-        return cached
-    snap_dps = snapshot.get(dev.get("id"))
-    if snap_dps:
-        return snapshot_status(dev, snap_dps)
-    return {**status_base(dev), "online": False, "status": "offline", "source": "cache", "result": {"dps": {}}}
-
-
-def cache_first_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+def cache_first_status(dev: Dict[str, Any]) -> Dict[str, Any]:
     base = status_base(dev)
     cached = any_cached_status_with_dps(dev)
     now = int(time.time())
@@ -534,26 +510,17 @@ def cache_first_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]])
         age = max(0, now - int(cached.get("last_seen_ts", 0)))
         status = "online" if age <= CACHE_ONLINE_TTL_SEC else "stale"
         return {**base, "source": cached.get("source", "cache"), "result": {"dps": dpsOf(cached)}, "last_seen_ts": cached.get("last_seen_ts"), "age_sec": age, "online": True, "status": status}
-    snap_dps = snapshot.get(dev.get("id"))
-    if snap_dps:
-        cached = snapshot_status(dev, snap_dps)
-        return cache_first_status(dev, snapshot)
     return {**base, "source": "cache", "result": {"dps": {}}, "online": False, "status": "offline"}
 
 
 def cache_first_status_devices() -> List[Dict[str, Any]]:
-    sync_snapshot_ip_and_cache()
-    snap = snapshot_dps_by_id()
-    return [cache_first_status(dev, snap) for dev in load_lights()]
+    return [cache_first_status(dev) for dev in load_lights()]
 
 
-def fallback_status(dev: Dict[str, Any], base: Dict[str, Any], error_item: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+def fallback_status(dev: Dict[str, Any], base: Dict[str, Any], error_item: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]] | None = None) -> Dict[str, Any]:
     cached = any_cached_status_with_dps(dev)
     if cached:
-        return cache_first_status(dev, snapshot)
-    snap_dps = snapshot.get(dev.get("id"))
-    if snap_dps:
-        return snapshot_status(dev, snap_dps)
+        return cache_first_status(dev)
     return {**base, "source": "direct", "result": error_item, "online": False, "status": "offline"}
 
 
@@ -669,6 +636,10 @@ def verify_dp_after_command(dev: Dict[str, Any], dp: int, value: Any, command_re
     return {"ok": True, "verified": True, "dp": dp, "value": value, "dps": dps, "command_result": command_result}
 
 
+def extract_dps(result: Dict[str, Any]) -> Dict[str, Any]:
+    return result.get("dps") or result.get("data", {}).get("dps") or {}
+
+
 def extract_command_dps(result: Any) -> Dict[str, Any]:
     if not isinstance(result, dict):
         return {}
@@ -692,7 +663,7 @@ def merge_command_cache(dev: Dict[str, Any], result: Any) -> None:
 
 
 def get_light_status_deep(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]] | None = None) -> Dict[str, Any]:
-    snapshot = snapshot or snapshot_dps_by_id()
+    snapshot = snapshot or {}
     base = status_base(dev)
     result = read_status_once(dev, "status-deep")
     if tuya_ok(result):
@@ -705,15 +676,13 @@ def get_light_status_deep(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any
 
 
 def deep_status_devices() -> List[Dict[str, Any]]:
-    sync_snapshot_ip_and_cache()
-    snap = snapshot_dps_by_id()
     devices = load_lights()
     results = []
     for idx, dev in enumerate(devices):
         try:
-            results.append(get_light_status_deep(dev, snap))
+            results.append(get_light_status_deep(dev, {}))
         except Exception as exc:
-            results.append(fallback_status(dev, status_base(dev), {"exception": repr(exc)}, snap))
+            results.append(fallback_status(dev, status_base(dev), {"exception": repr(exc)}, {}))
         if idx < len(devices) - 1:
             time.sleep(LIVE_STATUS_DEVICE_DELAY_SEC)
     return results
@@ -746,10 +715,6 @@ def start_light_poller():
 
 def set_dp_once(dev: Dict[str, Any], dp: int, value: Any) -> Dict[str, Any]:
     return tuya_request(dev, {"op": "set_status", "dp": dp, "value": value}, "send", lambda: tuya_device(dev).set_status(value, dp))
-
-
-def extract_dps(result: Dict[str, Any]) -> Dict[str, Any]:
-    return result.get("dps") or result.get("data", {}).get("dps") or {}
 
 
 def set_dp(dev: Dict[str, Any], dp: int, value: Any, attempts: int = 2, retry_delay: float = 0.25) -> Dict[str, Any]:
@@ -930,16 +895,13 @@ def condo_history():
 
 @app.get("/api/lights")
 def lights():
-    sync_snapshot_ip_and_cache()
     return {"ok": True, "devices": [{"name": d.get("name"), "target": device_target(d), "ip": d.get("ip")} for d in load_lights()]}
 
 
 @app.get("/api/light/status/{target}")
 def light_status_one(target: str):
-    sync_snapshot_ip_and_cache()
-    snap = snapshot_dps_by_id()
     dev = select_single_light(target)
-    return {"ok": True, "source": "single-fast", "device": fast_light_status(dev, snap)}
+    return {"ok": True, "source": "single-fast", "device": cache_first_status(dev)}
 
 
 @app.get("/api/lights/status")
