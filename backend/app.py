@@ -353,14 +353,14 @@ def dpsOf(item: Dict[str, Any]) -> Dict[str, Any]:
 
 def fresh_cached_status(dev: Dict[str, Any], ttl: int = LAST_SEEN_TTL_SEC) -> Dict[str, Any] | None:
     cached = state["light_status_cache"].get(dev["id"])
-    if cached and int(time.time()) - int(cached.get("last_seen_ts", 0)) <= ttl:
+    if cached and cached.get("source") != "snapshot" and int(time.time()) - int(cached.get("last_seen_ts", 0)) <= ttl:
         return cached
     return None
 
 
 def any_cached_status_with_dps(dev: Dict[str, Any]) -> Dict[str, Any] | None:
     cached = state["light_status_cache"].get(dev["id"])
-    if cached and dpsOf(cached):
+    if cached and cached.get("source") != "snapshot" and dpsOf(cached):
         return cached
     return None
 
@@ -372,13 +372,17 @@ def cached_or_offline(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, An
     return {**item, "online": False, "status": "offline"}
 
 
+def snapshot_status(dev: Dict[str, Any], snap_dps: Dict[str, Any]) -> Dict[str, Any]:
+    return {**status_base(dev), "source": "snapshot", "result": {"dps": snap_dps}, "online": True, "status": "unstable"}
+
+
 def fast_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    cached = state["light_status_cache"].get(dev["id"])
+    cached = any_cached_status_with_dps(dev)
     if cached:
         return cached
     snap_dps = snapshot.get(dev.get("id"))
     if snap_dps:
-        return cache_dps(dev, snap_dps, "snapshot")
+        return snapshot_status(dev, snap_dps)
     return {**status_base(dev), "online": False, "status": "unknown", "source": "cache", "result": {"dps": {}}}
 
 
@@ -399,7 +403,7 @@ def cache_first_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]])
         }
     snap_dps = snapshot.get(dev.get("id"))
     if snap_dps:
-        return {**base, "source": "snapshot", "result": {"dps": snap_dps}, "online": True, "status": "unstable"}
+        return snapshot_status(dev, snap_dps)
     return {**base, "source": "cache", "result": {"dps": {}}, "online": False, "status": "offline"}
 
 
@@ -413,8 +417,7 @@ def unstable_from_cached(dev: Dict[str, Any], cached: Dict[str, Any], last_error
 
 
 def unstable_from_snapshot(dev: Dict[str, Any], snap_dps: Dict[str, Any], last_error: Dict[str, Any]) -> Dict[str, Any]:
-    item = {**status_base(dev), "source": "snapshot", "result": {"dps": snap_dps}, "online": True, "status": "unstable"}
-    return {**item, "last_error": last_error}
+    return {**snapshot_status(dev, snap_dps), "last_error": last_error}
 
 
 def fallback_status(dev: Dict[str, Any], base: Dict[str, Any], error_item: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
@@ -585,12 +588,8 @@ def deep_status_devices() -> List[Dict[str, Any]]:
 
 
 def preload_snapshot_cache():
-    snap = snapshot_dps_by_id()
-    for dev in load_lights():
-        dps = snap.get(dev.get("id"))
-        if dps and not state["light_status_cache"].get(dev["id"]):
-            state["light_status_cache"][dev["id"]] = {**status_base(dev), "source": "snapshot", "result": {"dps": snap_dps_by_id if False else dps}, "last_seen_ts": 0, "status": "unstable", "online": True}
     state["snapshot_preload_ts"] = int(time.time())
+    state["snapshot_cache_ready"] = True
 
 
 def light_poller_loop():
