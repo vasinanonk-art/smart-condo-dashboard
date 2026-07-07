@@ -43,7 +43,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="2.0.6")
+app = FastAPI(title="Smart Condo Dashboard", version="2.0.7")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -56,6 +56,7 @@ state: Dict[str, Any] = {
     "last_light_cmd_ts": None,
     "light_status_cache": {},
     "tuya_log_tail": [],
+    "tuya_snapshot_sync_log": [],
     "poller_started": False,
     "poller_running": False,
     "condo_sensor": {},
@@ -65,7 +66,6 @@ state: Dict[str, Any] = {
     "sensor": {},
     "presence": {},
     "sensor_history": [],
-    "condo_history": [],
     "available_commands": ["power_on", "power_off", "youtube", "netflix", "disney", "prime", "appletv", "browser", "livetv", "home", "viu", "hbo", "hdmi1", "hdmi2", "hdmi3", "hdmi4", "volume_up", "volume_down", "mute", "unmute", "up", "down", "left", "right", "ok", "back", "home_key"],
 }
 
@@ -114,9 +114,8 @@ def update_condo_sensor_from_topic(data: Dict[str, Any]) -> None:
     sensor = {**data, "ts": now, "topic": CONDO_SENSOR_TOPIC}
     state["condo_sensor"] = sensor
     state["sensor"] = sensor
-    point = {**sensor}
     history = state.setdefault("condo_sensor_history", [])
-    history.append(point)
+    history.append({**sensor})
     history = prune_history(history)
     state["condo_sensor_history"] = history
     state["sensor_history"] = history
@@ -228,6 +227,7 @@ mqttc.on_message = on_message
 
 @app.on_event("startup")
 def startup():
+    sync_snapshot_ip_and_cache()
     preload_snapshot_cache()
     start_light_poller()
     state["mqtt_subscription_log"] = "subscribed MQTT topics: " + ", ".join(CONDO_MQTT_TOPICS)
@@ -298,41 +298,103 @@ def snapshot_items() -> List[Dict[str, Any]]:
     return [x for x in items if isinstance(x, dict)]
 
 
+def item_device_id(item: Dict[str, Any]) -> str | None:
+    for key in ("id", "gwId", "devId", "device_id", "deviceId"):
+        value = item.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def item_mac(item: Dict[str, Any]) -> str | None:
+    for key in ("mac", "macAddress", "mac_address", "node_id"):
+        value = item.get(key)
+        if value:
+            return str(value).lower().replace(":", "").replace("-", "")
+    return None
+
+
+def item_dps(item: Dict[str, Any]) -> Dict[str, Any]:
+    raw_dps = item.get("dps") or item.get("data", {}).get("dps") or {}
+    dps = raw_dps.get("dps") if isinstance(raw_dps, dict) and isinstance(raw_dps.get("dps"), dict) else raw_dps
+    return dps if isinstance(dps, dict) else {}
+
+
+def item_ip(item: Dict[str, Any]) -> str | None:
+    ip = item.get("ip") or item.get("ip_address") or item.get("address")
+    return str(ip) if ip else None
+
+
+def item_version(item: Dict[str, Any]) -> Any:
+    return item.get("ver") or item.get("version")
+
+
 def snapshot_meta_by_id() -> Dict[str, Dict[str, Any]]:
     found: Dict[str, Dict[str, Any]] = {}
     for item in snapshot_items():
-        dev_id = item.get("gwId") or item.get("id") or item.get("devId")
+        dev_id = item_device_id(item)
         if dev_id:
-            found[str(dev_id)] = item
+            found[dev_id] = item
     return found
 
 
 def snapshot_dps_by_id() -> Dict[str, Dict[str, Any]]:
     found: Dict[str, Dict[str, Any]] = {}
     for item in snapshot_items():
-        dev_id = item.get("gwId") or item.get("id") or item.get("devId")
-        raw_dps = item.get("dps") or item.get("data", {}).get("dps") or {}
-        dps = raw_dps.get("dps") if isinstance(raw_dps, dict) and isinstance(raw_dps.get("dps"), dict) else raw_dps
-        if dev_id and isinstance(dps, dict):
-            found[str(dev_id)] = dps
+        dev_id = item_device_id(item)
+        dps = item_dps(item)
+        if dev_id and dps:
+            found[dev_id] = dps
     return found
 
 
+def build_snapshot_indexes() -> Dict[str, Dict[str, Dict[str, Any]]]:
+    by_id: Dict[str, Dict[str, Any]] = {}
+    by_mac: Dict[str, Dict[str, Any]] = {}
+    for item in snapshot_items():
+        dev_id = item_device_id(item)
+        mac = item_mac(item)
+        if dev_id:
+            by_id[dev_id] = item
+        if mac:
+            by_mac[mac] = item
+    return {"id": by_id, "mac": by_mac}
+
+
+def matching_snapshot_item(dev: Dict[str, Any], indexes: Dict[str, Dict[str, Dict[str, Any]]]) -> Dict[str, Any] | None:
+    dev_id = item_device_id(dev)
+    if dev_id and dev_id in indexes["id"]:
+        return indexes["id"][dev_id]
+    mac = item_mac(dev)
+    if mac and mac in indexes["mac"]:
+        return indexes["mac"][mac]
+    return None
+
+
 def sync_devices_from_snapshot(devices: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    snap = snapshot_meta_by_id()
+    indexes = build_snapshot_indexes()
     changed = False
     for dev in devices:
-        item = snap.get(str(dev.get("id")))
+        item = matching_snapshot_item(dev, indexes)
         if not item:
             continue
-        ip = item.get("ip")
-        ver = item.get("ver") or item.get("version")
-        if ip and dev.get("ip") != ip:
-            dev["ip"] = ip
+        old_ip = dev.get("ip")
+        new_ip = item_ip(item)
+        target = device_target(dev)
+        if new_ip and old_ip != new_ip:
+            dev["ip"] = new_ip
             changed = True
+            log = f"light ip updated: {target} {old_ip or '-'} -> {new_ip}"
+            state.setdefault("tuya_snapshot_sync_log", []).append({"ts": int(time.time()), "message": log})
+            state["tuya_snapshot_sync_log"] = state["tuya_snapshot_sync_log"][-50:]
+            print(log, flush=True)
+        ver = item_version(item)
         if ver and dev.get("version") != ver:
             dev["version"] = ver
             changed = True
+        dps = item_dps(item)
+        if dps:
+            cache_dps(dev, dps, "snapshot")
     if changed:
         try:
             with open(TUYA_DEVICES_FILE, "w", encoding="utf-8") as f:
@@ -341,6 +403,20 @@ def sync_devices_from_snapshot(devices: List[Dict[str, Any]]) -> List[Dict[str, 
         except Exception as exc:
             state["tuya_devices_save_error"] = repr(exc)
     return devices
+
+
+def sync_snapshot_ip_and_cache() -> None:
+    if not os.path.exists(TUYA_SNAPSHOT_FILE):
+        state["tuya_snapshot_sync_status"] = "snapshot_missing"
+        return
+    try:
+        devices = load_json(TUYA_DEVICES_FILE)
+        sync_devices_from_snapshot(devices)
+        state["tuya_snapshot_sync_status"] = "ok"
+        state["tuya_snapshot_sync_ts"] = int(time.time())
+    except Exception as exc:
+        state["tuya_snapshot_sync_status"] = "error"
+        state["tuya_snapshot_sync_error"] = repr(exc)
 
 
 def load_all_devices() -> List[Dict[str, Any]]:
@@ -467,6 +543,7 @@ def cache_first_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]])
 
 
 def cache_first_status_devices() -> List[Dict[str, Any]]:
+    sync_snapshot_ip_and_cache()
     snap = snapshot_dps_by_id()
     return [cache_first_status(dev, snap) for dev in load_lights()]
 
@@ -616,6 +693,7 @@ def get_light_status_deep(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any
 
 
 def deep_status_devices() -> List[Dict[str, Any]]:
+    sync_snapshot_ip_and_cache()
     snap = snapshot_dps_by_id()
     devices = load_lights()
     results = []
@@ -630,6 +708,7 @@ def deep_status_devices() -> List[Dict[str, Any]]:
 
 
 def preload_snapshot_cache():
+    sync_snapshot_ip_and_cache()
     state["snapshot_preload_ts"] = int(time.time())
     state["snapshot_cache_ready"] = True
 
@@ -836,11 +915,13 @@ def condo_history():
 
 @app.get("/api/lights")
 def lights():
+    sync_snapshot_ip_and_cache()
     return {"ok": True, "devices": [{"name": d.get("name"), "target": device_target(d), "ip": d.get("ip")} for d in load_lights()]}
 
 
 @app.get("/api/light/status/{target}")
 def light_status_one(target: str):
+    sync_snapshot_ip_and_cache()
     snap = snapshot_dps_by_id()
     dev = select_single_light(target)
     return {"ok": True, "source": "single-fast", "device": fast_light_status(dev, snap)}
