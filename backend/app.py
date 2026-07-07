@@ -1,6 +1,7 @@
 import json
 import multiprocessing
 import os
+import socket
 import threading
 import time
 from typing import Any, Dict, List
@@ -23,6 +24,7 @@ CONDO_PRESENCE_SEEM_TOPIC = "condo/presence/seem"
 CONDO_MQTT_TOPICS = [CONDO_SENSOR_TOPIC, CONDO_PRESENCE_BEER_TOPIC, CONDO_PRESENCE_SEEM_TOPIC]
 TUYA_DEVICES_FILE = os.getenv("TUYA_DEVICES_FILE", "/root/tuya/devices.json")
 TUYA_SNAPSHOT_FILE = os.getenv("TUYA_SNAPSHOT_FILE", "/root/tuya/snapshot.json")
+CAMERA_CONFIG_FILE = os.getenv("CAMERA_CONFIG_FILE", "/opt/smart-condo-dashboard-run/config/cameras.local.json")
 LAMPTAN_PRODUCT = "LAMPTAN Jarton Bulb CCT+RGB 11w"
 LAST_SEEN_TTL_SEC = 300
 CACHE_ONLINE_TTL_SEC = 300
@@ -36,6 +38,8 @@ APPLY_VERIFY_FIRST_DELAY_SEC = 2.0
 LIVE_STATUS_DEVICE_DELAY_SEC = 0.3
 STATUS_READ_TIMEOUT_SEC = 5.0
 APPLY_ALL_RETRIES = 4
+CAMERA_TCP_TIMEOUT_SEC = 1.0
+CAMERA_FALLBACK_PORTS = [80, 443, 554, 8554, 8080]
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
@@ -43,7 +47,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="2.0.10")
+app = FastAPI(title="Smart Condo Dashboard", version="2.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -416,6 +420,58 @@ def load_all_devices() -> List[Dict[str, Any]]:
 def load_lights() -> List[Dict[str, Any]]:
     devices = load_all_devices()
     return [d for d in devices if d.get("product_name") == LAMPTAN_PRODUCT and d.get("ip") and d.get("id") and d.get("key")]
+
+
+def load_camera_config() -> List[Dict[str, Any]]:
+    data = load_json_optional(CAMERA_CONFIG_FILE)
+    if not data:
+        return []
+    if isinstance(data, list):
+        return [x for x in data if isinstance(x, dict)]
+    if isinstance(data, dict):
+        cameras = data.get("cameras", [])
+        return [x for x in cameras if isinstance(x, dict)] if isinstance(cameras, list) else []
+    return []
+
+
+def tcp_check(ip: str, port: int, timeout: float = CAMERA_TCP_TIMEOUT_SEC) -> bool:
+    try:
+        with socket.create_connection((ip, int(port)), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def camera_has_rtsp(cam: Dict[str, Any]) -> bool:
+    return bool(cam.get("rtsp") or cam.get("rtsp_url") or cam.get("rtsp_path") or cam.get("rtsp_port") or cam.get("has_rtsp"))
+
+
+def camera_online(cam: Dict[str, Any], has_rtsp: bool) -> bool:
+    ip = str(cam.get("ip") or "").strip()
+    if not ip:
+        return False
+    if has_rtsp and tcp_check(ip, int(cam.get("rtsp_port") or 554)):
+        return True
+    ports = cam.get("ports") if isinstance(cam.get("ports"), list) else CAMERA_FALLBACK_PORTS
+    for port in ports:
+        try:
+            if tcp_check(ip, int(port)):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def public_camera(cam: Dict[str, Any]) -> Dict[str, Any]:
+    has_rtsp = camera_has_rtsp(cam)
+    return {
+        "id": str(cam.get("id") or cam.get("name") or cam.get("ip") or "camera"),
+        "name": str(cam.get("name") or "Camera"),
+        "ip": str(cam.get("ip") or ""),
+        "brand": str(cam.get("brand") or ""),
+        "online": camera_online(cam, has_rtsp),
+        "has_rtsp": has_rtsp,
+    }
 
 
 def select_lights(target: str) -> List[Dict[str, Any]]:
@@ -927,6 +983,11 @@ def lights_status_deep():
 @app.post("/api/lights/refresh")
 def lights_refresh():
     return {"ok": True, "source": "manual-live", "devices": cache_first_status_devices()}
+
+
+@app.get("/api/cameras")
+def cameras():
+    return {"ok": True, "cameras": [public_camera(cam) for cam in load_camera_config()]}
 
 
 @app.get("/api/scenes")
