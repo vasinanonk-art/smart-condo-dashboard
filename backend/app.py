@@ -43,7 +43,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="2.0.7")
+app = FastAPI(title="Smart Condo Dashboard", version="2.0.8")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -483,10 +483,21 @@ def cache_online(dev: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
     return item
 
 
+def normalize_dps(dps: Dict[str, Any]) -> Dict[str, Any]:
+    return {str(k): v for k, v in dps.items()} if isinstance(dps, dict) else {}
+
+
 def cache_dps(dev: Dict[str, Any], dps: Dict[str, Any], source: str = "command") -> Dict[str, Any]:
+    incoming = normalize_dps(dps)
     cached = state["light_status_cache"].get(dev["id"], {})
     old_dps = ((cached.get("result") or {}).get("dps") or {}).copy()
-    old_dps.update({str(k): v for k, v in dps.items()})
+    if source == "snapshot" and cached and cached.get("source") != "snapshot" and old_dps:
+        merged = incoming.copy()
+        merged.update(old_dps)
+        item = {**status_base(dev), "source": cached.get("source", "command"), "result": {"dps": merged}, "last_seen_ts": cached.get("last_seen_ts", int(time.time())), "online": True, "status": cached.get("status", "online")}
+        state["light_status_cache"][dev["id"]] = item
+        return item
+    old_dps.update(incoming)
     return cache_online(dev, {**status_base(dev), "source": source, "result": {"dps": old_dps}})
 
 
@@ -677,6 +688,28 @@ def verify_dp_after_command(dev: Dict[str, Any], dp: int, value: Any, command_re
         actual = dps.get(str(dp)) if str(dp) in dps else dps.get(dp)
         raise RuntimeError({"verify_failed": True, "dp": dp, "expected": value, "actual": actual, "dps": dps, "command_result": command_result})
     return {"ok": True, "verified": True, "dp": dp, "value": value, "dps": dps, "command_result": command_result}
+
+
+def extract_command_dps(result: Any) -> Dict[str, Any]:
+    if not isinstance(result, dict):
+        return {}
+    dps = extract_dps(result)
+    if dps:
+        return normalize_dps(dps)
+    if result.get("dp") is not None and result.get("value") is not None:
+        return {str(result["dp"]): result["value"]}
+    for key in ("result", "command_result"):
+        nested = result.get(key)
+        dps = extract_command_dps(nested)
+        if dps:
+            return dps
+    return {}
+
+
+def merge_command_cache(dev: Dict[str, Any], result: Any) -> None:
+    dps = extract_command_dps(result)
+    if dps:
+        cache_dps(dev, dps, "command")
 
 
 def get_light_status_deep(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]] | None = None) -> Dict[str, Any]:
@@ -880,12 +913,15 @@ def apply_scene(dev: Dict[str, Any], scene: str) -> Dict[str, Any]:
     return apply_scene_config(dev, scenes[key])
 
 
-def execute_for_target(target: str, fn, delay_between_devices: float = 0.0):
+def execute_for_target(target: str, fn, delay_between_devices: float = 0.0, update_command_cache: bool = False):
     results = []
     devices = select_lights(target)
     for idx, dev in enumerate(devices):
         try:
-            results.append({"name": dev.get("name"), "ok": True, "result": fn(dev)})
+            result = fn(dev)
+            if update_command_cache:
+                merge_command_cache(dev, result)
+            results.append({"name": dev.get("name"), "ok": True, "result": result})
         except Exception as exc:
             results.append({"name": dev.get("name"), "ok": False, "error": repr(exc)})
         if delay_between_devices and idx < len(devices) - 1:
@@ -986,9 +1022,9 @@ def favorite_run(body: FavoriteRunCommand):
 @app.post("/api/light")
 def light_control(body: LightCommand):
     if is_all_target(body.target):
-        results = execute_for_target(body.target, lambda dev: apply_light_all_reliable(dev, body), delay_between_devices=APPLY_ALL_DEVICE_DELAY_SEC)
+        results = execute_for_target(body.target, lambda dev: apply_light_all_reliable(dev, body), delay_between_devices=APPLY_ALL_DEVICE_DELAY_SEC, update_command_cache=True)
     else:
-        results = execute_for_target(body.target, lambda dev: apply_light(dev, body))
+        results = execute_for_target(body.target, lambda dev: apply_light(dev, body), update_command_cache=True)
     state["last_light_cmd"] = body.model_dump()
     state["last_light_cmd_ts"] = int(time.time())
     return {"ok": all(r["ok"] for r in results), "target": body.target, "action": body.action, "results": results}
