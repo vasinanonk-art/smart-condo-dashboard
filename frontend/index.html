@@ -27,7 +27,7 @@
     input,select{background:#0d1116;color:var(--text);border:1px solid #34404c;border-radius:14px;padding:12px;font-size:15px}
     input[type=range]{padding:0;accent-color:var(--blue)}input[type=number]{width:110px;text-align:right;font-variant-numeric:tabular-nums}
     .buttons{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.buttons.three{grid-template-columns:repeat(3,1fr)}
-    .row{display:grid;grid-template-columns:130px 1fr 110px;gap:10px;align-items:center;margin:10px 0}.row label{color:var(--muted);font-weight:700}
+    .row{display:grid;grid-template-columns:130px 1fr 290px;gap:10px;align-items:center;margin:10px 0}.row label{color:var(--muted);font-weight:700}
     .actions{display:flex;gap:10px;flex-wrap:wrap}.actions button{min-width:130px}
     .selected{display:flex;justify-content:space-between;gap:12px;align-items:center;background:#0d1116;border:1px solid var(--line);border-radius:16px;padding:12px;margin-bottom:12px}
     .selected strong{display:block}.selected small{color:var(--muted)}
@@ -68,7 +68,7 @@
             <option value="bedroom_1">Bedroom 1</option><option value="bedroom_2">Bedroom 2</option><option value="bedroom_3">Bedroom 3</option>
             <option value="all">All Lights</option>
           </select>
-          <button class="ghost" onclick="refreshLightsLive()">Live Refresh</button>
+          <div class="actions"><button class="ghost" onclick="refreshLightsLive()">Live Refresh</button><button class="ghost" onclick="refreshLightsDeep()">Deep Refresh</button></div>
         </div>
         <div class="row">
           <label>Brightness</label>
@@ -92,7 +92,7 @@
         <div class="section-title">Favorites</div><div id="favoriteButtons" class="buttons light-actions"><button disabled>Loading favorites...</button></div>
         <div class="section-title">Scenes</div><div id="sceneButtons" class="buttons light-actions"><button disabled>Loading scenes...</button></div>
         <div class="section-title">Device Status</div><div id="lightStatus" class="devgrid"><div class="dev">Loading status...</div></div>
-        <div class="small">State model: polling updates <b>deviceState</b> only. User input updates <b>draftState</b> only. Apply sends draft. Cancel restores draft from deviceState.</div>
+        <div class="small">Live status is cache-first and fast. Deep Refresh performs direct TinyTuya diagnostics and may take 30–60 seconds.</div>
       </section>
 
       <section class="card full">
@@ -151,8 +151,9 @@ function statusText(dev){if(dev.status==='unstable')return ['Unstable','warntext
 function lightSortRank(dev){const idx=LIGHT_ORDER.indexOf(dev.target);return idx>=0?idx:LIGHT_ORDER.length}
 function renderLightStatus(){const box=document.getElementById('lightStatus');const values=Object.values(deviceState.lights).sort((a,b)=>lightSortRank(a)-lightSortRank(b)||String(a.target||'').localeCompare(String(b.target||'')));box.innerHTML='';if(!values.length){box.innerHTML='<div class="dev">No light status</div>';renderSelected();return}values.forEach(dev=>{const st=statusText(dev);const el=document.createElement('div');el.className='dev light-card'+(dev.target===draftState.target?' active':'');el.onclick=()=>selectTarget(dev.target);el.innerHTML=`<div class="devtop"><span><span class="dot ${st[2]}"></span>${dev.name||dev.target}</span><span class="${st[1]}">${st[0]}</span></div><div class="devmeta">${dev.ip||'-'} · ${dev.source||'-'}<br>B:${dpValue(dev,22,'-')} · T:${dpValue(dev,23,'-')} · Mode:${dpValue(dev,21,'-')}</div>`;box.appendChild(el)});renderSelected()}
 function mergeLightDevices(devices){(devices||[]).forEach(dev=>{if(dev&&dev.target)deviceState.lights[dev.target]=dev})}
-async function loadLightStatus(){try{const j=await getJson('/api/lights/status-fast');mergeLightDevices(j.devices||[]);renderLightStatus()}catch(e){document.getElementById('lightStatus').innerHTML='<div class="dev">Status failed: '+e.message+'</div>'}}
+async function loadLightStatus(){try{const j=await getJson('/api/lights/status-live');mergeLightDevices(j.devices||[]);renderLightStatus()}catch(e){document.getElementById('lightStatus').innerHTML='<div class="dev">Status failed: '+e.message+'</div>'}}
 async function refreshLightsLive(){try{const j=await getJson('/api/lights/status-live');mergeLightDevices(j.devices||[]);renderLightStatus();show('Live status refreshed')}catch(e){show('ERR: '+e.message)}}
+async function refreshLightsDeep(){if(lightBusy)return;setLightBusy(true);try{show('Deep refreshing...');const j=await getJson('/api/lights/status-deep');mergeLightDevices(j.devices||[]);renderLightStatus();show('Deep refresh complete')}catch(e){show('ERR: '+e.message)}finally{setTimeout(()=>setLightBusy(false),150)}}
 async function sendLight(action,data,label,target=draftState.target){const r=await post('/api/light',Object.assign({target,action},data));draftState.dirty=false;return r}
 async function applyDraft(){if(lightBusy)return;normalizeDraftInput('brightness');normalizeDraftInput('temperature');setLightBusy(true);try{const target=draftState.target;show('Applying brightness...');await sendLight('brightness',{value:Number(draftState.brightness)},'Brightness',target);await sleep(1500);show('Applying temperature...');await sendLight('temperature',{value:Number(draftState.temperature)},'Temperature',target);await sleep(2000);await refreshLightsLive();show('Apply complete')}catch(e){show('ERR: '+e.message)}finally{setTimeout(()=>setLightBusy(false),150)}}
 async function applyDraftAll(){if(lightBusy)return;normalizeDraftInput('brightness');normalizeDraftInput('temperature');setLightBusy(true);try{show('Applying brightness...');await sendLight('brightness',{value:Number(draftState.brightness)},'Brightness All','all');await sleep(1500);show('Applying temperature...');await sendLight('temperature',{value:Number(draftState.temperature)},'Temperature All','all');await sleep(2000);await refreshLightsLive();show('Apply complete')}catch(e){show('ERR: '+e.message)}finally{setTimeout(()=>setLightBusy(false),150)}}
