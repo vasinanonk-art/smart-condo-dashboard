@@ -21,6 +21,7 @@ TUYA_DEVICES_FILE = os.getenv("TUYA_DEVICES_FILE", "/root/tuya/devices.json")
 TUYA_SNAPSHOT_FILE = os.getenv("TUYA_SNAPSHOT_FILE", "/root/tuya/snapshot.json")
 LAMPTAN_PRODUCT = "LAMPTAN Jarton Bulb CCT+RGB 11w"
 LAST_SEEN_TTL_SEC = 180
+CACHE_ONLINE_TTL_SEC = 120
 ERR_905_LAST_SEEN_TTL_SEC = 60
 POLL_INTERVAL_SEC = 4
 HISTORY_MAX_POINTS = 2000
@@ -38,7 +39,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="2.0.4")
+app = FastAPI(title="Smart Condo Dashboard", version="2.0.5")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -381,13 +382,39 @@ def fast_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) 
     return {**status_base(dev), "online": False, "status": "unknown", "source": "cache", "result": {"dps": {}}}
 
 
+def cache_first_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    base = status_base(dev)
+    cached = any_cached_status_with_dps(dev)
+    now = int(time.time())
+    if cached:
+        age = max(0, now - int(cached.get("last_seen_ts", 0)))
+        return {
+            **base,
+            "source": "last_seen",
+            "result": {"dps": dpsOf(cached)},
+            "last_seen_ts": cached.get("last_seen_ts"),
+            "age_sec": age,
+            "online": True,
+            "status": "online" if age < CACHE_ONLINE_TTL_SEC else "unstable",
+        }
+    snap_dps = snapshot.get(dev.get("id"))
+    if snap_dps:
+        return {**base, "source": "snapshot", "result": {"dps": snap_dps}, "online": True, "status": "unstable"}
+    return {**base, "source": "cache", "result": {"dps": {}}, "online": False, "status": "offline"}
+
+
+def cache_first_status_devices() -> List[Dict[str, Any]]:
+    snap = snapshot_dps_by_id()
+    return [cache_first_status(dev, snap) for dev in load_lights()]
+
+
 def unstable_from_cached(dev: Dict[str, Any], cached: Dict[str, Any], last_error: Dict[str, Any]) -> Dict[str, Any]:
     return {**cached, "online": True, "status": "unstable", "source": "last_seen", "last_error": last_error}
 
 
 def unstable_from_snapshot(dev: Dict[str, Any], snap_dps: Dict[str, Any], last_error: Dict[str, Any]) -> Dict[str, Any]:
-    item = cache_dps(dev, snap_dps, "snapshot")
-    return {**item, "online": True, "status": "unstable", "source": "snapshot", "last_error": last_error}
+    item = {**status_base(dev), "source": "snapshot", "result": {"dps": snap_dps}, "online": True, "status": "unstable"}
+    return {**item, "last_error": last_error}
 
 
 def fallback_status(dev: Dict[str, Any], base: Dict[str, Any], error_item: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
@@ -530,28 +557,26 @@ def verify_dp_after_command(dev: Dict[str, Any], dp: int, value: Any, command_re
     return {"ok": True, "verified": True, "dp": dp, "value": value, "dps": dps, "command_result": command_result}
 
 
-def get_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]] | None = None) -> Dict[str, Any]:
+def get_light_status_deep(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]] | None = None) -> Dict[str, Any]:
     snapshot = snapshot or snapshot_dps_by_id()
     base = status_base(dev)
-    result = read_status_once(dev, "status-live")
+    result = read_status_once(dev, "status-deep")
     if tuya_ok(result):
         return cache_online(dev, {**base, "source": "direct", "result": result})
-    if tuya_err(result) == "905" or result.get("timeout"):
-        time.sleep(APPLY_ALL_STATUS_RETRY_DELAY_SEC)
-        retry = read_status_once(dev, "status-live-retry", retry_count=1)
-        if tuya_ok(retry):
-            return cache_online(dev, {**base, "source": "direct", "result": retry})
-        return fallback_status(dev, base, retry, snapshot)
-    return fallback_status(dev, base, result, snapshot)
+    time.sleep(APPLY_ALL_STATUS_RETRY_DELAY_SEC)
+    retry = read_status_once(dev, "status-deep-retry", retry_count=1)
+    if tuya_ok(retry):
+        return cache_online(dev, {**base, "source": "direct", "result": retry})
+    return fallback_status(dev, base, retry, snapshot)
 
 
-def live_status_devices() -> List[Dict[str, Any]]:
+def deep_status_devices() -> List[Dict[str, Any]]:
     snap = snapshot_dps_by_id()
     devices = load_lights()
     results = []
     for idx, dev in enumerate(devices):
         try:
-            results.append(get_light_status(dev, snap))
+            results.append(get_light_status_deep(dev, snap))
         except Exception as exc:
             results.append(fallback_status(dev, status_base(dev), {"exception": repr(exc)}, snap))
         if idx < len(devices) - 1:
@@ -563,23 +588,17 @@ def preload_snapshot_cache():
     snap = snapshot_dps_by_id()
     for dev in load_lights():
         dps = snap.get(dev.get("id"))
-        if dps:
-            cache_dps(dev, dps, "snapshot")
+        if dps and not state["light_status_cache"].get(dev["id"]):
+            state["light_status_cache"][dev["id"]] = {**status_base(dev), "source": "snapshot", "result": {"dps": snap_dps_by_id if False else dps}, "last_seen_ts": 0, "status": "unstable", "online": True}
     state["snapshot_preload_ts"] = int(time.time())
 
 
 def light_poller_loop():
     state["poller_running"] = True
-    idx = 0
     while state.get("poller_running"):
         try:
-            lights = load_lights()
-            if lights:
-                dev = lights[idx % len(lights)]
-                get_light_status(dev)
-                idx += 1
-                state["poller_last_device"] = dev.get("name")
-                state["poller_last_ts"] = int(time.time())
+            state["poller_source"] = "cache-only"
+            state["poller_last_ts"] = int(time.time())
         except Exception as exc:
             state["poller_error"] = repr(exc)
         time.sleep(POLL_INTERVAL_SEC)
@@ -788,24 +807,27 @@ def light_status_one(target: str):
 
 @app.get("/api/lights/status")
 def lights_status():
-    snap = snapshot_dps_by_id()
-    return {"ok": True, "source": "fast", "devices": [fast_light_status(dev, snap) for dev in load_lights()]}
+    return {"ok": True, "source": "live", "devices": cache_first_status_devices()}
 
 
 @app.get("/api/lights/status-fast")
 def lights_status_fast():
-    snap = snapshot_dps_by_id()
-    return {"ok": True, "source": "fast", "devices": [fast_light_status(dev, snap) for dev in load_lights()]}
+    return {"ok": True, "source": "live", "devices": cache_first_status_devices()}
 
 
 @app.get("/api/lights/status-live")
 def lights_status_live():
-    return {"ok": True, "source": "live", "devices": live_status_devices()}
+    return {"ok": True, "source": "live", "devices": cache_first_status_devices()}
+
+
+@app.get("/api/lights/status-deep")
+def lights_status_deep():
+    return {"ok": True, "source": "deep", "devices": deep_status_devices()}
 
 
 @app.post("/api/lights/refresh")
 def lights_refresh():
-    return {"ok": True, "source": "manual-live", "devices": live_status_devices()}
+    return {"ok": True, "source": "manual-live", "devices": cache_first_status_devices()}
 
 
 @app.get("/api/scenes")
