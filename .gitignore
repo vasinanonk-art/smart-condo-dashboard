@@ -7,3 +7,8 @@ venv/
 .env
 .DS_Store
 *.log
+
+# Local runtime config with camera credentials
+cameras.local.json
+config/cameras.local.json
+*-run/config/cameras.local.json
