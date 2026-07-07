@@ -10,7 +10,7 @@ import paho.mqtt.client as mqtt
 import tinytuya
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -291,6 +291,16 @@ def load_json_optional(path: str) -> Any:
             return json.load(f)
     except Exception:
         return None
+
+
+def json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [json_safe(v) for v in value]
+    return repr(value)
 
 
 def load_scenes() -> Dict[str, Dict[str, Any]]:
@@ -963,7 +973,7 @@ def health():
 
 @app.get("/api/state")
 def get_state():
-    return state
+    return JSONResponse(content=json_safe(state), status_code=200)
 
 
 @app.get("/api/condo/status")
