@@ -1,4 +1,5 @@
 import json
+import multiprocessing
 import os
 import threading
 import time
@@ -28,6 +29,7 @@ APPLY_ALL_DEVICE_DELAY_SEC = 0.8
 APPLY_ALL_STATUS_RETRY_DELAY_SEC = 1.0
 APPLY_VERIFY_FIRST_DELAY_SEC = 2.0
 LIVE_STATUS_DEVICE_DELAY_SEC = 0.3
+STATUS_READ_TIMEOUT_SEC = 5.0
 APPLY_ALL_RETRIES = 4
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,7 +38,7 @@ FRONTEND_DIR = os.path.join(APP_DIR, "frontend")
 SCENES_FILE = os.path.join(APP_DIR, "config", "scenes.json")
 FAVORITES_FILE = os.path.join(APP_DIR, "config", "favorites.json")
 
-app = FastAPI(title="Smart Condo Dashboard", version="2.0.3")
+app = FastAPI(title="Smart Condo Dashboard", version="2.0.4")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 state: Dict[str, Any] = {
@@ -344,9 +346,20 @@ def cache_dps(dev: Dict[str, Any], dps: Dict[str, Any], source: str = "command")
     return cache_online(dev, {**status_base(dev), "source": source, "result": {"dps": old_dps}})
 
 
+def dpsOf(item: Dict[str, Any]) -> Dict[str, Any]:
+    return ((item or {}).get("result") or {}).get("dps") or {}
+
+
 def fresh_cached_status(dev: Dict[str, Any], ttl: int = LAST_SEEN_TTL_SEC) -> Dict[str, Any] | None:
     cached = state["light_status_cache"].get(dev["id"])
     if cached and int(time.time()) - int(cached.get("last_seen_ts", 0)) <= ttl:
+        return cached
+    return None
+
+
+def any_cached_status_with_dps(dev: Dict[str, Any]) -> Dict[str, Any] | None:
+    cached = state["light_status_cache"].get(dev["id"])
+    if cached and dpsOf(cached):
         return cached
     return None
 
@@ -366,6 +379,26 @@ def fast_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) 
     if snap_dps:
         return cache_dps(dev, snap_dps, "snapshot")
     return {**status_base(dev), "online": False, "status": "unknown", "source": "cache", "result": {"dps": {}}}
+
+
+def unstable_from_cached(dev: Dict[str, Any], cached: Dict[str, Any], last_error: Dict[str, Any]) -> Dict[str, Any]:
+    return {**cached, "online": True, "status": "unstable", "source": "last_seen", "last_error": last_error}
+
+
+def unstable_from_snapshot(dev: Dict[str, Any], snap_dps: Dict[str, Any], last_error: Dict[str, Any]) -> Dict[str, Any]:
+    item = cache_dps(dev, snap_dps, "snapshot")
+    return {**item, "online": True, "status": "unstable", "source": "snapshot", "last_error": last_error}
+
+
+def fallback_status(dev: Dict[str, Any], base: Dict[str, Any], error_item: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    last_error = {**base, "source": "direct", "result": error_item}
+    cached = any_cached_status_with_dps(dev)
+    if cached:
+        return unstable_from_cached(dev, cached, last_error)
+    snap_dps = snapshot.get(dev.get("id"))
+    if snap_dps:
+        return unstable_from_snapshot(dev, snap_dps, last_error)
+    return {**base, "source": "direct", "result": error_item, "online": False, "status": "offline"}
 
 
 def record_tuya_log(entry: Dict[str, Any]) -> None:
@@ -397,11 +430,63 @@ def tuya_request(dev: Dict[str, Any], send: Dict[str, Any], source: str, fn, ret
             "duration_ms": int((time.time() - start) * 1000),
             "retry_count": retry_count,
             "source": source,
+            "timeout": False,
         })
 
 
-def read_status_once(dev: Dict[str, Any], source: str, retry_count: int = 0) -> Dict[str, Any]:
-    return tuya_request(dev, {"op": "status"}, source, lambda: tuya_device(dev).status(), retry_count)
+def _tuya_status_worker(dev: Dict[str, Any], queue) -> None:
+    try:
+        queue.put({"ok": True, "result": tuya_device(dev).status()})
+    except Exception as exc:
+        queue.put({"ok": False, "exception": repr(exc)})
+
+
+def read_status_once(dev: Dict[str, Any], source: str, retry_count: int = 0, timeout_sec: float = STATUS_READ_TIMEOUT_SEC) -> Dict[str, Any]:
+    send = {"op": "status", "timeout_sec": timeout_sec}
+    start = time.time()
+    reply: Dict[str, Any] = {"Err": "905", "Error": "status_no_reply"}
+    timeout = False
+    ctx = multiprocessing.get_context("fork")
+    queue = ctx.Queue(maxsize=1)
+    proc = ctx.Process(target=_tuya_status_worker, args=(dev, queue))
+    tuya_semaphore.acquire()
+    try:
+        proc.start()
+        proc.join(timeout_sec)
+        if proc.is_alive():
+            timeout = True
+            proc.terminate()
+            proc.join(0.5)
+            reply = {"Err": "905", "Error": f"status_timeout_{timeout_sec}s", "timeout": True}
+        elif not queue.empty():
+            msg = queue.get_nowait()
+            if msg.get("ok"):
+                reply = msg.get("result") or {"Err": "905", "Error": "status_empty_result"}
+            else:
+                reply = {"Err": "905", "Error": msg.get("exception") or "status_exception"}
+        return reply
+    finally:
+        try:
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(0.2)
+        except Exception:
+            pass
+        try:
+            queue.close()
+            queue.join_thread()
+        except Exception:
+            pass
+        tuya_semaphore.release()
+        record_tuya_log({
+            "target": device_target(dev),
+            "send": send,
+            "reply": reply,
+            "duration_ms": int((time.time() - start) * 1000),
+            "retry_count": retry_count,
+            "source": source,
+            "timeout": timeout,
+        })
 
 
 def read_dps(dev: Dict[str, Any], source: str = "status") -> Dict[str, Any] | None:
@@ -411,40 +496,25 @@ def read_dps(dev: Dict[str, Any], source: str = "status") -> Dict[str, Any] | No
     return None
 
 
-def status_from_905(dev: Dict[str, Any], base: Dict[str, Any], last_error: Dict[str, Any]) -> Dict[str, Any]:
-    cached = fresh_cached_status(dev, ERR_905_LAST_SEEN_TTL_SEC)
-    if cached:
-        return {**cached, "online": True, "status": "unstable", "source": "last_seen", "last_error": {**base, "source": "direct", "result": last_error}}
-    return {**base, "source": "direct", "result": last_error, "online": False, "status": "offline"}
-
-
 def read_dps_after_command(dev: Dict[str, Any]) -> Dict[str, Any]:
     time.sleep(APPLY_VERIFY_FIRST_DELAY_SEC)
     errors = []
     for attempt in (1, 2):
-        try:
-            result = read_status_once(dev, "verify", retry_count=attempt - 1)
-            if tuya_ok(result):
-                dps = result.get("dps") or result.get("data", {}).get("dps") or {}
-                cache_dps(dev, dps, "verify")
-                return dps
-            errors.append({"attempt": attempt, "result": result})
-            if tuya_err(result) != "905":
-                break
-        except Exception as exc:
-            errors.append({"attempt": attempt, "error": repr(exc)})
+        result = read_status_once(dev, "verify", retry_count=attempt - 1)
+        if tuya_ok(result):
+            dps = result.get("dps") or result.get("data", {}).get("dps") or {}
+            cache_dps(dev, dps, "verify")
+            return dps
+        errors.append({"attempt": attempt, "result": result})
         if attempt == 1:
             time.sleep(APPLY_ALL_STATUS_RETRY_DELAY_SEC)
-    cached = fresh_cached_status(dev, ERR_905_LAST_SEEN_TTL_SEC)
+    cached = any_cached_status_with_dps(dev)
     if cached:
-        dps = dpsOf(cached)
-        if dps:
-            return dps
+        return dpsOf(cached)
+    snap_dps = snapshot_dps_by_id().get(dev.get("id"))
+    if snap_dps:
+        return snap_dps
     raise RuntimeError({"verify_status_errors": errors})
-
-
-def dpsOf(item: Dict[str, Any]) -> Dict[str, Any]:
-    return ((item or {}).get("result") or {}).get("dps") or {}
 
 
 def dps_matches(dps: Dict[str, Any], dp: int, value: Any) -> bool:
@@ -463,33 +533,16 @@ def verify_dp_after_command(dev: Dict[str, Any], dp: int, value: Any, command_re
 def get_light_status(dev: Dict[str, Any], snapshot: Dict[str, Dict[str, Any]] | None = None) -> Dict[str, Any]:
     snapshot = snapshot or snapshot_dps_by_id()
     base = status_base(dev)
-    try:
-        result = read_status_once(dev, "status-live")
-        if tuya_ok(result):
-            return cache_online(dev, {**base, "source": "direct", "result": result})
-        if tuya_err(result) == "905":
-            time.sleep(APPLY_ALL_STATUS_RETRY_DELAY_SEC)
-            retry = read_status_once(dev, "status-live-retry", retry_count=1)
-            if tuya_ok(retry):
-                return cache_online(dev, {**base, "source": "direct", "result": retry})
-            if tuya_err(retry) == "905":
-                return status_from_905(dev, base, retry)
-            result = retry
-        cached = fresh_cached_status(dev)
-        if cached:
-            return {**cached, "online": True, "status": "unstable", "source": "last_seen", "last_error": {**base, "source": "direct", "result": result}}
-        snap_dps = snapshot.get(dev.get("id"))
-        if snap_dps:
-            return cache_dps(dev, snap_dps, "snapshot")
-        return cached_or_offline(dev, {**base, "source": "direct", "result": result})
-    except Exception as exc:
-        cached = fresh_cached_status(dev)
-        if cached:
-            return {**cached, "online": True, "status": "unstable", "source": "last_seen", "last_error": {**base, "source": "direct", "error": repr(exc)}}
-        snap_dps = snapshot.get(dev.get("id"))
-        if snap_dps:
-            return cache_dps(dev, snap_dps, "snapshot")
-        return cached_or_offline(dev, {**base, "source": "direct", "error": repr(exc)})
+    result = read_status_once(dev, "status-live")
+    if tuya_ok(result):
+        return cache_online(dev, {**base, "source": "direct", "result": result})
+    if tuya_err(result) == "905" or result.get("timeout"):
+        time.sleep(APPLY_ALL_STATUS_RETRY_DELAY_SEC)
+        retry = read_status_once(dev, "status-live-retry", retry_count=1)
+        if tuya_ok(retry):
+            return cache_online(dev, {**base, "source": "direct", "result": retry})
+        return fallback_status(dev, base, retry, snapshot)
+    return fallback_status(dev, base, result, snapshot)
 
 
 def live_status_devices() -> List[Dict[str, Any]]:
@@ -497,7 +550,10 @@ def live_status_devices() -> List[Dict[str, Any]]:
     devices = load_lights()
     results = []
     for idx, dev in enumerate(devices):
-        results.append(get_light_status(dev, snap))
+        try:
+            results.append(get_light_status(dev, snap))
+        except Exception as exc:
+            results.append(fallback_status(dev, status_base(dev), {"exception": repr(exc)}, snap))
         if idx < len(devices) - 1:
             time.sleep(LIVE_STATUS_DEVICE_DELAY_SEC)
     return results
