@@ -235,6 +235,18 @@ def normalize_switch(value: Any) -> str:
     return "on" if str(value).lower() == "on" or value is True else "off"
 
 
+def normalize_states(states: Dict[Any, Any], gang_count: int) -> Dict[int, str]:
+    result = {i: "off" for i in range(1, gang_count + 1)}
+    for key, value in (states or {}).items():
+        try:
+            channel = int(key)
+        except Exception:
+            continue
+        if 1 <= channel <= gang_count:
+            result[channel] = normalize_switch(value)
+    return result
+
+
 def channel_states_for(deviceid: str, model: str, params: Dict[str, Any], gang_count: int) -> Dict[int, str]:
     states: Dict[int, str] = {i: "off" for i in range(1, gang_count + 1)}
     switches = params.get("switches") if isinstance(params.get("switches"), list) else []
@@ -305,35 +317,53 @@ def devices() -> Dict[str, Any]:
     return {"config_loaded": True, "config_path": payload["path"], "auth_status": _cache["auth_status"], "last_error": _cache["last_error"], "devices": items}
 
 
-def command_params(deviceid: str, model: str, channel: int, action: str, current: Dict[int, str]) -> tuple[Dict[str, Any], str, int | None]:
+def best_current_states(deviceid: str, model: str, raw: Dict[str, Any], items: List[Dict[str, Any]], gang_count: int) -> Dict[int, str]:
+    params = raw.get("params") if isinstance(raw.get("params"), dict) else {}
+    raw_states = channel_states_for(deviceid, model, params, gang_count)
+    raw_has_switches = isinstance(params.get("switches"), list) and len(params.get("switches")) > 0
+    raw_has_switch = "switch" in params and not uses_switches(deviceid, model, params)
+    if raw_has_switches or raw_has_switch:
+        return raw_states
+    for item in items or []:
+        if item.get("deviceid") == deviceid and isinstance(item.get("channel_states"), dict):
+            return normalize_states(item["channel_states"], gang_count)
+    return raw_states
+
+
+def full_switches_payload(channel: int, action: str, previous_states: Dict[int, str], gang_count: int) -> List[Dict[str, Any]]:
+    patched = normalize_states(previous_states, gang_count)
+    patched[channel] = action
+    return [{"outlet": i - 1, "switch": patched[i]} for i in range(1, gang_count + 1)]
+
+
+def command_params(deviceid: str, model: str, channel: int, action: str, previous_states: Dict[int, str]) -> tuple[Dict[str, Any], str, int | None, Dict[int, str], List[Dict[str, Any]] | None]:
     gang_count = gang_count_for(deviceid, model)
     channel = max(1, min(gang_count, int(channel or 1)))
+    patched_states = normalize_states(previous_states, gang_count)
+    patched_states[channel] = action
     if uses_switches(deviceid, model):
-        outlet = channel - 1
-        return {"switches": [{"outlet": outlet, "switch": action}]}, "switches", outlet
-    return {"switch": action}, "switch", None
+        switches = full_switches_payload(channel, action, previous_states, gang_count)
+        return {"switches": switches}, "switches", channel - 1, patched_states, switches
+    return {"switch": action}, "switch", None, patched_states, None
 
 
-def patch_local_state(items: List[Dict[str, Any]], deviceid: str, model: str, channel: int, action: str) -> List[Dict[str, Any]]:
+def patch_local_state(items: List[Dict[str, Any]], deviceid: str, model: str, patched_states: Dict[int, str]) -> List[Dict[str, Any]]:
     now = int(time.time())
+    gang = gang_count_for(deviceid, model)
+    states = normalize_states(patched_states, gang)
     found = False
     for item in items:
         if item.get("deviceid") == deviceid:
-            gang = gang_count_for(deviceid, item.get("model") or model)
-            states = item.get("channel_states") if isinstance(item.get("channel_states"), dict) else {i: "off" for i in range(1, gang + 1)}
-            states[int(channel)] = action
             item["last_update_ts"] = now
             item["gang_count"] = gang
             item["channels"] = list(range(1, gang + 1))
-            item["channel_states"] = states
-            item["state"] = states.get(1, action)
+            item["channel_states"] = dict(states)
+            item["state"] = states.get(1, "off")
             found = True
             break
     if not found:
         expected = EXPECTED.get(deviceid, {})
-        gang = gang_count_for(deviceid, model or expected.get("model", ""))
-        states = {i: action if i == channel else "off" for i in range(1, gang + 1)}
-        items.append({"deviceid": deviceid, "name": expected.get("name", deviceid), "model": model or expected.get("model", ""), "online": True, "state": states.get(1, action), "last_update_ts": now, "gang_count": gang, "channels": list(range(1, gang + 1)), "channel_states": states})
+        items.append({"deviceid": deviceid, "name": expected.get("name", deviceid), "model": model or expected.get("model", ""), "online": True, "state": states.get(1, "off"), "last_update_ts": now, "gang_count": gang, "channels": list(range(1, gang + 1)), "channel_states": dict(states)})
     return items
 
 
@@ -351,26 +381,37 @@ def set_state(deviceid: str, action: str, channel: int = 1) -> Dict[str, Any]:
         return {"ok": False, "error": "ewelink token unavailable", "auth_status": _cache["auth_status"], "last_error": _cache["last_error"]}
 
     current_items = cloud_devices(cfg, auth)
+    cached_items = current_items or _cache.get("devices") or configured_devices(cfg)
     raw = _cache.get("raw_devices", {}).get(deviceid, {}) if isinstance(_cache.get("raw_devices"), dict) else {}
     model = model_for(deviceid, raw)
     gang = gang_count_for(deviceid, model)
     channel = max(1, min(gang, channel))
-    current_params = raw.get("params") if isinstance(raw.get("params"), dict) else {}
-    current_states = channel_states_for(deviceid, model, current_params, gang)
-    params, shape, outlet = command_params(deviceid, model, channel, action, current_states)
+    previous_states = best_current_states(deviceid, model, raw, cached_items, gang)
+    params, shape, outlet, patched_states, switches_payload = command_params(deviceid, model, channel, action, previous_states)
 
     result = request_json(base_url({**cfg, "region": auth.get("region") or region(cfg)}) + "/v2/device/thing/status", "POST", {"type": 1, "id": deviceid, "params": params}, bearer_headers(auth))
     ok = result.get("error") in (None, 0) and not result.get("status")
-    log_command_diag({"deviceid": deviceid, "model": model, "requested_channel": channel, "resolved_outlet": outlet, "payload_shape": shape, "result_status": result.get("_http_status") or result.get("status") or result.get("error") or "ok"})
     if not ok:
+        log_command_diag({"deviceid": deviceid, "model": model, "action": action, "requested_channel": channel, "previous_channel_states": previous_states, "outgoing_switches_payload": switches_payload, "patched_channel_states": patched_states, "payload_shape": shape, "resolved_outlet": outlet, "result_status": result.get("_http_status") or result.get("status") or result.get("error"), "refresh_result": "skipped_command_failed"})
         set_diag("command_failed", {"http_status": result.get("_http_status") or result.get("status"), "error": result.get("error"), "msg": result.get("msg") or result.get("message"), "body": result.get("body")})
         return {"ok": False, "error": "ewelink command failed", "auth_status": _cache["auth_status"], "last_error": _cache["last_error"]}
 
-    refreshed = cloud_devices(cfg, auth)
-    items = refreshed if refreshed else patch_local_state(current_items or _cache.get("devices") or configured_devices(cfg), deviceid, model, channel, action)
-    if refreshed:
-        # Some eWeLink responses lag for a moment after command; make UI reflect confirmed command immediately.
-        items = patch_local_state(items, deviceid, model, channel, action)
+    deterministic_items = patch_local_state(cached_items, deviceid, model, patched_states)
+    refresh_result = "not_attempted"
+    try:
+        refreshed = cloud_devices(cfg, auth)
+        if refreshed:
+            refresh_result = "ok_patched"
+            items = patch_local_state(refreshed, deviceid, model, patched_states)
+        else:
+            refresh_result = "empty_keep_patched"
+            items = deterministic_items
+    except Exception as exc:
+        refresh_result = "failed_keep_patched"
+        set_diag("refresh_failed", {"exception": repr(exc)})
+        items = deterministic_items
+
+    log_command_diag({"deviceid": deviceid, "model": model, "action": action, "requested_channel": channel, "previous_channel_states": previous_states, "outgoing_switches_payload": switches_payload, "patched_channel_states": patched_states, "payload_shape": shape, "resolved_outlet": outlet, "result_status": result.get("_http_status") or result.get("status") or result.get("error") or "ok", "refresh_result": refresh_result})
     _cache["devices"] = items
     _cache["last_sync_ts"] = int(time.time())
     return {"ok": True, "deviceid": deviceid, "channel": channel, "action": action, "auth_status": _cache["auth_status"], "last_error": _cache["last_error"], "devices": items}
