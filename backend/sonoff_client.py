@@ -139,18 +139,17 @@ def gang_count_for(deviceid: str, model: str = "") -> int:
     return 1
 
 
-def channels_for(params: Dict[str, Any], gang_count: int) -> List[Dict[str, Any]]:
+def channel_states_for(params: Dict[str, Any], gang_count: int) -> Dict[int, str]:
+    states: Dict[int, str] = {}
     switches = params.get("switches") if isinstance(params.get("switches"), list) else []
-    result = []
     for idx in range(1, gang_count + 1):
         raw = None
         if idx - 1 < len(switches) and isinstance(switches[idx - 1], dict):
             raw = switches[idx - 1].get("switch")
         if raw is None and idx == 1:
             raw = params.get("switch")
-        state = "on" if str(raw).lower() == "on" or raw is True else "off"
-        result.append({"channel": idx, "state": state})
-    return result
+        states[idx] = "on" if str(raw).lower() == "on" or raw is True else "off"
+    return states
 
 
 def public_device(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -159,16 +158,17 @@ def public_device(item: Dict[str, Any]) -> Dict[str, Any]:
     expected = EXPECTED.get(deviceid, {})
     model = str(item.get("model") or item.get("productModel") or expected.get("model") or "")
     gang_count = gang_count_for(deviceid, model)
-    channels = channels_for(params, gang_count)
+    states = channel_states_for(params, gang_count)
     return {
         "deviceid": deviceid,
         "name": str(item.get("name") or expected.get("name") or deviceid),
         "model": model,
         "online": bool(item.get("online") or item.get("isOnline")),
-        "state": channels[0]["state"] if channels else "off",
+        "state": states.get(1, "off"),
         "last_update_ts": int(item.get("last_update_ts") or item.get("updateTime") or item.get("ts") or time.time()),
         "gang_count": gang_count,
-        "channels": channels,
+        "channels": list(range(1, gang_count + 1)),
+        "channel_states": states,
     }
 
 
@@ -176,7 +176,7 @@ def configured_devices(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     raw = cfg.get("devices") if isinstance(cfg.get("devices"), list) else []
     if raw:
         return [public_device(x) for x in raw if isinstance(x, dict)]
-    return [{"deviceid": k, "name": v["name"], "model": v["model"], "online": False, "state": "off", "last_update_ts": int(time.time()), "gang_count": int(v["gang_count"]), "channels": [{"channel": i, "state": "off"} for i in range(1, int(v["gang_count"]) + 1)]} for k, v in EXPECTED.items()]
+    return [{"deviceid": k, "name": v["name"], "model": v["model"], "online": False, "state": "off", "last_update_ts": int(time.time()), "gang_count": int(v["gang_count"]), "channels": list(range(1, int(v["gang_count"]) + 1)), "channel_states": {i: "off" for i in range(1, int(v["gang_count"]) + 1)}} for k, v in EXPECTED.items()]
 
 
 def cloud_devices(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -224,10 +224,7 @@ def set_state(deviceid: str, action: str, channel: int = 1) -> Dict[str, Any]:
     if not key:
         return {"ok": False, "error": "ewelink token unavailable", "auth_status": _cache["auth_status"], "last_error": _cache["last_error"]}
     gang_count = gang_count_for(deviceid)
-    if gang_count > 1:
-        params = {"switches": [{"outlet": channel, "switch": action}]}
-    else:
-        params = {"switch": action}
+    params = {"switches": [{"outlet": channel, "switch": action}]} if gang_count > 1 else {"switch": action}
     result = http_json(cfg, "/v2/device/thing/status", {"type": 1, "id": deviceid, "params": params}, session_key=key)
     if result.get("error") or result.get("status"):
         set_diag("command_failed", result.get("error") or result.get("status"))
@@ -239,19 +236,18 @@ def set_state(deviceid: str, action: str, channel: int = 1) -> Dict[str, Any]:
         if item.get("deviceid") == deviceid:
             item["last_update_ts"] = now
             item["gang_count"] = gang_count_for(deviceid, item.get("model", ""))
-            existing = item.get("channels") if isinstance(item.get("channels"), list) else channels_for({}, item["gang_count"])
-            for ch in existing:
-                if int(ch.get("channel", 1)) == channel:
-                    ch["state"] = action
-            item["channels"] = existing
-            item["state"] = existing[0]["state"] if existing else action
+            states = item.get("channel_states") if isinstance(item.get("channel_states"), dict) else {i: "off" for i in range(1, item["gang_count"] + 1)}
+            states[channel] = action
+            item["channel_states"] = states
+            item["channels"] = list(range(1, item["gang_count"] + 1))
+            item["state"] = states.get(1, action)
             found = True
             break
     if not found:
         expected = EXPECTED.get(deviceid, {})
         gang = gang_count_for(deviceid, expected.get("model", ""))
-        channels = [{"channel": i, "state": action if i == channel else "off"} for i in range(1, gang + 1)]
-        items.append({"deviceid": deviceid, "name": expected.get("name", deviceid), "model": expected.get("model", ""), "online": True, "state": channels[0]["state"], "last_update_ts": now, "gang_count": gang, "channels": channels})
+        states = {i: action if i == channel else "off" for i in range(1, gang + 1)}
+        items.append({"deviceid": deviceid, "name": expected.get("name", deviceid), "model": expected.get("model", ""), "online": True, "state": states.get(1, action), "last_update_ts": now, "gang_count": gang, "channels": list(range(1, gang + 1)), "channel_states": states})
     _cache["devices"] = items
     _cache["last_sync_ts"] = now
     return {"ok": True, "deviceid": deviceid, "channel": channel, "action": action, "auth_status": _cache["auth_status"], "last_error": _cache["last_error"], "devices": items}
