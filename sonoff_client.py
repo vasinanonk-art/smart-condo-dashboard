@@ -5,11 +5,13 @@ from backend.sonoff_client import *
 # Patch only Sonoff handlers so the API exposes safe diagnostics and channel control.
 try:
     import os
+    from backend.presence_stabilizer import resolve_presence
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import HTMLResponse
     from fastapi.routing import APIRouter
 except Exception:  # pragma: no cover
     os = None
+    resolve_presence = None
     FastAPI = None
     HTTPException = None
     Request = None
@@ -68,14 +70,31 @@ async def _sonoff_all_handler(request: Request):
     return _sonoff_payload(result)
 
 
+def _presence_status_handler():
+    import backend.app as app_mod
+    sensor = app_mod.state.get("condo_sensor", {})
+    raw_presence = app_mod.state.get("condo_presence", {})
+    if resolve_presence is None:
+        presence = raw_presence if isinstance(raw_presence, dict) else {}
+    else:
+        presence = resolve_presence(raw_presence)
+    app_mod.state["condo_presence"] = presence
+    app_mod.state["presence"] = presence
+    return {"ok": True, "sensor": sensor, "presence": presence}
+
+
 def _dashboard_index_handler():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(base_dir, "frontend", "index.html")
     with open(path, encoding="utf-8") as f:
         html = f.read()
-    script = '<script src="/assets/sonoff_bulk.js"></script>'
-    if script not in html:
-        html = html.replace("</body></html>", script + "</body></html>")
+    scripts = [
+        '<script src="/assets/sonoff_bulk.js"></script>',
+        '<script src="/assets/presence_stabilizer.js"></script>',
+    ]
+    for script in scripts:
+        if script not in html:
+            html = html.replace("</body></html>", script + "</body></html>")
     return HTMLResponse(html)
 
 
@@ -106,6 +125,8 @@ if APIRouter is not None and not getattr(APIRouter, "_sonoff_route_patch", False
                 endpoint = _sonoff_get_handler
             elif "POST" in methods:
                 endpoint = _sonoff_post_handler
+        elif path == "/api/condo/status" and "GET" in methods:
+            endpoint = _presence_status_handler
         elif path == "/" and "GET" in methods and HTMLResponse is not None:
             endpoint = _dashboard_index_handler
         return _orig_router_add_api_route(self, path, endpoint, **kwargs)
@@ -124,6 +145,8 @@ if FastAPI is not None and not getattr(FastAPI, "_sonoff_route_patch", False):
                 endpoint = _sonoff_get_handler
             elif "POST" in methods:
                 endpoint = _sonoff_post_handler
+        elif path == "/api/condo/status" and "GET" in methods:
+            endpoint = _presence_status_handler
         elif path == "/" and "GET" in methods and HTMLResponse is not None:
             endpoint = _dashboard_index_handler
         return _orig_fastapi_add_api_route(self, path, endpoint, **kwargs)
