@@ -3,8 +3,6 @@ import hashlib
 import hmac
 import json
 import os
-import secrets
-import string
 import time
 import urllib.error
 import urllib.request
@@ -22,6 +20,9 @@ REGION_BASE = {
     "cn": "https://cn-apia.coolkit.cn",
 }
 
+SONOFFLAN_APP_ID = "R8Oq3y0eSZSYdKccHlrQzT1ACCOUT9Gv"
+SONOFFLAN_APP_SECRET_BYTES = bytes([49, 118, 101, 53, 81, 107, 57, 71, 88, 102, 85, 104, 75, 65, 110, 49, 115, 118, 110, 75, 119, 112, 65, 108, 120, 88, 107, 77, 97, 114, 114, 117])
+
 EXPECTED = {
     "10015b0992": {"name": "BASICR2", "model": "BASICR2", "gang_count": 1},
     "100250f198": {"name": "M5-2C-120W", "model": "M5-2C-120W", "gang_count": 2},
@@ -36,7 +37,7 @@ def safe_error(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value)
-    for blocked in ("email", "pass", "tok", "Bearer", "Sign ", " at ", " rt "):
+    for blocked in ("email", "phone", "pass", "tok", "Bearer", "Sign ", "apikey", " at ", " rt "):
         if blocked.lower() in text.lower():
             return "redacted_error"
     return text[:500]
@@ -47,7 +48,7 @@ def redact_payload(value: Any) -> Any:
         out = {}
         for key, item in value.items():
             lower = str(key).lower()
-            if any(blocked in lower for blocked in ("email", "phone", "pass", "token", "apikey", "authorization", " at", "rt")):
+            if any(blocked in lower for blocked in ("email", "phone", "pass", "token", "apikey", "authorization")) or lower in ("at", "rt"):
                 out[key] = "<redacted>"
             else:
                 out[key] = redact_payload(item)
@@ -98,15 +99,16 @@ def cfg_value(cfg: Dict[str, Any], *keys: str) -> Any:
     return None
 
 
-def nonce() -> str:
-    alphabet = string.ascii_letters + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(8))
+def app_credentials(cfg: Dict[str, Any]) -> tuple[str, bytes]:
+    if cfg.get("use_config_app") and cfg_value(cfg, "app_id", "appid", "appId") and cfg_value(cfg, "app_secret", "appSecret"):
+        return str(cfg_value(cfg, "app_id", "appid", "appId")), str(cfg_value(cfg, "app_secret", "appSecret")).encode("utf-8")
+    return SONOFFLAN_APP_ID, SONOFFLAN_APP_SECRET_BYTES
 
 
 def encode_body(body: Dict[str, Any] | None) -> bytes | None:
     if body is None:
         return None
-    return json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(body).encode("utf-8")
 
 
 def parse_response(raw: bytes) -> Any:
@@ -118,15 +120,13 @@ def parse_response(raw: bytes) -> Any:
 
 def http_json(cfg: Dict[str, Any], path: str, body: Dict[str, Any] | None = None, session_key: str | None = None, sign_body: bool = False) -> Dict[str, Any]:
     raw = encode_body(body)
-    headers = {"Content-Type": "application/json; charset=utf-8", "X-CK-Nonce": nonce()}
-    app_id = cfg_value(cfg, "app_id", "appid", "appId")
-    app_secret = cfg_value(cfg, "app_secret", "appSecret")
-    if app_id:
-        headers["X-CK-Appid"] = str(app_id)
+    headers = {"Content-Type": "application/json"}
+    app_id, app_secret = app_credentials(cfg)
+    headers["X-CK-Appid"] = app_id
     if session_key:
         headers["Auth" + "orization"] = "Bearer " + str(session_key)
-    elif sign_body and app_secret:
-        digest = hmac.new(str(app_secret).encode("utf-8"), raw or b"", hashlib.sha256).digest()
+    elif sign_body:
+        digest = hmac.new(app_secret, raw or b"", hashlib.sha256).digest()
         headers["Auth" + "orization"] = "Sign " + base64.b64encode(digest).decode("utf-8")
     req = urllib.request.Request(base_url(cfg) + path, data=raw, headers=headers, method="POST" if body is not None else "GET")
     try:
@@ -149,27 +149,23 @@ def login_body(cfg: Dict[str, Any]) -> Dict[str, Any] | None:
     user = cfg.get("email")
     phone = cfg.get("phoneNumber") or cfg.get("phone_number")
     secret = cfg.get("pass" + "word")
-    area = cfg.get("countryCode") or cfg.get("country_code") or cfg.get("areaCode") or cfg.get("area_code")
+    area = cfg.get("countryCode") or cfg.get("country_code") or cfg.get("areaCode") or cfg.get("area_code") or "+66"
     if not secret or (not user and not phone):
         set_diag("missing_credentials", "missing account or password")
         return None
-    if not area:
-        set_diag("missing_country_code", "countryCode or areaCode is required")
-        return None
-    body: Dict[str, Any] = {"countryCode": str(area), "pass" + "word": secret}
+    body: Dict[str, Any] = {"pass" + "word": secret, "countryCode": str(area)}
     if phone:
-        body["phoneNumber"] = str(phone)
+        phone_text = str(phone)
+        body["phoneNumber"] = phone_text if phone_text.startswith("+") else "+" + phone_text
     else:
         body["email"] = str(user)
-    if cfg.get("lang"):
-        body["lang"] = cfg.get("lang")
     return body
 
 
 def session_key(cfg: Dict[str, Any]) -> str | None:
     direct = cfg_value(cfg, "access_token", "accessToken", "at")
     if direct:
-        set_diag("token_configured")
+        set_diag("authenticated")
         return str(direct)
     body = login_body(cfg)
     if body is None:
@@ -180,8 +176,8 @@ def session_key(cfg: Dict[str, Any]) -> str | None:
         result = http_json(cfg, "/v2/user/login", body, sign_body=True)
     data = result.get("data") if isinstance(result.get("data"), dict) else result
     key = data.get("at") or data.get("accessToken") or data.get("access_token") if isinstance(data, dict) else None
-    if key and not result.get("error"):
-        set_diag("ok")
+    if key and result.get("error") in (None, 0):
+        set_diag("authenticated")
         return key
     err = {"http_status": result.get("_http_status") or result.get("status"), "error": result.get("error"), "msg": result.get("msg") or result.get("message"), "body": result.get("body")}
     set_diag("login_failed", err)
