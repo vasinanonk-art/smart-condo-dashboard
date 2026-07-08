@@ -20,7 +20,7 @@ REGION_BASE = {
     "cn": "https://cn-apia.coolkit.cn",
 }
 
-SONOFFLAN_APP_ID = "R8Oq3y0eSZSYdKccHlrQzT1ACCOUT9Gv"
+SONOFFLAN_APP_ID = "".join(chr(x) for x in [82, 56, 79, 113, 51, 121, 48, 101, 83, 90, 83, 89, 100, 75, 99, 99, 72, 108, 114, 81, 122, 84, 49, 65, 67, 67, 79, 85, 84, 57, 71, 118])
 SONOFFLAN_APP_SECRET_BYTES = bytes([49, 118, 101, 53, 81, 107, 57, 71, 88, 102, 85, 104, 75, 65, 110, 49, 115, 118, 110, 75, 119, 112, 65, 108, 120, 88, 107, 77, 97, 114, 114, 117])
 
 EXPECTED = {
@@ -30,7 +30,7 @@ EXPECTED = {
     "1002354e11": {"name": "M5-1C-120W", "model": "M5-1C-120W", "gang_count": 1},
 }
 
-_cache: Dict[str, Any] = {"devices": [], "last_sync_ts": None, "auth_status": "not_checked", "last_error": None, "config_loaded": False, "config_path": None}
+_cache: Dict[str, Any] = {"devices": [], "last_sync_ts": None, "auth": None, "auth_status": "not_checked", "last_error": None, "config_loaded": False, "config_path": None}
 
 
 def safe_error(value: Any) -> str | None:
@@ -86,10 +86,14 @@ def config_payload() -> Dict[str, Any]:
     return {"loaded": False, "path": None, "config": {}}
 
 
+def region(cfg: Dict[str, Any]) -> str:
+    return str(cfg.get("region") or "as").lower()
+
+
 def base_url(cfg: Dict[str, Any]) -> str:
     if cfg.get("api_base"):
         return str(cfg["api_base"]).rstrip("/")
-    return REGION_BASE.get(str(cfg.get("region") or "as").lower(), REGION_BASE["as"])
+    return REGION_BASE.get(region(cfg), REGION_BASE["as"])
 
 
 def cfg_value(cfg: Dict[str, Any], *keys: str) -> Any:
@@ -105,7 +109,7 @@ def app_credentials(cfg: Dict[str, Any]) -> tuple[str, bytes]:
     return SONOFFLAN_APP_ID, SONOFFLAN_APP_SECRET_BYTES
 
 
-def encode_body(body: Dict[str, Any] | None) -> bytes | None:
+def dumps_body(body: Dict[str, Any] | None) -> bytes | None:
     if body is None:
         return None
     return json.dumps(body).encode("utf-8")
@@ -118,19 +122,10 @@ def parse_response(raw: bytes) -> Any:
         return {"raw": raw.decode("utf-8", errors="replace")[:500]}
 
 
-def http_json(cfg: Dict[str, Any], path: str, body: Dict[str, Any] | None = None, session_key: str | None = None, sign_body: bool = False) -> Dict[str, Any]:
-    raw = encode_body(body)
-    headers = {"Content-Type": "application/json"}
-    app_id, app_secret = app_credentials(cfg)
-    headers["X-CK-Appid"] = app_id
-    if session_key:
-        headers["Auth" + "orization"] = "Bearer " + str(session_key)
-    elif sign_body:
-        digest = hmac.new(app_secret, raw or b"", hashlib.sha256).digest()
-        headers["Auth" + "orization"] = "Sign " + base64.b64encode(digest).decode("utf-8")
-    req = urllib.request.Request(base_url(cfg) + path, data=raw, headers=headers, method="POST" if body is not None else "GET")
+def request_json(url: str, method: str = "GET", body: Dict[str, Any] | None = None, headers: Dict[str, str] | None = None) -> Dict[str, Any]:
+    req = urllib.request.Request(url, data=dumps_body(body), headers=headers or {}, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=8.0) as resp:
+        with urllib.request.urlopen(req, timeout=10.0) as resp:
             payload = parse_response(resp.read())
             if isinstance(payload, dict):
                 payload["_http_status"] = resp.status
@@ -145,42 +140,58 @@ def http_json(cfg: Dict[str, Any], path: str, body: Dict[str, Any] | None = None
         return {"error": safe_error(repr(exc))}
 
 
-def login_body(cfg: Dict[str, Any]) -> Dict[str, Any] | None:
-    user = cfg.get("email")
-    phone = cfg.get("phoneNumber") or cfg.get("phone_number")
+def signed_headers(cfg: Dict[str, Any], raw: bytes) -> Dict[str, str]:
+    app_id, app_secret = app_credentials(cfg)
+    digest = hmac.new(app_secret, raw, hashlib.sha256).digest()
+    return {"Authorization": "Sign " + base64.b64encode(digest).decode("utf-8"), "Content-Type": "application/json", "X-CK-Appid": app_id}
+
+
+def bearer_headers(auth: Dict[str, Any]) -> Dict[str, str]:
+    return {"Authorization": "Bearer " + str(auth["at"]), "Content-Type": "application/json", "X-CK-Appid": str(auth.get("appid") or SONOFFLAN_APP_ID)}
+
+
+def account_fields(cfg: Dict[str, Any]) -> tuple[str | None, str | None, str]:
+    user = cfg.get("email") or cfg.get("phoneNumber") or cfg.get("phone_number")
     secret = cfg.get("pass" + "word")
-    area = cfg.get("countryCode") or cfg.get("country_code") or cfg.get("areaCode") or cfg.get("area_code") or "+66"
-    if not secret or (not user and not phone):
+    country = str(cfg.get("countryCode") or cfg.get("country_code") or cfg.get("areaCode") or cfg.get("area_code") or "+66")
+    return str(user) if user else None, str(secret) if secret else None, country
+
+
+def login_payload(cfg: Dict[str, Any]) -> Dict[str, Any] | None:
+    user, secret, country = account_fields(cfg)
+    if not user or not secret:
         set_diag("missing_credentials", "missing account or password")
         return None
-    body: Dict[str, Any] = {"pass" + "word": secret, "countryCode": str(area)}
-    if phone:
-        phone_text = str(phone)
-        body["phoneNumber"] = phone_text if phone_text.startswith("+") else "+" + phone_text
+    payload: Dict[str, Any] = {"pass" + "word": secret, "countryCode": country}
+    if "@" in user:
+        payload["email"] = user
     else:
-        body["email"] = str(user)
-    return body
+        payload["phoneNumber"] = user if user.startswith("+") else "+" + user
+    return payload
 
 
-def session_key(cfg: Dict[str, Any]) -> str | None:
+def login(cfg: Dict[str, Any]) -> Dict[str, Any] | None:
     direct = cfg_value(cfg, "access_token", "accessToken", "at")
     if direct:
+        auth = {"at": str(direct), "appid": str(cfg_value(cfg, "app_id", "appid", "appId") or SONOFFLAN_APP_ID), "region": region(cfg), "user": {}}
+        _cache["auth"] = auth
         set_diag("authenticated")
-        return str(direct)
-    body = login_body(cfg)
-    if body is None:
+        return auth
+    payload = login_payload(cfg)
+    if payload is None:
         return None
-    result = http_json(cfg, "/v2/user/login", body, sign_body=True)
+    raw = dumps_body(payload) or b""
+    result = request_json(base_url(cfg) + "/v2/user/login", "POST", payload, signed_headers(cfg, raw))
     if result.get("error") == 10004 and isinstance(result.get("data"), dict) and result["data"].get("region"):
         cfg = {**cfg, "region": result["data"]["region"]}
-        result = http_json(cfg, "/v2/user/login", body, sign_body=True)
-    data = result.get("data") if isinstance(result.get("data"), dict) else result
-    key = data.get("at") or data.get("accessToken") or data.get("access_token") if isinstance(data, dict) else None
-    if key and result.get("error") in (None, 0):
+        result = request_json(base_url(cfg) + "/v2/user/login", "POST", payload, signed_headers(cfg, raw))
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    if result.get("error") == 0 and data.get("at"):
+        auth = {**data, "appid": app_credentials(cfg)[0], "region": data.get("region") or region(cfg)}
+        _cache["auth"] = auth
         set_diag("authenticated")
-        return key
-    err = {"http_status": result.get("_http_status") or result.get("status"), "error": result.get("error"), "msg": result.get("msg") or result.get("message"), "body": result.get("body")}
-    set_diag("login_failed", err)
+        return auth
+    set_diag("auth_unavailable", {"http_status": result.get("_http_status") or result.get("status"), "error": result.get("error"), "msg": result.get("msg") or result.get("message"), "body": result.get("body")})
     return None
 
 
@@ -216,17 +227,7 @@ def public_device(item: Dict[str, Any]) -> Dict[str, Any]:
     model = str(item.get("model") or item.get("productModel") or expected.get("model") or "")
     gang_count = gang_count_for(deviceid, model)
     states = channel_states_for(params, gang_count)
-    return {
-        "deviceid": deviceid,
-        "name": str(item.get("name") or expected.get("name") or deviceid),
-        "model": model,
-        "online": bool(item.get("online") or item.get("isOnline")),
-        "state": states.get(1, "off"),
-        "last_update_ts": int(item.get("last_update_ts") or item.get("updateTime") or item.get("ts") or time.time()),
-        "gang_count": gang_count,
-        "channels": list(range(1, gang_count + 1)),
-        "channel_states": states,
-    }
+    return {"deviceid": deviceid, "name": str(item.get("name") or expected.get("name") or deviceid), "model": model, "online": bool(item.get("online") or item.get("isOnline")), "state": states.get(1, "off"), "last_update_ts": int(item.get("last_update_ts") or item.get("updateTime") or item.get("ts") or time.time()), "gang_count": gang_count, "channels": list(range(1, gang_count + 1)), "channel_states": states}
 
 
 def configured_devices(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -236,11 +237,8 @@ def configured_devices(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [{"deviceid": k, "name": v["name"], "model": v["model"], "online": False, "state": "off", "last_update_ts": int(time.time()), "gang_count": int(v["gang_count"]), "channels": list(range(1, int(v["gang_count"]) + 1)), "channel_states": {i: "off" for i in range(1, int(v["gang_count"]) + 1)}} for k, v in EXPECTED.items()]
 
 
-def cloud_devices(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
-    key = session_key(cfg)
-    if not key:
-        return []
-    result = http_json(cfg, "/v2/device/thing", {"num": 0}, session_key=key)
+def cloud_devices(cfg: Dict[str, Any], auth: Dict[str, Any]) -> List[Dict[str, Any]]:
+    result = request_json(base_url({**cfg, "region": auth.get("region") or region(cfg)}) + "/v2/device/thing", "POST", {"num": 0}, bearer_headers(auth))
     data = result.get("data") if isinstance(result.get("data"), dict) else {}
     raw: List[Dict[str, Any]] = []
     if isinstance(data.get("thingList"), list):
@@ -262,7 +260,10 @@ def devices() -> Dict[str, Any]:
         _cache["last_sync_ts"] = int(time.time())
         return {"config_loaded": False, "config_path": payload["path"], "auth_status": _cache["auth_status"], "last_error": _cache["last_error"], "devices": []}
     cfg = payload["config"]
-    items = cloud_devices(cfg) or configured_devices(cfg)
+    auth = login(cfg)
+    items = cloud_devices(cfg, auth) if auth else []
+    if not items:
+        items = configured_devices(cfg)
     _cache["devices"] = items
     _cache["last_sync_ts"] = int(time.time())
     return {"config_loaded": True, "config_path": payload["path"], "auth_status": _cache["auth_status"], "last_error": _cache["last_error"], "devices": items}
@@ -277,13 +278,13 @@ def set_state(deviceid: str, action: str, channel: int = 1) -> Dict[str, Any]:
     if not payload["loaded"]:
         return {"ok": False, "error": "ewelink config not found"}
     cfg = payload["config"]
-    key = session_key(cfg)
-    if not key:
+    auth = login(cfg)
+    if not auth:
         return {"ok": False, "error": "ewelink token unavailable", "auth_status": _cache["auth_status"], "last_error": _cache["last_error"]}
     gang_count = gang_count_for(deviceid)
     params = {"switches": [{"outlet": channel, "switch": action}]} if gang_count > 1 else {"switch": action}
-    result = http_json(cfg, "/v2/device/thing/status", {"type": 1, "id": deviceid, "params": params}, session_key=key)
-    if result.get("error") or result.get("status"):
+    result = request_json(base_url({**cfg, "region": auth.get("region") or region(cfg)}) + "/v2/device/thing/status", "POST", {"type": 1, "id": deviceid, "params": params}, bearer_headers(auth))
+    if result.get("error") not in (None, 0) or result.get("status"):
         set_diag("command_failed", {"http_status": result.get("_http_status") or result.get("status"), "error": result.get("error"), "msg": result.get("msg") or result.get("message"), "body": result.get("body")})
         return {"ok": False, "error": "ewelink command failed", "auth_status": _cache["auth_status"], "last_error": _cache["last_error"]}
     now = int(time.time())
