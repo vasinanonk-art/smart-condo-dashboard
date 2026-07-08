@@ -3,6 +3,8 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
+import string
 import time
 import urllib.error
 import urllib.request
@@ -34,16 +36,31 @@ def safe_error(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value)
-    for blocked in ("email", "pass", "tok", "Bearer", "Sign "):
+    for blocked in ("email", "pass", "tok", "Bearer", "Sign ", " at ", " rt "):
         if blocked.lower() in text.lower():
             return "redacted_error"
-    return text[:240]
+    return text[:500]
+
+
+def redact_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            lower = str(key).lower()
+            if any(blocked in lower for blocked in ("email", "phone", "pass", "token", "apikey", "authorization", " at", "rt")):
+                out[key] = "<redacted>"
+            else:
+                out[key] = redact_payload(item)
+        return out
+    if isinstance(value, list):
+        return [redact_payload(x) for x in value]
+    return value
 
 
 def set_diag(auth_status: str, last_error: Any = None) -> None:
     _cache["auth_status"] = auth_status
-    _cache["last_error"] = safe_error(last_error)
-    if last_error:
+    _cache["last_error"] = safe_error(redact_payload(last_error))
+    if last_error is not None:
         print(f"ewelink safe diagnostic: auth_status={auth_status} error={_cache['last_error']}", flush=True)
 
 
@@ -60,7 +77,7 @@ def config_payload() -> Dict[str, Any]:
             except Exception as exc:
                 _cache["config_loaded"] = False
                 _cache["config_path"] = path
-                set_diag("config_error", repr(exc))
+                set_diag("config_error", {"exception": repr(exc)})
                 return {"loaded": False, "path": path, "config": {}}
     _cache["config_loaded"] = False
     _cache["config_path"] = None
@@ -81,9 +98,27 @@ def cfg_value(cfg: Dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def nonce() -> str:
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(8))
+
+
+def encode_body(body: Dict[str, Any] | None) -> bytes | None:
+    if body is None:
+        return None
+    return json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def parse_response(raw: bytes) -> Any:
+    try:
+        return json.loads(raw.decode("utf-8") or "{}")
+    except Exception:
+        return {"raw": raw.decode("utf-8", errors="replace")[:500]}
+
+
 def http_json(cfg: Dict[str, Any], path: str, body: Dict[str, Any] | None = None, session_key: str | None = None, sign_body: bool = False) -> Dict[str, Any]:
-    raw = json.dumps(body or {}).encode("utf-8") if body is not None else None
-    headers = {"Content-Type": "application/json"}
+    raw = encode_body(body)
+    headers = {"Content-Type": "application/json; charset=utf-8", "X-CK-Nonce": nonce()}
     app_id = cfg_value(cfg, "app_id", "appid", "appId")
     app_secret = cfg_value(cfg, "app_secret", "appSecret")
     if app_id:
@@ -96,11 +131,39 @@ def http_json(cfg: Dict[str, Any], path: str, body: Dict[str, Any] | None = None
     req = urllib.request.Request(base_url(cfg) + path, data=raw, headers=headers, method="POST" if body is not None else "GET")
     try:
         with urllib.request.urlopen(req, timeout=8.0) as resp:
-            return json.loads(resp.read().decode("utf-8") or "{}")
+            payload = parse_response(resp.read())
+            if isinstance(payload, dict):
+                payload["_http_status"] = resp.status
+            return payload if isinstance(payload, dict) else {"data": payload, "_http_status": resp.status}
     except urllib.error.HTTPError as exc:
-        return {"status": exc.code, "message": "http_error"}
+        payload = parse_response(exc.read())
+        safe = redact_payload(payload)
+        set_diag("http_error", {"http_status": exc.code, "body": safe})
+        return {"status": exc.code, "body": safe, "message": "http_error"}
     except Exception as exc:
+        set_diag("request_error", {"exception": repr(exc)})
         return {"error": safe_error(repr(exc))}
+
+
+def login_body(cfg: Dict[str, Any]) -> Dict[str, Any] | None:
+    user = cfg.get("email")
+    phone = cfg.get("phoneNumber") or cfg.get("phone_number")
+    secret = cfg.get("pass" + "word")
+    area = cfg.get("countryCode") or cfg.get("country_code") or cfg.get("areaCode") or cfg.get("area_code")
+    if not secret or (not user and not phone):
+        set_diag("missing_credentials", "missing account or password")
+        return None
+    if not area:
+        set_diag("missing_country_code", "countryCode or areaCode is required")
+        return None
+    body: Dict[str, Any] = {"countryCode": str(area), "pass" + "word": secret}
+    if phone:
+        body["phoneNumber"] = str(phone)
+    else:
+        body["email"] = str(user)
+    if cfg.get("lang"):
+        body["lang"] = cfg.get("lang")
+    return body
 
 
 def session_key(cfg: Dict[str, Any]) -> str | None:
@@ -108,21 +171,19 @@ def session_key(cfg: Dict[str, Any]) -> str | None:
     if direct:
         set_diag("token_configured")
         return str(direct)
-    user = cfg.get("email")
-    secret = cfg.get("pass" + "word")
-    if not user or not secret:
-        set_diag("missing_credentials", "missing email or password")
+    body = login_body(cfg)
+    if body is None:
         return None
-    body = {"email": user, "pass" + "word": secret}
-    if cfg.get("countryCode"):
-        body["countryCode"] = cfg.get("countryCode")
     result = http_json(cfg, "/v2/user/login", body, sign_body=True)
+    if result.get("error") == 10004 and isinstance(result.get("data"), dict) and result["data"].get("region"):
+        cfg = {**cfg, "region": result["data"]["region"]}
+        result = http_json(cfg, "/v2/user/login", body, sign_body=True)
     data = result.get("data") if isinstance(result.get("data"), dict) else result
     key = data.get("at") or data.get("accessToken") or data.get("access_token") if isinstance(data, dict) else None
-    if key:
+    if key and not result.get("error"):
         set_diag("ok")
         return key
-    err = result.get("error") or result.get("msg") or result.get("message") or result.get("status") or "token_unavailable"
+    err = {"http_status": result.get("_http_status") or result.get("status"), "error": result.get("error"), "msg": result.get("msg") or result.get("message"), "body": result.get("body")}
     set_diag("login_failed", err)
     return None
 
@@ -227,7 +288,7 @@ def set_state(deviceid: str, action: str, channel: int = 1) -> Dict[str, Any]:
     params = {"switches": [{"outlet": channel, "switch": action}]} if gang_count > 1 else {"switch": action}
     result = http_json(cfg, "/v2/device/thing/status", {"type": 1, "id": deviceid, "params": params}, session_key=key)
     if result.get("error") or result.get("status"):
-        set_diag("command_failed", result.get("error") or result.get("status"))
+        set_diag("command_failed", {"http_status": result.get("_http_status") or result.get("status"), "error": result.get("error"), "msg": result.get("msg") or result.get("message"), "body": result.get("body")})
         return {"ok": False, "error": "ewelink command failed", "auth_status": _cache["auth_status"], "last_error": _cache["last_error"]}
     now = int(time.time())
     items = _cache.get("devices") or configured_devices(cfg)
