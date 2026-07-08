@@ -106,6 +106,8 @@ if APIRouter is not None and not getattr(APIRouter, "_sonoff_route_patch", False
                 endpoint = _sonoff_get_handler
             elif "POST" in methods:
                 endpoint = _sonoff_post_handler
+        elif path == "/" and "GET" in methods and HTMLResponse is not None:
+            endpoint = _dashboard_index_handler
         return _orig_router_add_api_route(self, path, endpoint, **kwargs)
 
     APIRouter.add_api_route = _patched_router_add_api_route
