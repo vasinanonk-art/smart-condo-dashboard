@@ -79,6 +79,14 @@ def _dashboard_index_handler():
     return HTMLResponse(html)
 
 
+def _install_extra_routes_on_router(router):
+    if getattr(router, "_sonoff_bulk_routes_installed", False):
+        return
+    router._sonoff_bulk_routes_installed = True
+    _orig_router_add_api_route(router, "/api/sonoff/device", _sonoff_device_handler, methods=["POST"])
+    _orig_router_add_api_route(router, "/api/sonoff/all", _sonoff_all_handler, methods=["POST"])
+
+
 def _install_extra_routes(app):
     if getattr(app, "_sonoff_bulk_routes_installed", False):
         return
@@ -93,6 +101,7 @@ if APIRouter is not None and not getattr(APIRouter, "_sonoff_route_patch", False
     def _patched_router_add_api_route(self, path, endpoint, **kwargs):
         methods = set(kwargs.get("methods") or [])
         if path == "/api/sonoff":
+            _install_extra_routes_on_router(self)
             if "GET" in methods:
                 endpoint = _sonoff_get_handler
             elif "POST" in methods:
