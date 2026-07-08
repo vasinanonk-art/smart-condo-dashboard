@@ -105,7 +105,20 @@ def _finalize(person: str, raw: Dict[str, Any] | None, home: bool, online: bool,
     if last_seen is None:
         last_seen = int(previous.get("last_seen") or 0)
     age = now - last_seen if last_seen else 999999
-    if not home and last_seen and age <= GRACE_PERIOD_SEC:
+
+    if source == "Cached":
+        print(f"presence cache age={age} grace={GRACE_PERIOD_SEC}", flush=True)
+        if last_seen and age <= GRACE_PERIOD_SEC:
+            home = True
+            online = False
+            confidence = max(confidence, 55)
+            status = "Recently Seen"
+        else:
+            home = False
+            online = False
+            source = "Expired"
+            status = "Away"
+    elif not home and last_seen and age <= GRACE_PERIOD_SEC:
         home = True
         online = False
         source = "Cached"
@@ -115,6 +128,7 @@ def _finalize(person: str, raw: Dict[str, Any] | None, home: bool, online: bool,
         status = "Home"
     else:
         status = "Away"
+
     item = {
         "name": _name(person, raw),
         "home": bool(home),
@@ -151,11 +165,11 @@ def resolve_person(person: str, raw: Dict[str, Any] | None) -> Dict[str, Any]:
     if neighbor_state == "STALE":
         if _ping(ip):
             return _finalize(person, raw, True, True, "Router:STALE+Ping", 75, _now(), ip)
-        return _finalize(person, raw, False, False, "Router:STALE", 45, int(previous.get("last_seen") or raw_ts or 0), ip)
+        return _finalize(person, raw, False, False, "Cached", 45, int(previous.get("last_seen") or raw_ts or 0), ip)
 
     if _ping(ip):
         return _finalize(person, raw, True, True, "Ping", 70, _now(), ip)
-    return _finalize(person, raw, False, False, f"Router:{neighbor_state}", 40, int(previous.get("last_seen") or raw_ts or 0), ip)
+    return _finalize(person, raw, False, False, "Cached", 40, int(previous.get("last_seen") or raw_ts or 0), ip)
 
 
 def resolve_presence(raw_presence: Dict[str, Any] | None) -> Dict[str, Dict[str, Any]]:
