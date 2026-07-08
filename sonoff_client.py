@@ -2,7 +2,7 @@ from backend.sonoff_client import *
 
 # Route shim for legacy backend.app import style.
 # backend.app imports this top-level module before registering /api/sonoff.
-# Patch only /api/sonoff handlers so the API exposes safe diagnostics and channel control.
+# Patch only Sonoff handlers so the API exposes safe diagnostics and channel control.
 try:
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.routing import APIRouter
@@ -14,14 +14,17 @@ except Exception:  # pragma: no cover
 
 
 def _sonoff_payload(data):
-    return {
-        "ok": True,
+    payload = {
+        "ok": bool(data.get("ok", True)),
         "config_loaded": bool(data.get("config_loaded")),
         "config_path": data.get("config_path"),
         "auth_status": data.get("auth_status"),
         "last_error": data.get("last_error"),
         "devices": data.get("devices", []),
     }
+    if "results" in data:
+        payload["results"] = data.get("results", [])
+    return payload
 
 
 def _sonoff_get_handler():
@@ -45,6 +48,30 @@ async def _sonoff_post_handler(request: Request):
     return payload
 
 
+async def _sonoff_device_handler(request: Request):
+    body = await request.json()
+    result = bulk_device_state(body.get("deviceid", ""), body.get("action", ""))
+    if not result.get("devices") and not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result.get("error", "sonoff device bulk command failed"))
+    return _sonoff_payload(result)
+
+
+async def _sonoff_all_handler(request: Request):
+    body = await request.json()
+    result = bulk_all_state(body.get("action", ""))
+    if not result.get("devices") and not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result.get("error", "sonoff bulk command failed"))
+    return _sonoff_payload(result)
+
+
+def _install_extra_routes(app):
+    if getattr(app, "_sonoff_bulk_routes_installed", False):
+        return
+    app._sonoff_bulk_routes_installed = True
+    app.add_api_route("/api/sonoff/device", _sonoff_device_handler, methods=["POST"])
+    app.add_api_route("/api/sonoff/all", _sonoff_all_handler, methods=["POST"])
+
+
 if APIRouter is not None and not getattr(APIRouter, "_sonoff_route_patch", False):
     _orig_router_add_api_route = APIRouter.add_api_route
 
@@ -66,6 +93,7 @@ if FastAPI is not None and not getattr(FastAPI, "_sonoff_route_patch", False):
     def _patched_fastapi_add_api_route(self, path, endpoint, **kwargs):
         methods = set(kwargs.get("methods") or [])
         if path == "/api/sonoff":
+            _install_extra_routes(self)
             if "GET" in methods:
                 endpoint = _sonoff_get_handler
             elif "POST" in methods:
