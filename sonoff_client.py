@@ -4,12 +4,16 @@ from backend.sonoff_client import *
 # backend.app imports this top-level module before registering /api/sonoff.
 # Patch only Sonoff handlers so the API exposes safe diagnostics and channel control.
 try:
+    import os
     from fastapi import FastAPI, HTTPException, Request
+    from fastapi.responses import HTMLResponse
     from fastapi.routing import APIRouter
 except Exception:  # pragma: no cover
+    os = None
     FastAPI = None
     HTTPException = None
     Request = None
+    HTMLResponse = None
     APIRouter = None
 
 
@@ -64,6 +68,17 @@ async def _sonoff_all_handler(request: Request):
     return _sonoff_payload(result)
 
 
+def _dashboard_index_handler():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(base_dir, "frontend", "index.html")
+    with open(path, encoding="utf-8") as f:
+        html = f.read()
+    script = '<script src="/assets/sonoff_bulk.js"></script>'
+    if script not in html:
+        html = html.replace("</body></html>", script + "</body></html>")
+    return HTMLResponse(html)
+
+
 def _install_extra_routes(app):
     if getattr(app, "_sonoff_bulk_routes_installed", False):
         return
@@ -98,6 +113,8 @@ if FastAPI is not None and not getattr(FastAPI, "_sonoff_route_patch", False):
                 endpoint = _sonoff_get_handler
             elif "POST" in methods:
                 endpoint = _sonoff_post_handler
+        elif path == "/" and "GET" in methods and HTMLResponse is not None:
+            endpoint = _dashboard_index_handler
         return _orig_fastapi_add_api_route(self, path, endpoint, **kwargs)
 
     FastAPI.add_api_route = _patched_fastapi_add_api_route
