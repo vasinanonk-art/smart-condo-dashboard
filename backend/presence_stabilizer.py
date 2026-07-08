@@ -41,6 +41,18 @@ def _mqtt_presence_value(raw: Dict[str, Any]) -> bool | None:
     return None
 
 
+def _payload_ts(raw: Dict[str, Any]) -> int:
+    value = raw.get("ts") if isinstance(raw, dict) else None
+    try:
+        return int(value or 0)
+    except Exception:
+        return 0
+
+
+def _mqtt_is_fresh(raw_ts: int) -> bool:
+    return bool(raw_ts and (_now() - raw_ts) <= GRACE_PERIOD_SEC)
+
+
 def _name(person: str, raw: Dict[str, Any] | None = None) -> str:
     if isinstance(raw, dict) and raw.get("name"):
         return str(raw["name"])
@@ -81,8 +93,6 @@ def _ping(ip: str | None) -> bool:
 
 def _finalize(person: str, raw: Dict[str, Any] | None, home: bool, online: bool, source: str, confidence: int, last_seen: int | None, ip: str | None) -> Dict[str, Any]:
     now = _now()
-    if home and online:
-        last_seen = now
     previous = _presence_cache.get(person, {})
     if last_seen is None:
         last_seen = int(previous.get("last_seen") or 0)
@@ -118,12 +128,15 @@ def resolve_person(person: str, raw: Dict[str, Any] | None) -> Dict[str, Any]:
     previous = _presence_cache.get(person, {})
     ip = _ip(raw, previous)
     mqtt_value = _mqtt_presence_value(raw)
-    raw_ts = int(raw.get("ts") or 0) if isinstance(raw.get("ts"), (int, float, str)) and str(raw.get("ts")).isdigit() else 0
-    if mqtt_value is True:
-        return _finalize(person, raw, True, True, "MQTT", 100, raw_ts or _now(), ip)
-    if mqtt_value is False and raw_ts and (_now() - raw_ts) <= GRACE_PERIOD_SEC:
+    raw_ts = _payload_ts(raw)
+    mqtt_fresh = _mqtt_is_fresh(raw_ts)
+
+    if mqtt_value is True and mqtt_fresh:
+        return _finalize(person, raw, True, True, "MQTT", 100, raw_ts, ip)
+    if mqtt_value is False and mqtt_fresh:
         # MQTT away is respected, but grace still prevents immediate false away.
         return _finalize(person, raw, False, False, "MQTT", 80, int(previous.get("last_seen") or raw_ts), ip)
+
     if _arp_has(ip):
         return _finalize(person, raw, True, True, "Router", 85, _now(), ip)
     if _ping(ip):
