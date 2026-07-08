@@ -83,6 +83,11 @@ def _presence_status_handler():
     return {"ok": True, "sensor": sensor, "presence": presence}
 
 
+def _presence_api_handler():
+    data = _presence_status_handler()
+    return {"ok": True, "presence": data.get("presence", {})}
+
+
 def _dashboard_index_handler():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(base_dir, "frontend", "index.html")
@@ -104,6 +109,7 @@ def _install_extra_routes_on_router(router):
     router._sonoff_bulk_routes_installed = True
     _orig_router_add_api_route(router, "/api/sonoff/device", _sonoff_device_handler, methods=["POST"])
     _orig_router_add_api_route(router, "/api/sonoff/all", _sonoff_all_handler, methods=["POST"])
+    _orig_router_add_api_route(router, "/api/presence", _presence_api_handler, methods=["GET"])
 
 
 def _install_extra_routes(app):
@@ -112,6 +118,7 @@ def _install_extra_routes(app):
     app._sonoff_bulk_routes_installed = True
     app.add_api_route("/api/sonoff/device", _sonoff_device_handler, methods=["POST"])
     app.add_api_route("/api/sonoff/all", _sonoff_all_handler, methods=["POST"])
+    app.add_api_route("/api/presence", _presence_api_handler, methods=["GET"])
 
 
 if APIRouter is not None and not getattr(APIRouter, "_sonoff_route_patch", False):
