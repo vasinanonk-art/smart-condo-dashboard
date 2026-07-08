@@ -5,8 +5,9 @@ import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 CONFIG_PATHS = [
     os.getenv("EWELINK_CONFIG_FILE", "/opt/smart-condo-dashboard-run/config/ewelink.local.json"),
@@ -30,7 +31,17 @@ EXPECTED = {
     "1002354e11": {"name": "M5-1C-120W", "model": "M5-1C-120W", "gang_count": 1},
 }
 
-_cache: Dict[str, Any] = {"devices": [], "raw_devices": {}, "last_sync_ts": None, "auth": None, "auth_status": "not_checked", "last_error": None, "config_loaded": False, "config_path": None}
+_cache: Dict[str, Any] = {
+    "devices": [],
+    "raw_devices": {},
+    "last_sync_ts": None,
+    "auth": None,
+    "auth_status": "not_checked",
+    "last_error": None,
+    "config_loaded": False,
+    "config_path": None,
+    "refresh_diag": None,
+}
 
 
 def safe_error(value: Any) -> str | None:
@@ -68,6 +79,12 @@ def set_diag(auth_status: str, last_error: Any = None) -> None:
 def log_command_diag(detail: Dict[str, Any]) -> None:
     safe = redact_payload(detail)
     print("sonoff command diagnostic: " + json.dumps(safe, ensure_ascii=False), flush=True)
+
+
+def log_refresh_diag(detail: Dict[str, Any]) -> None:
+    safe = redact_payload(detail)
+    _cache["refresh_diag"] = safe
+    print("sonoff refresh diagnostic: " + json.dumps(safe, ensure_ascii=False), flush=True)
 
 
 def config_payload() -> Dict[str, Any]:
@@ -127,7 +144,10 @@ def parse_response(raw: bytes) -> Any:
         return {"raw": raw.decode("utf-8", errors="replace")[:500]}
 
 
-def request_json(url: str, method: str = "GET", body: Dict[str, Any] | None = None, headers: Dict[str, str] | None = None) -> Dict[str, Any]:
+def request_json(url: str, method: str = "GET", body: Dict[str, Any] | None = None, headers: Dict[str, str] | None = None, params: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    if params:
+        query = urllib.parse.urlencode(params)
+        url = url + ("&" if "?" in url else "?") + query
     req = urllib.request.Request(url, data=dumps_body(body), headers=headers or {}, method=method)
     try:
         with urllib.request.urlopen(req, timeout=10.0) as resp:
@@ -257,6 +277,16 @@ def aggregate_state(states: Dict[Any, Any], gang_count: int) -> str:
     return "mixed"
 
 
+def device_online(item: Dict[str, Any], params: Dict[str, Any]) -> bool:
+    if "online" in params:
+        return bool(params.get("online"))
+    if "online" in item:
+        return bool(item.get("online"))
+    if "isOnline" in item:
+        return bool(item.get("isOnline"))
+    return False
+
+
 def channel_states_for(deviceid: str, model: str, params: Dict[str, Any], gang_count: int) -> Dict[int, str]:
     states: Dict[int, str] = {i: "off" for i in range(1, gang_count + 1)}
     switches = params.get("switches") if isinstance(params.get("switches"), list) else []
@@ -284,7 +314,17 @@ def public_device(item: Dict[str, Any]) -> Dict[str, Any]:
     model = model_for(deviceid, item)
     gang_count = gang_count_for(deviceid, model)
     states = channel_states_for(deviceid, model, params, gang_count)
-    return {"deviceid": deviceid, "name": str(item.get("name") or expected.get("name") or deviceid), "model": model, "online": bool(item.get("online") or item.get("isOnline")), "state": aggregate_state(states, gang_count), "last_update_ts": int(item.get("last_update_ts") or item.get("updateTime") or item.get("ts") or time.time()), "gang_count": gang_count, "channels": list(range(1, gang_count + 1)), "channel_states": states}
+    return {
+        "deviceid": deviceid,
+        "name": str(item.get("name") or expected.get("name") or deviceid),
+        "model": model,
+        "online": device_online(item, params),
+        "state": aggregate_state(states, gang_count),
+        "last_update_ts": int(item.get("last_update_ts") or item.get("updateTime") or item.get("ts") or time.time()),
+        "gang_count": gang_count,
+        "channels": list(range(1, gang_count + 1)),
+        "channel_states": states,
+    }
 
 
 def configured_devices(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -294,21 +334,60 @@ def configured_devices(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [{"deviceid": k, "name": v["name"], "model": v["model"], "online": False, "state": "off", "last_update_ts": int(time.time()), "gang_count": int(v["gang_count"]), "channels": list(range(1, int(v["gang_count"]) + 1)), "channel_states": {i: "off" for i in range(1, int(v["gang_count"]) + 1)}} for k, v in EXPECTED.items()]
 
 
-def cloud_devices(cfg: Dict[str, Any], auth: Dict[str, Any]) -> List[Dict[str, Any]]:
-    result = request_json(base_url({**cfg, "region": auth.get("region") or region(cfg)}) + "/v2/device/thing", "POST", {"num": 0}, bearer_headers(auth))
+def fallback_devices(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    cached = _cache.get("devices") or []
+    if cached:
+        return cached
+    return configured_devices(cfg)
+
+
+def extract_raw_devices(result: Dict[str, Any]) -> List[Dict[str, Any]]:
     data = result.get("data") if isinstance(result.get("data"), dict) else {}
     raw: List[Dict[str, Any]] = []
     if isinstance(data.get("thingList"), list):
         for item in data["thingList"]:
             thing = item.get("itemData") if isinstance(item, dict) and isinstance(item.get("itemData"), dict) else item
-            if isinstance(thing, dict):
+            if isinstance(thing, dict) and (thing.get("deviceid") or thing.get("id") or thing.get("deviceId")):
                 raw.append(thing)
     elif isinstance(data.get("devices"), list):
-        raw = data["devices"]
-    _cache["raw_devices"] = {str(x.get("deviceid") or x.get("id") or x.get("deviceId")): x for x in raw if isinstance(x, dict)}
+        raw = [x for x in data["devices"] if isinstance(x, dict)]
+    return raw
+
+
+def refresh_live_devices(cfg: Dict[str, Any], auth: Dict[str, Any]) -> Tuple[bool, List[Dict[str, Any]], Dict[str, Any]]:
+    endpoint = "/v2/device/thing"
+    result = request_json(base_url({**cfg, "region": auth.get("region") or region(cfg)}) + endpoint, "GET", None, bearer_headers(auth), params={"num": 0})
+    http_status = result.get("_http_status") or result.get("status")
+    raw = extract_raw_devices(result)
+    error = result.get("error")
+    ok = not result.get("status") and error in (None, 0) and isinstance(result.get("data"), dict)
+    diag = {
+        "endpoint": endpoint,
+        "method": "GET",
+        "params": {"num": 0},
+        "http_status": http_status,
+        "safe_error_body": result.get("body") or {"error": result.get("error"), "msg": result.get("msg") or result.get("message")},
+        "thingList_count": len(raw),
+        "refresh_success": bool(ok),
+    }
+    log_refresh_diag(diag)
+    if not ok:
+        set_diag("refresh_failed", diag)
+        return False, [], diag
+    raw_map = {str(x.get("deviceid") or x.get("id") or x.get("deviceId")): x for x in raw}
     devices = [public_device(x) for x in raw]
     expected = set(EXPECTED.keys())
-    return [x for x in devices if not expected or x["deviceid"] in expected]
+    devices = [x for x in devices if not expected or x["deviceid"] in expected]
+    _cache["raw_devices"] = raw_map
+    _cache["devices"] = devices
+    _cache["last_sync_ts"] = int(time.time())
+    set_diag("authenticated")
+    return True, devices, diag
+
+
+def cloud_devices(cfg: Dict[str, Any], auth: Dict[str, Any]) -> List[Dict[str, Any]]:
+    ok, devices, _ = refresh_live_devices(cfg, auth)
+    return devices if ok else []
 
 
 def devices() -> Dict[str, Any]:
@@ -319,14 +398,15 @@ def devices() -> Dict[str, Any]:
         return {"config_loaded": False, "config_path": payload["path"], "auth_status": _cache["auth_status"], "last_error": _cache["last_error"], "devices": []}
     cfg = payload["config"]
     auth = login(cfg)
-    if _cache.get("devices"):
-        items = _cache["devices"]
+    if auth:
+        ok, live_items, _ = refresh_live_devices(cfg, auth)
+        if ok:
+            items = live_items
+        else:
+            items = fallback_devices(cfg)
+            _cache["auth_status"] = "refresh_failed"
     else:
-        items = cloud_devices(cfg, auth) if auth else []
-        if not items:
-            items = configured_devices(cfg)
-        _cache["devices"] = items
-    _cache["last_sync_ts"] = int(time.time())
+        items = fallback_devices(cfg)
     return {"config_loaded": True, "config_path": payload["path"], "auth_status": _cache["auth_status"], "last_error": _cache["last_error"], "devices": items}
 
 
@@ -393,9 +473,8 @@ def set_state(deviceid: str, action: str, channel: int = 1) -> Dict[str, Any]:
     if not auth:
         return {"ok": False, "error": "ewelink token unavailable", "auth_status": _cache["auth_status"], "last_error": _cache["last_error"]}
 
-    cached_items = _cache.get("devices") or []
-    if not cached_items:
-        cached_items = cloud_devices(cfg, auth) or configured_devices(cfg)
+    pre_ok, current_items, pre_diag = refresh_live_devices(cfg, auth)
+    cached_items = current_items if pre_ok else fallback_devices(cfg)
     raw = _cache.get("raw_devices", {}).get(deviceid, {}) if isinstance(_cache.get("raw_devices"), dict) else {}
     model = model_for(deviceid, raw)
     gang = gang_count_for(deviceid, model)
@@ -406,12 +485,22 @@ def set_state(deviceid: str, action: str, channel: int = 1) -> Dict[str, Any]:
     result = request_json(base_url({**cfg, "region": auth.get("region") or region(cfg)}) + "/v2/device/thing/status", "POST", {"type": 1, "id": deviceid, "params": params}, bearer_headers(auth))
     ok = result.get("error") in (None, 0) and not result.get("status")
     if not ok:
-        log_command_diag({"deviceid": deviceid, "model": model, "action": action, "requested_channel": channel, "previous_channel_states": previous_states, "outgoing_switches_payload": switches_payload, "patched_channel_states": patched_states, "payload_shape": shape, "resolved_outlet": outlet, "result_status": result.get("_http_status") or result.get("status") or result.get("error"), "cache_result": "skipped_command_failed"})
+        log_command_diag({"deviceid": deviceid, "model": model, "action": action, "requested_channel": channel, "previous_channel_states": previous_states, "outgoing_switches_payload": switches_payload, "patched_channel_states": patched_states, "payload_shape": shape, "resolved_outlet": outlet, "endpoint": "/v2/device/thing/status", "result_status": result.get("_http_status") or result.get("status") or result.get("error"), "pre_refresh_success": pre_ok, "pre_refresh_diag": pre_diag, "post_refresh_success": False})
         set_diag("command_failed", {"http_status": result.get("_http_status") or result.get("status"), "error": result.get("error"), "msg": result.get("msg") or result.get("message"), "body": result.get("body")})
         return {"ok": False, "error": "ewelink command failed", "auth_status": _cache["auth_status"], "last_error": _cache["last_error"]}
 
-    items = patch_local_state(list(cached_items), deviceid, model, patched_states)
-    log_command_diag({"deviceid": deviceid, "model": model, "action": action, "requested_channel": channel, "previous_channel_states": previous_states, "outgoing_switches_payload": switches_payload, "patched_channel_states": patched_states, "payload_shape": shape, "resolved_outlet": outlet, "result_status": result.get("_http_status") or result.get("status") or result.get("error") or "ok", "cache_result": "patched"})
-    _cache["devices"] = items
-    _cache["last_sync_ts"] = int(time.time())
+    patched_items = patch_local_state(list(cached_items), deviceid, model, patched_states)
+    time.sleep(0.4)
+    post_ok, live_items, post_diag = refresh_live_devices(cfg, auth)
+    if post_ok:
+        items = live_items
+        refresh_result = "live"
+    else:
+        items = patched_items
+        _cache["devices"] = items
+        _cache["last_sync_ts"] = int(time.time())
+        _cache["auth_status"] = "refresh_failed"
+        refresh_result = "patched_fallback"
+
+    log_command_diag({"deviceid": deviceid, "model": model, "action": action, "requested_channel": channel, "previous_channel_states": previous_states, "outgoing_switches_payload": switches_payload, "patched_channel_states": patched_states, "payload_shape": shape, "resolved_outlet": outlet, "endpoint": "/v2/device/thing/status", "result_status": result.get("_http_status") or result.get("status") or result.get("error") or "ok", "pre_refresh_success": pre_ok, "post_refresh_success": post_ok, "post_refresh_diag": post_diag, "refresh_result": refresh_result})
     return {"ok": True, "deviceid": deviceid, "channel": channel, "action": action, "auth_status": _cache["auth_status"], "last_error": _cache["last_error"], "devices": items}
