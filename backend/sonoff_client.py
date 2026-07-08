@@ -504,3 +504,75 @@ def set_state(deviceid: str, action: str, channel: int = 1) -> Dict[str, Any]:
 
     log_command_diag({"deviceid": deviceid, "model": model, "action": action, "requested_channel": channel, "previous_channel_states": previous_states, "outgoing_switches_payload": switches_payload, "patched_channel_states": patched_states, "payload_shape": shape, "resolved_outlet": outlet, "endpoint": "/v2/device/thing/status", "result_status": result.get("_http_status") or result.get("status") or result.get("error") or "ok", "pre_refresh_success": pre_ok, "post_refresh_success": post_ok, "post_refresh_diag": post_diag, "refresh_result": refresh_result})
     return {"ok": True, "deviceid": deviceid, "channel": channel, "action": action, "auth_status": _cache["auth_status"], "last_error": _cache["last_error"], "devices": items}
+
+
+def _public_payload(items: List[Dict[str, Any]], results: List[Dict[str, Any]] | None = None) -> Dict[str, Any]:
+    payload = {
+        "config_loaded": bool(_cache.get("config_loaded")),
+        "config_path": _cache.get("config_path"),
+        "auth_status": _cache.get("auth_status"),
+        "last_error": _cache.get("last_error"),
+        "devices": items,
+    }
+    if results is not None:
+        payload["results"] = results
+    return payload
+
+
+def _device_by_id(deviceid: str, items: List[Dict[str, Any]]) -> Dict[str, Any] | None:
+    for item in items:
+        if str(item.get("deviceid")) == str(deviceid):
+            return item
+    return None
+
+
+def _safe_bulk_result(deviceid: str, channel: int, action: str, result: Dict[str, Any] | None = None, error: Any = None) -> Dict[str, Any]:
+    out = {"deviceid": str(deviceid), "channel": int(channel), "action": action, "ok": bool(result and result.get("ok")) and error is None}
+    if error is not None:
+        out["error"] = safe_error(error)
+    elif result and not result.get("ok"):
+        out["error"] = safe_error(result.get("error"))
+    return out
+
+
+def bulk_device_state(deviceid: str, action: str) -> Dict[str, Any]:
+    action = action.lower().strip()
+    if action not in ("on", "off"):
+        return {"ok": False, "error": "action must be on or off"}
+    current = devices()
+    target = _device_by_id(deviceid, current.get("devices", []))
+    if not target:
+        return {"ok": False, "error": "sonoff device not found", **current}
+    results: List[Dict[str, Any]] = []
+    for channel in target.get("channels") or [1]:
+        try:
+            result = set_state(deviceid, action, int(channel))
+            results.append(_safe_bulk_result(deviceid, int(channel), action, result))
+        except Exception as exc:
+            results.append(_safe_bulk_result(deviceid, int(channel), action, None, repr(exc)))
+    refreshed = devices()
+    refreshed["results"] = results
+    refreshed["ok"] = all(item.get("ok") for item in results)
+    return refreshed
+
+
+def bulk_all_state(action: str) -> Dict[str, Any]:
+    action = action.lower().strip()
+    if action not in ("on", "off"):
+        return {"ok": False, "error": "action must be on or off"}
+    current = devices()
+    results: List[Dict[str, Any]] = []
+    for device in current.get("devices", []):
+        deviceid = str(device.get("deviceid") or "")
+        if not deviceid:
+            continue
+        for channel in device.get("channels") or [1]:
+            try:
+                result = set_state(deviceid, action, int(channel))
+                results.append(_safe_bulk_result(deviceid, int(channel), action, result))
+            except Exception as exc:
+                results.append(_safe_bulk_result(deviceid, int(channel), action, None, repr(exc)))
+    refreshed = devices()
+    refreshed["results"] = results
+    refreshed["ok"] = all(item.get("ok") for item in results)
+    return refreshed
