@@ -8,6 +8,8 @@ from typing import Any, Dict
 GRACE_PERIOD_SEC = 180
 PING_TIMEOUT_SEC = 1
 PEOPLE = ("beer", "seem")
+ACTIVE_NEIGHBOR_STATES = {"REACHABLE", "DELAY", "PROBE"}
+INACTIVE_NEIGHBOR_STATES = {"STALE", "FAILED", "INCOMPLETE", "NONE"}
 
 _presence_cache: Dict[str, Dict[str, Any]] = {}
 
@@ -69,14 +71,20 @@ def _ip(raw: Dict[str, Any] | None, cached: Dict[str, Any] | None = None) -> str
     return None
 
 
-def _arp_has(ip: str | None) -> bool:
+def _neighbor_state(ip: str | None) -> str:
     if not ip:
-        return False
+        return "NONE"
     try:
-        with open("/proc/net/arp", encoding="utf-8") as f:
-            return any(line.split()[0] == ip for line in f.readlines()[1:] if line.split())
+        result = subprocess.run(["ip", "neigh", "show", ip], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=1.0)
+        text = (result.stdout or "").upper()
+        if not text.strip():
+            return "NONE"
+        for state in ACTIVE_NEIGHBOR_STATES | INACTIVE_NEIGHBOR_STATES:
+            if re.search(r"\b" + re.escape(state) + r"\b", text):
+                return state
+        return "NONE"
     except Exception:
-        return False
+        return "NONE"
 
 
 def _ping(ip: str | None) -> bool:
@@ -137,11 +145,17 @@ def resolve_person(person: str, raw: Dict[str, Any] | None) -> Dict[str, Any]:
         # MQTT away is respected, but grace still prevents immediate false away.
         return _finalize(person, raw, False, False, "MQTT", 80, int(previous.get("last_seen") or raw_ts), ip)
 
-    if _arp_has(ip):
-        return _finalize(person, raw, True, True, "Router", 85, _now(), ip)
+    neighbor_state = _neighbor_state(ip)
+    if neighbor_state in ACTIVE_NEIGHBOR_STATES:
+        return _finalize(person, raw, True, True, f"Router:{neighbor_state}", 85, _now(), ip)
+    if neighbor_state == "STALE":
+        if _ping(ip):
+            return _finalize(person, raw, True, True, "Router:STALE+Ping", 75, _now(), ip)
+        return _finalize(person, raw, False, False, "Router:STALE", 45, int(previous.get("last_seen") or raw_ts or 0), ip)
+
     if _ping(ip):
         return _finalize(person, raw, True, True, "Ping", 70, _now(), ip)
-    return _finalize(person, raw, False, False, "Cached", 40, int(previous.get("last_seen") or raw_ts or 0), ip)
+    return _finalize(person, raw, False, False, f"Router:{neighbor_state}", 40, int(previous.get("last_seen") or raw_ts or 0), ip)
 
 
 def resolve_presence(raw_presence: Dict[str, Any] | None) -> Dict[str, Dict[str, Any]]:
