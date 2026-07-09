@@ -5,15 +5,19 @@ from backend.sonoff_client import *
 # backend.app imports this top-level module before registering /api/sonoff.
 # Patch only Sonoff handlers so the API exposes safe diagnostics and channel control.
 try:
+    import inspect
     import json
     import os
+    import threading
     from backend.presence_stabilizer import resolve_presence
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import HTMLResponse
     from fastapi.routing import APIRouter
 except Exception:  # pragma: no cover
+    inspect = None
     json = None
     os = None
+    threading = None
     resolve_presence = None
     FastAPI = None
     HTTPException = None
@@ -109,6 +113,22 @@ def _presence_api_handler():
     return {"ok": True, "presence": data.get("presence", {})}
 
 
+def _initialize_presence_state(label="startup"):
+    try:
+        data = _presence_status_handler()
+        print(f"presence initialized: source={label} count={len(data.get('presence', {}))}", flush=True)
+    except Exception as exc:
+        print(f"presence initialize error: source={label} error={repr(exc)}", flush=True)
+
+
+def _schedule_presence_initialization():
+    _initialize_presence_state("startup")
+    if threading is not None:
+        timer = threading.Timer(2.0, lambda: _initialize_presence_state("startup-delayed"))
+        timer.daemon = True
+        timer.start()
+
+
 def _dashboard_index_handler():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(base_dir, "frontend", "index.html")
@@ -166,6 +186,27 @@ if APIRouter is not None and not getattr(APIRouter, "_sonoff_route_patch", False
 
 if FastAPI is not None and not getattr(FastAPI, "_sonoff_route_patch", False):
     _orig_fastapi_add_api_route = FastAPI.add_api_route
+    _orig_fastapi_on_event = FastAPI.on_event
+
+    def _patched_fastapi_on_event(self, event_type):
+        original_decorator = _orig_fastapi_on_event(self, event_type)
+        if event_type != "startup":
+            return original_decorator
+
+        def _decorator(func):
+            if inspect is not None and inspect.iscoroutinefunction(func):
+                async def _wrapped_startup(*args, **kwargs):
+                    result = await func(*args, **kwargs)
+                    _schedule_presence_initialization()
+                    return result
+            else:
+                def _wrapped_startup(*args, **kwargs):
+                    result = func(*args, **kwargs)
+                    _schedule_presence_initialization()
+                    return result
+            return original_decorator(_wrapped_startup)
+
+        return _decorator
 
     def _patched_fastapi_add_api_route(self, path, endpoint, **kwargs):
         methods = set(kwargs.get("methods") or [])
@@ -181,5 +222,6 @@ if FastAPI is not None and not getattr(FastAPI, "_sonoff_route_patch", False):
             endpoint = _dashboard_index_handler
         return _orig_fastapi_add_api_route(self, path, endpoint, **kwargs)
 
+    FastAPI.on_event = _patched_fastapi_on_event
     FastAPI.add_api_route = _patched_fastapi_add_api_route
     FastAPI._sonoff_route_patch = True
