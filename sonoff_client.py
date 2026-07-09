@@ -102,10 +102,18 @@ async def _sonoff_all_handler(request: Request):
     return _sonoff_payload(result)
 
 
+def _beer_is_arrived_home(beer):
+    if not isinstance(beer, dict):
+        return False
+    state = str(beer.get("state") or beer.get("status") or "").lower()
+    return bool(beer.get("home")) and bool(beer.get("online")) and state == "home"
+
+
 def _run_beer_arrival_automation(presence):
     beer = presence.get("beer") if isinstance(presence, dict) else None
-    current_home = bool(beer.get("home")) if isinstance(beer, dict) else False
+    current_home = _beer_is_arrived_home(beer)
     previous_home = _automation_state.get("beer_home")
+    print(f"automation transition: beer old_home={previous_home} new_home={current_home}", flush=True)
     now = int(time.time()) if time is not None else 0
     should_trigger = previous_home is False and current_home is True
     cooldown_ok = now - int(_automation_state.get("beer_arrival_last_ts") or 0) >= BEER_ARRIVAL_COOLDOWN_SEC
@@ -113,19 +121,19 @@ def _run_beer_arrival_automation(presence):
     if not should_trigger or not cooldown_ok:
         return
     try:
+        print("automation: beer_arrived -> living_room_on", flush=True)
         result = set_state(BEER_ARRIVAL_DEVICEID, "on", BEER_ARRIVAL_CHANNEL)
-        if result.get("ok"):
+        ok = bool(result.get("ok"))
+        error = _backend_sonoff.safe_error(result.get("error") or result.get("last_error"))
+        print(f"automation result: ok={str(ok).lower()} error={error}", flush=True)
+        if ok:
             _automation_state["beer_arrival_last_ts"] = now
-            print("automation: beer_arrived -> living_room_on", flush=True)
-        else:
-            print("automation error: beer_arrived -> living_room_on failed", flush=True)
     except Exception as exc:
-        print(f"automation error: beer_arrived -> living_room_on {repr(exc)}", flush=True)
+        error = _backend_sonoff.safe_error(repr(exc))
+        print(f"automation result: ok=false error={error}", flush=True)
 
 
-def _presence_status_handler():
-    import backend.app as app_mod
-    sensor = app_mod.state.get("condo_sensor", {})
+def _resolve_store_and_evaluate_presence(app_mod):
     raw_presence = app_mod.state.get("condo_presence", {})
     if resolve_presence is None:
         presence = raw_presence if isinstance(raw_presence, dict) else {}
@@ -134,6 +142,37 @@ def _presence_status_handler():
     app_mod.state["condo_presence"] = presence
     app_mod.state["presence"] = presence
     _run_beer_arrival_automation(presence)
+    return presence
+
+
+def _install_presence_refresh_hook():
+    try:
+        import backend.app as app_mod
+        if getattr(app_mod, "_presence_automation_hook_installed", False):
+            return
+        original_presence_topic = app_mod.update_condo_presence_from_topic
+        original_condo_state = app_mod.update_condo_state
+
+        def _wrapped_update_condo_presence_from_topic(person, data, topic):
+            original_presence_topic(person, data, topic)
+            _resolve_store_and_evaluate_presence(app_mod)
+
+        def _wrapped_update_condo_state(payload):
+            original_condo_state(payload)
+            if isinstance(app_mod.state.get("condo_presence"), dict):
+                _resolve_store_and_evaluate_presence(app_mod)
+
+        app_mod.update_condo_presence_from_topic = _wrapped_update_condo_presence_from_topic
+        app_mod.update_condo_state = _wrapped_update_condo_state
+        app_mod._presence_automation_hook_installed = True
+    except Exception as exc:
+        print(f"automation hook error: {repr(exc)}", flush=True)
+
+
+def _presence_status_handler():
+    import backend.app as app_mod
+    sensor = app_mod.state.get("condo_sensor", {})
+    presence = _resolve_store_and_evaluate_presence(app_mod)
     return {"ok": True, "sensor": sensor, "presence": presence}
 
 
@@ -144,6 +183,7 @@ def _presence_api_handler():
 
 def _initialize_presence_state(label="startup"):
     try:
+        _install_presence_refresh_hook()
         data = _presence_status_handler()
         print(f"presence initialized: source={label} count={len(data.get('presence', {}))}", flush=True)
     except Exception as exc:
