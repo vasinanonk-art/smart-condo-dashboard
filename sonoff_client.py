@@ -9,6 +9,7 @@ try:
     import json
     import os
     import threading
+    import time
     from backend.presence_stabilizer import resolve_presence
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import HTMLResponse
@@ -18,12 +19,18 @@ except Exception:  # pragma: no cover
     json = None
     os = None
     threading = None
+    time = None
     resolve_presence = None
     FastAPI = None
     HTTPException = None
     Request = None
     HTMLResponse = None
     APIRouter = None
+
+BEER_ARRIVAL_DEVICEID = "1002354e11"
+BEER_ARRIVAL_CHANNEL = 1
+BEER_ARRIVAL_COOLDOWN_SEC = 600
+_automation_state = {"beer_home": None, "beer_arrival_last_ts": 0}
 
 
 def _stable_command_diag(detail):
@@ -95,6 +102,27 @@ async def _sonoff_all_handler(request: Request):
     return _sonoff_payload(result)
 
 
+def _run_beer_arrival_automation(presence):
+    beer = presence.get("beer") if isinstance(presence, dict) else None
+    current_home = bool(beer.get("home")) if isinstance(beer, dict) else False
+    previous_home = _automation_state.get("beer_home")
+    now = int(time.time()) if time is not None else 0
+    should_trigger = previous_home is False and current_home is True
+    cooldown_ok = now - int(_automation_state.get("beer_arrival_last_ts") or 0) >= BEER_ARRIVAL_COOLDOWN_SEC
+    _automation_state["beer_home"] = current_home
+    if not should_trigger or not cooldown_ok:
+        return
+    try:
+        result = set_state(BEER_ARRIVAL_DEVICEID, "on", BEER_ARRIVAL_CHANNEL)
+        if result.get("ok"):
+            _automation_state["beer_arrival_last_ts"] = now
+            print("automation: beer_arrived -> living_room_on", flush=True)
+        else:
+            print("automation error: beer_arrived -> living_room_on failed", flush=True)
+    except Exception as exc:
+        print(f"automation error: beer_arrived -> living_room_on {repr(exc)}", flush=True)
+
+
 def _presence_status_handler():
     import backend.app as app_mod
     sensor = app_mod.state.get("condo_sensor", {})
@@ -105,6 +133,7 @@ def _presence_status_handler():
         presence = resolve_presence(raw_presence)
     app_mod.state["condo_presence"] = presence
     app_mod.state["presence"] = presence
+    _run_beer_arrival_automation(presence)
     return {"ok": True, "sensor": sensor, "presence": presence}
 
 
