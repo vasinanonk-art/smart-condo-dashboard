@@ -113,6 +113,16 @@ def _is_arrived_home(item):
     return bool(item.get("home")) and bool(item.get("online")) and state == "home"
 
 
+def _run_arrival_action(person, now):
+    print(f"automation: {person}_arrived -> living_room_on", flush=True)
+    result = set_state(ARRIVAL_DEVICEID, "on", ARRIVAL_CHANNEL)
+    ok = bool(result.get("ok"))
+    error = _backend_sonoff.safe_error(result.get("error") or result.get("last_error"))
+    print(f"automation result: ok={str(ok).lower()} error={error}", flush=True)
+    if ok:
+        _automation_state["last_ts"][person] = now
+
+
 def _run_person_arrival_automation(person, presence):
     item = presence.get(person) if isinstance(presence, dict) else None
     current_home = _is_arrived_home(item)
@@ -120,18 +130,14 @@ def _run_person_arrival_automation(person, presence):
     if previous_home != current_home:
         print(f"automation transition: {person} old_home={previous_home} new_home={current_home}", flush=True)
     now = int(time.time()) if time is not None else 0
-    should_trigger = previous_home == False and current_home == True
     cooldown_ok = now - int(_automation_state["last_ts"].get(person) or 0) >= ARRIVAL_COOLDOWN_SEC
+    should_run_beer = person == "beer" and previous_home is False and current_home is True and cooldown_ok
+    should_run_seem = person == "seem" and previous_home is False and current_home is True and cooldown_ok
     _automation_state["home"][person] = current_home
-    if not should_trigger or not cooldown_ok:
+    if not should_run_beer and not should_run_seem:
         return
-    _automation_state["last_ts"][person] = now
     try:
-        print(f"automation: {person}_arrived -> living_room_on", flush=True)
-        result = bulk_device_state(ARRIVAL_DEVICEID, "on")
-        ok = bool(result.get("ok"))
-        error = _backend_sonoff.safe_error(result.get("error") or result.get("last_error"))
-        print(f"automation result: ok={str(ok).lower()} error={error}", flush=True)
+        _run_arrival_action(person, now)
     except Exception as exc:
         error = _backend_sonoff.safe_error(repr(exc))
         print(f"automation result: ok=false error={error}", flush=True)
