@@ -1,15 +1,18 @@
+import backend.sonoff_client as _backend_sonoff
 from backend.sonoff_client import *
 
 # Route shim for legacy backend.app import style.
 # backend.app imports this top-level module before registering /api/sonoff.
 # Patch only Sonoff handlers so the API exposes safe diagnostics and channel control.
 try:
+    import json
     import os
     from backend.presence_stabilizer import resolve_presence
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import HTMLResponse
     from fastapi.routing import APIRouter
 except Exception:  # pragma: no cover
+    json = None
     os = None
     resolve_presence = None
     FastAPI = None
@@ -17,6 +20,24 @@ except Exception:  # pragma: no cover
     Request = None
     HTMLResponse = None
     APIRouter = None
+
+
+def _stable_command_diag(detail):
+    safe = _backend_sonoff.redact_payload(detail)
+    status = safe.get("result_status") if isinstance(safe, dict) else None
+    if status and status not in ("ok", 0, None):
+        print("sonoff command error: " + json.dumps(safe, ensure_ascii=False), flush=True)
+
+
+def _stable_refresh_diag(detail):
+    safe = _backend_sonoff.redact_payload(detail)
+    _backend_sonoff._cache["refresh_diag"] = safe
+    if isinstance(safe, dict) and not safe.get("refresh_success", True):
+        print("sonoff refresh error: " + json.dumps(safe, ensure_ascii=False), flush=True)
+
+
+_backend_sonoff.log_command_diag = _stable_command_diag
+_backend_sonoff.log_refresh_diag = _stable_refresh_diag
 
 
 def _sonoff_payload(data):
@@ -93,6 +114,8 @@ def _dashboard_index_handler():
     path = os.path.join(base_dir, "frontend", "index.html")
     with open(path, encoding="utf-8") as f:
         html = f.read()
+    html = html.replace("Smart Condo Dashboard V2", "Smart Condo Dashboard v2.2.0 Stable")
+    html = html.replace("console.log(device.deviceid,device.state,device.channel_states);", "")
     scripts = [
         '<script src="/assets/sonoff_bulk.js"></script>',
         '<script src="/assets/presence_stabilizer.js"></script>',
