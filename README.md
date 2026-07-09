@@ -1,6 +1,12 @@
-# Smart Condo Dashboard V1
+# Smart Condo Dashboard v2.2.0 Stable
 
-LG TV Control Dashboard via MQTT.
+Smart Condo Dashboard runtime for port 8090.
+
+## Production runtime note
+
+Port 8090 is the only supported Smart Condo Dashboard runtime.
+
+Do not reference, copy, merge, or modify anything from the separate 8080 project. Keep the 8090 dashboard isolated from any 8080 runtime, service, reverse proxy, or codebase.
 
 ## Target topology
 
