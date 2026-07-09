@@ -30,9 +30,13 @@ except Exception:  # pragma: no cover
 ARRIVAL_DEVICEID = "1002354e11"
 ARRIVAL_CHANNEL = 1
 ARRIVAL_COOLDOWN_SEC = 600
+ARRIVAL_WARMUP_SEC = 60
+ARRIVAL_STABLE_HOME_SEC = 10
 ARRIVAL_PEOPLE = ("beer", "seem")
 _automation_state = {
+    "startup_ts": int(time.time()) if time is not None else 0,
     "home": {"beer": None, "seem": None},
+    "home_since": {"beer": 0, "seem": 0},
     "last_ts": {"beer": 0, "seem": 0},
 }
 
@@ -113,6 +117,12 @@ def _is_arrived_home(item):
     return bool(item.get("home")) and bool(item.get("online")) and state == "home"
 
 
+def _presence_source(item):
+    if not isinstance(item, dict):
+        return "-"
+    return str(item.get("source") or "-")
+
+
 def _run_arrival_action(person, now):
     print(f"automation: {person}_arrived -> living_room_on", flush=True)
     result = set_state(ARRIVAL_DEVICEID, "on", ARRIVAL_CHANNEL)
@@ -127,12 +137,18 @@ def _run_person_arrival_automation(person, presence):
     item = presence.get(person) if isinstance(presence, dict) else None
     current_home = _is_arrived_home(item)
     previous_home = _automation_state["home"].get(person)
-    if previous_home != current_home:
-        print(f"automation transition: {person} old_home={previous_home} new_home={current_home}", flush=True)
+    source = _presence_source(item)
     now = int(time.time()) if time is not None else 0
+
+    if previous_home != current_home:
+        print(f"automation transition: person={person} old_home={previous_home} new_home={current_home} source={source}", flush=True)
+        _automation_state["home_since"][person] = now if current_home else 0
+
+    uptime_ok = now - int(_automation_state.get("startup_ts") or now) >= ARRIVAL_WARMUP_SEC
+    stable_ok = current_home and _automation_state["home_since"].get(person) and now - int(_automation_state["home_since"].get(person) or 0) >= ARRIVAL_STABLE_HOME_SEC
     cooldown_ok = now - int(_automation_state["last_ts"].get(person) or 0) >= ARRIVAL_COOLDOWN_SEC
-    should_run_beer = person == "beer" and previous_home is False and current_home is True and cooldown_ok
-    should_run_seem = person == "seem" and previous_home is False and current_home is True and cooldown_ok
+    should_run_beer = person == "beer" and previous_home is False and current_home is True and uptime_ok and stable_ok and cooldown_ok
+    should_run_seem = person == "seem" and previous_home is False and current_home is True and uptime_ok and stable_ok and cooldown_ok
     _automation_state["home"][person] = current_home
     if not should_run_beer and not should_run_seem:
         return
