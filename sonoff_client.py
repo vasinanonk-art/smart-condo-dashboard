@@ -27,10 +27,14 @@ except Exception:  # pragma: no cover
     HTMLResponse = None
     APIRouter = None
 
-BEER_ARRIVAL_DEVICEID = "1002354e11"
-BEER_ARRIVAL_CHANNEL = 1
-BEER_ARRIVAL_COOLDOWN_SEC = 600
-_automation_state = {"beer_home": None, "beer_arrival_last_ts": 0}
+ARRIVAL_DEVICEID = "1002354e11"
+ARRIVAL_CHANNEL = 1
+ARRIVAL_COOLDOWN_SEC = 600
+ARRIVAL_PEOPLE = ("beer", "seem")
+_automation_state = {
+    "home": {"beer": None, "seem": None},
+    "last_ts": {"beer": 0, "seem": 0},
+}
 
 
 def _stable_command_diag(detail):
@@ -102,35 +106,41 @@ async def _sonoff_all_handler(request: Request):
     return _sonoff_payload(result)
 
 
-def _beer_is_arrived_home(beer):
-    if not isinstance(beer, dict):
+def _is_arrived_home(item):
+    if not isinstance(item, dict):
         return False
-    state = str(beer.get("state") or beer.get("status") or "").lower()
-    return bool(beer.get("home")) and bool(beer.get("online")) and state == "home"
+    state = str(item.get("state") or item.get("status") or "").lower()
+    return bool(item.get("home")) and bool(item.get("online")) and state == "home"
 
 
-def _run_beer_arrival_automation(presence):
-    beer = presence.get("beer") if isinstance(presence, dict) else None
-    current_home = _beer_is_arrived_home(beer)
-    previous_home = _automation_state.get("beer_home")
-    print(f"automation transition: beer old_home={previous_home} new_home={current_home}", flush=True)
+def _run_person_arrival_automation(person, presence):
+    item = presence.get(person) if isinstance(presence, dict) else None
+    current_home = _is_arrived_home(item)
+    previous_home = _automation_state["home"].get(person)
+    if previous_home != current_home:
+        print(f"automation transition: {person} old_home={previous_home} new_home={current_home}", flush=True)
     now = int(time.time()) if time is not None else 0
     should_trigger = previous_home is False and current_home is True
-    cooldown_ok = now - int(_automation_state.get("beer_arrival_last_ts") or 0) >= BEER_ARRIVAL_COOLDOWN_SEC
-    _automation_state["beer_home"] = current_home
+    cooldown_ok = now - int(_automation_state["last_ts"].get(person) or 0) >= ARRIVAL_COOLDOWN_SEC
+    _automation_state["home"][person] = current_home
     if not should_trigger or not cooldown_ok:
         return
     try:
-        print("automation: beer_arrived -> living_room_on", flush=True)
-        result = set_state(BEER_ARRIVAL_DEVICEID, "on", BEER_ARRIVAL_CHANNEL)
+        print(f"automation: {person}_arrived -> living_room_on", flush=True)
+        result = set_state(ARRIVAL_DEVICEID, "on", ARRIVAL_CHANNEL)
         ok = bool(result.get("ok"))
         error = _backend_sonoff.safe_error(result.get("error") or result.get("last_error"))
         print(f"automation result: ok={str(ok).lower()} error={error}", flush=True)
         if ok:
-            _automation_state["beer_arrival_last_ts"] = now
+            _automation_state["last_ts"][person] = now
     except Exception as exc:
         error = _backend_sonoff.safe_error(repr(exc))
         print(f"automation result: ok=false error={error}", flush=True)
+
+
+def _run_arrival_automation(presence):
+    for person in ARRIVAL_PEOPLE:
+        _run_person_arrival_automation(person, presence)
 
 
 def _resolve_store_and_evaluate_presence(app_mod):
@@ -141,7 +151,7 @@ def _resolve_store_and_evaluate_presence(app_mod):
         presence = resolve_presence(raw_presence)
     app_mod.state["condo_presence"] = presence
     app_mod.state["presence"] = presence
-    _run_beer_arrival_automation(presence)
+    _run_arrival_automation(presence)
     return presence
 
 
