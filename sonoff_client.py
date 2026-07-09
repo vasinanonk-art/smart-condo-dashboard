@@ -33,10 +33,11 @@ ARRIVAL_COOLDOWN_SEC = 600
 ARRIVAL_WARMUP_SEC = 60
 ARRIVAL_STABLE_HOME_SEC = 10
 ARRIVAL_PEOPLE = ("beer", "seem")
+ARRIVAL_HOME_SOURCES = ("Router", "MQTT", "Ping")
 _automation_state = {
     "startup_ts": int(time.time()) if time is not None else 0,
     "home": {"beer": None, "seem": None},
-    "home_since": {"beer": 0, "seem": 0},
+    "pending_since": {"beer": 0, "seem": 0},
     "last_ts": {"beer": 0, "seem": 0},
 }
 
@@ -110,17 +111,34 @@ async def _sonoff_all_handler(request: Request):
     return _sonoff_payload(result)
 
 
-def _is_arrived_home(item):
-    if not isinstance(item, dict):
-        return False
-    state = str(item.get("state") or item.get("status") or "").lower()
-    return bool(item.get("home")) and bool(item.get("online")) and state == "home"
-
-
 def _presence_source(item):
     if not isinstance(item, dict):
         return "-"
     return str(item.get("source") or "-")
+
+
+def _presence_state(item):
+    if not isinstance(item, dict):
+        return ""
+    return str(item.get("state") or item.get("status") or "").lower()
+
+
+def _is_arrived_home(item):
+    if not isinstance(item, dict):
+        return False
+    source = _presence_source(item)
+    return bool(item.get("home")) and _presence_state(item) == "home" and source.startswith(ARRIVAL_HOME_SOURCES)
+
+
+def _is_confirmed_away(item):
+    if not isinstance(item, dict):
+        return False
+    return bool(item.get("home")) is False and _presence_state(item) == "away" and _presence_source(item) == "Expired"
+
+
+def _log_transition(person, old_home, new_home, source):
+    if old_home != new_home:
+        print(f"automation transition: person={person} old_home={old_home} new_home={new_home} source={source}", flush=True)
 
 
 def _run_arrival_action(person, now):
@@ -136,27 +154,48 @@ def _run_arrival_action(person, now):
 def _run_person_arrival_automation(person, presence):
     item = presence.get(person) if isinstance(presence, dict) else None
     current_home = _is_arrived_home(item)
+    confirmed_away = _is_confirmed_away(item)
     previous_home = _automation_state["home"].get(person)
     source = _presence_source(item)
     now = int(time.time()) if time is not None else 0
-
-    if previous_home != current_home:
-        print(f"automation transition: person={person} old_home={previous_home} new_home={current_home} source={source}", flush=True)
-        _automation_state["home_since"][person] = now if current_home else 0
-
     uptime_ok = now - int(_automation_state.get("startup_ts") or now) >= ARRIVAL_WARMUP_SEC
-    stable_ok = current_home and _automation_state["home_since"].get(person) and now - int(_automation_state["home_since"].get(person) or 0) >= ARRIVAL_STABLE_HOME_SEC
-    cooldown_ok = now - int(_automation_state["last_ts"].get(person) or 0) >= ARRIVAL_COOLDOWN_SEC
-    should_run_beer = person == "beer" and previous_home is False and current_home is True and uptime_ok and stable_ok and cooldown_ok
-    should_run_seem = person == "seem" and previous_home is False and current_home is True and uptime_ok and stable_ok and cooldown_ok
-    _automation_state["home"][person] = current_home
-    if not should_run_beer and not should_run_seem:
+
+    if current_home:
+        if previous_home is None or not uptime_ok:
+            _log_transition(person, previous_home, True, source)
+            _automation_state["home"][person] = True
+            _automation_state["pending_since"][person] = 0
+            return
+        if previous_home is True:
+            _automation_state["pending_since"][person] = 0
+            return
+        pending_since = int(_automation_state["pending_since"].get(person) or 0)
+        if not pending_since:
+            _automation_state["pending_since"][person] = now
+            _log_transition(person, previous_home, True, source)
+            return
+        stable_ok = now - pending_since >= ARRIVAL_STABLE_HOME_SEC
+        cooldown_ok = now - int(_automation_state["last_ts"].get(person) or 0) >= ARRIVAL_COOLDOWN_SEC
+        should_run = previous_home is False and stable_ok and cooldown_ok
+        if not should_run:
+            return
+        _automation_state["home"][person] = True
+        _automation_state["pending_since"][person] = 0
+        try:
+            _run_arrival_action(person, now)
+        except Exception as exc:
+            error = _backend_sonoff.safe_error(repr(exc))
+            print(f"automation result: ok=false error={error}", flush=True)
         return
-    try:
-        _run_arrival_action(person, now)
-    except Exception as exc:
-        error = _backend_sonoff.safe_error(repr(exc))
-        print(f"automation result: ok=false error={error}", flush=True)
+
+    if confirmed_away:
+        _log_transition(person, previous_home, False, source)
+        _automation_state["home"][person] = False
+        _automation_state["pending_since"][person] = 0
+        return
+
+    # Ignore Cached / Recently Seen / brief unknown loss for automation state.
+    return
 
 
 def _run_arrival_automation(presence):
