@@ -107,7 +107,6 @@ def _finalize(person: str, raw: Dict[str, Any] | None, home: bool, online: bool,
     age = now - last_seen if last_seen else 999999
 
     if source == "Cached":
-        print(f"presence cache age={age} grace={GRACE_PERIOD_SEC}", flush=True)
         if last_seen and age <= GRACE_PERIOD_SEC:
             home = True
             online = False
