@@ -120,19 +120,18 @@ def _run_person_arrival_automation(person, presence):
     if previous_home != current_home:
         print(f"automation transition: {person} old_home={previous_home} new_home={current_home}", flush=True)
     now = int(time.time()) if time is not None else 0
-    should_trigger = previous_home is False and current_home is True
+    should_trigger = previous_home == False and current_home == True
     cooldown_ok = now - int(_automation_state["last_ts"].get(person) or 0) >= ARRIVAL_COOLDOWN_SEC
     _automation_state["home"][person] = current_home
     if not should_trigger or not cooldown_ok:
         return
+    _automation_state["last_ts"][person] = now
     try:
         print(f"automation: {person}_arrived -> living_room_on", flush=True)
-        result = set_state(ARRIVAL_DEVICEID, "on", ARRIVAL_CHANNEL)
+        result = bulk_device_state(ARRIVAL_DEVICEID, "on")
         ok = bool(result.get("ok"))
         error = _backend_sonoff.safe_error(result.get("error") or result.get("last_error"))
         print(f"automation result: ok={str(ok).lower()} error={error}", flush=True)
-        if ok:
-            _automation_state["last_ts"][person] = now
     except Exception as exc:
         error = _backend_sonoff.safe_error(repr(exc))
         print(f"automation result: ok=false error={error}", flush=True)
