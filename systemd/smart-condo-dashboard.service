@@ -11,7 +11,7 @@ Environment=MQTT_HOST=127.0.0.1
 Environment=MQTT_PORT=1883
 Environment=MQTT_CMD_TOPIC=home/lgtv/cmd
 Environment=MQTT_STATE_TOPIC=home/lgtv/state
-ExecStart=/opt/smart-condo-dashboard-run/venv/bin/uvicorn backend.app:app --host 0.0.0.0 --port 8090
+ExecStart=/opt/smart-condo-dashboard-run/venv/bin/uvicorn backend.app_runtime:app --host 0.0.0.0 --port 8090
 Restart=always
 RestartSec=10
 
