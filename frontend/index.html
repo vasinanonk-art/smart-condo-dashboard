@@ -6,6 +6,7 @@
   <title>Smart Condo Dashboard</title>
   <link rel="stylesheet" href="/assets/dashboard_v3.css">
   <link rel="stylesheet" href="/assets/dashboard_v3_layout.css">
+  <link rel="stylesheet" href="/assets/dashboard_upgrade.css">
 </head>
 <body>
 <div class="app">
@@ -14,7 +15,7 @@
     <nav class="nav">
       <button data-nav="overview">Overview</button><button data-nav="lighting">Lighting</button><button data-nav="climate">Climate & Air Quality</button><button data-nav="entertainment">Entertainment</button><button data-nav="presence">Presence & Automation</button><button data-nav="system">System</button>
     </nav>
-    <div class="sidebar-foot">Vanilla UI · Dark dashboard</div>
+    <div class="sidebar-foot">Smart Home · Port 8090</div>
   </aside>
   <main class="main">
     <header class="topbar"><div><h1 id="pageTitle">Overview</h1><p>Live condo controls, climate, air quality and system health</p></div><div class="status-row"><span id="mqttBadge" class="badge">MQTT Checking</span><span id="haBadge" class="badge">HA Air Checking</span><button class="btn ghost" onclick="refresh()">Refresh</button></div></header>
@@ -22,37 +23,39 @@
     <section class="page active" data-page="overview">
       <div id="overviewMetrics" class="grid"></div>
       <div class="grid" style="margin-top:14px">
-        <div class="card span-8"><div class="card-head"><h2>Sensor history</h2><div id="overviewRanges" class="range-controls"></div></div><div class="chart-wrap"><svg id="overviewChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--yellow)"></i>Temperature</span><span><i style="background:var(--cyan)"></i>Humidity</span></div></div>
-        <div class="card span-4"><div class="card-head"><h2>Presence summary</h2></div><div id="overviewPresence" class="metric-grid"></div><div class="card-head" style="margin-top:18px"><h2>Devices</h2></div><div id="deviceSummary"></div></div>
+        <div class="card span-8"><div class="card-head"><h2>Temperature & Humidity</h2><div id="overviewRanges" class="range-controls"></div></div><div class="chart-wrap"><svg id="overviewChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--yellow)"></i>Temperature</span><span><i style="background:var(--cyan)"></i>Humidity</span></div></div>
+        <div class="card span-4"><div class="card-head"><h2>Presence & System</h2></div><div id="overviewPresence" class="metric-grid"></div><div class="card-head" style="margin-top:18px"><h2>Device summary</h2></div><div id="deviceSummary"></div></div>
+        <div class="card span-12"><div class="card-head"><h2>PM2.5 Living Room vs Bedroom</h2></div><div class="chart-wrap"><svg id="overviewPmChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--accent)"></i>Living Room</span><span><i style="background:var(--purple)"></i>Bedroom</span></div></div>
         <div id="overviewStats" class="span-12 grid"></div>
-        <div class="card span-12"><div class="card-head"><h2>Alerts & system summary</h2></div><div id="alerts" class="alert-list"></div></div>
+        <div class="card span-12"><div class="card-head"><h2>Alerts & System Health</h2></div><div id="alerts" class="alert-list"></div></div>
       </div>
     </section>
 
     <section class="page" data-page="lighting">
-      <div class="grid"><div class="card span-12"><div class="card-head"><h2>Sonoff switches</h2><div class="controls"><button class="btn primary" onclick="sonoffAll('on')">Global ALL ON</button><button class="btn danger" onclick="sonoffAll('off')">Global ALL OFF</button></div></div><div id="sonoffList" class="device-list"></div></div><div class="card span-12"><div class="card-head"><h2>Tuya lighting adjustments</h2></div><div id="tuyaList" class="device-list"></div></div></div>
+      <div class="grid"><div class="card span-12"><div class="card-head"><h2>Sonoff Switches</h2><div class="controls"><button class="btn primary" onclick="sonoffAll('on')">Global ALL ON</button><button class="btn danger" onclick="sonoffAll('off')">Global ALL OFF</button></div></div><div id="sonoffList" class="sonoff-grid"></div></div><div class="card span-12"><div class="card-head"><h2>Zone Lighting</h2></div><div id="tuyaList" class="zone-grid"></div></div></div>
     </section>
 
     <section class="page" data-page="climate">
       <div id="airCards" class="grid"></div>
-      <div class="grid" style="margin-top:14px"><div class="card span-12"><div class="card-head"><h2>PM2.5 room comparison</h2><div id="climateRanges" class="range-controls"></div></div><div class="chart-wrap"><svg id="airChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--accent)"></i>Living Room</span><span><i style="background:var(--purple)"></i>Bedroom</span></div></div><div id="airStats" class="span-12 grid"></div></div>
+      <div class="grid" style="margin-top:14px"><div class="card span-12"><div class="card-head"><h2>PM2.5 Room Comparison</h2><div id="climateRanges" class="range-controls"></div></div><div class="chart-wrap"><svg id="airChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--accent)"></i>Living Room</span><span><i style="background:var(--purple)"></i>Bedroom</span></div></div><div id="airStats" class="span-12 grid"></div></div>
     </section>
 
     <section class="page" data-page="entertainment">
-      <div class="grid"><div class="card span-8"><div class="card-head"><h2>LG TV controls</h2></div><div id="tvButtons" class="app-buttons"></div></div><div class="card span-4"><div class="card-head"><h2>Remote keys</h2></div><div class="remote"><span></span><button class="btn" onclick="tv('up')">▲</button><span></span><button class="btn" onclick="tv('left')">◀</button><button class="btn primary" onclick="tv('ok')">OK</button><button class="btn" onclick="tv('right')">▶</button><span></span><button class="btn" onclick="tv('down')">▼</button><span></span><button class="btn" onclick="tv('back')">Back</button><button class="btn" onclick="tv('home_key')">Home</button><span></span></div></div></div>
+      <div class="grid"><div class="card span-8"><div class="card-head"><h2>LG TV Controls</h2></div><div id="tvButtons" class="app-buttons"></div></div><div class="card span-4"><div class="card-head"><h2>Remote Keys</h2></div><div class="remote"><span></span><button class="btn" onclick="tv('up')">▲</button><span></span><button class="btn" onclick="tv('left')">◀</button><button class="btn primary" onclick="tv('ok')">OK</button><button class="btn" onclick="tv('right')">▶</button><span></span><button class="btn" onclick="tv('down')">▼</button><span></span><button class="btn" onclick="tv('back')">Back</button><button class="btn" onclick="tv('home_key')">Home</button><span></span></div></div></div>
     </section>
 
     <section class="page" data-page="presence">
-      <div id="presenceList" class="grid"></div><div class="grid" style="margin-top:14px"><div class="card span-12"><div class="card-head"><h2>Recent automation events</h2></div><div id="automationEvents"></div></div></div>
+      <div id="presenceList" class="grid"></div><div class="grid" style="margin-top:14px"><div class="card span-12"><div class="card-head"><h2>Home Assistant Automations</h2></div><div id="automationEvents" class="automation-grid"></div></div></div>
     </section>
 
     <section class="page" data-page="system">
-      <div class="grid"><div class="card span-12"><div class="card-head"><h2>System health</h2><button class="btn ghost" onclick="refresh()">Refresh status</button></div><div id="systemDetails"></div></div></div>
+      <div class="grid"><div class="card span-12"><div class="card-head"><h2>System Health</h2><button class="btn ghost" onclick="refresh()">Refresh status</button></div><div id="systemDetails"></div></div></div>
     </section>
   </main>
   <nav class="mobile-nav"><button data-nav="overview">Overview</button><button data-nav="lighting">Lighting</button><button data-nav="climate">Climate</button><button data-nav="entertainment">TV</button><button data-nav="presence">Presence</button><button data-nav="system">System</button></nav>
 </div>
 <div id="toast" class="toast"></div>
 <script src="/assets/dashboard_v3.js"></script>
+<script src="/assets/dashboard_upgrade.js"></script>
 </body>
 </html>
