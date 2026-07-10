@@ -27,6 +27,13 @@ cp -R "$APP_SRC/frontend" "$APP_RUN/frontend"
 cp -R "$APP_SRC/config" "$APP_RUN/config"
 cp "$APP_SRC/sonoff_client.py" "$APP_RUN/sonoff_client.py"
 
+# Explicitly install the production dashboard shell and v3 assets.
+install -d "$APP_RUN/frontend/assets"
+install -m 0644 "$APP_SRC/frontend/index.html" "$APP_RUN/frontend/index.html"
+for asset in dashboard_v3.css dashboard_v3_layout.css dashboard_v3.js; do
+    install -m 0644 "$APP_SRC/frontend/assets/$asset" "$APP_RUN/frontend/assets/$asset"
+done
+
 # Restore local runtime configs after config folder rebuild.
 [ ! -f "$LOCAL_CONFIG_TMP/cameras.local.json" ] || cp "$LOCAL_CONFIG_TMP/cameras.local.json" "$APP_RUN/config/cameras.local.json"
 [ ! -f "$LOCAL_CONFIG_TMP/ewelink.local.json" ] || cp "$LOCAL_CONFIG_TMP/ewelink.local.json" "$APP_RUN/config/ewelink.local.json"
