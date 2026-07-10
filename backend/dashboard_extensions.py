@@ -2,7 +2,6 @@ import json
 import os
 import threading
 import time
-import urllib.error
 import urllib.request
 from typing import Any, Dict, List
 
@@ -12,7 +11,6 @@ from pydantic import BaseModel
 from backend import app as app_module
 
 app = app_module.app
-
 ZONE_CONFIG_ENV = "TUYA_LIGHT_ZONES_JSON"
 PRESET_CONFIG_ENV = "TUYA_LIGHT_PRESETS_JSON"
 HA_BASE_URL = os.getenv("HA_BASE_URL", "").strip().rstrip("/")
@@ -23,6 +21,7 @@ _automation_lock = threading.Lock()
 _automation_cache: Dict[str, Any] = {
     "items": [],
     "fetched_ts": 0,
+    "last_poll_ts": 0,
     "last_error": None,
 }
 
@@ -43,11 +42,9 @@ class AutomationCommand(BaseModel):
 
 
 def _safe_error(exc: Any) -> str:
-    text = str(exc or "operation failed")
-    for secret in (HA_TOKEN,):
-        if secret:
-            text = text.replace(secret, "[redacted]")
-    return text[:240]
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)[:160]
+    return type(exc).__name__
 
 
 def _load_json_env(name: str) -> Dict[str, Any]:
@@ -58,11 +55,12 @@ def _load_json_env(name: str) -> Dict[str, Any]:
         value = json.loads(raw)
         return value if isinstance(value, dict) else {}
     except (TypeError, ValueError, json.JSONDecodeError):
+        print(f"dashboard config invalid: {name}", flush=True)
         return {}
 
 
 def _zones() -> Dict[str, List[str]]:
-    result = {}
+    result: Dict[str, List[str]] = {}
     for name, members in _load_json_env(ZONE_CONFIG_ENV).items():
         if not isinstance(members, list):
             continue
@@ -72,40 +70,82 @@ def _zones() -> Dict[str, List[str]]:
     return result
 
 
-def _presets() -> Dict[str, Dict[str, Any]]:
-    result = {}
-    for name, config in _load_json_env(PRESET_CONFIG_ENV).items():
-        if not isinstance(config, dict):
-            continue
-        action = str(config.get("action") or "").lower()
-        if action == "brightness" and config.get("value") is not None:
-            result[str(name)] = {"action": action, "value": max(10, min(1000, int(config["value"])))}
-        elif action in ("temperature", "temp", "cct") and config.get("value") is not None:
-            result[str(name)] = {"action": "temperature", "value": max(0, min(1000, int(config["value"])))}
-        elif action == "rgb" and all(config.get(k) is not None for k in ("h", "s", "v")):
-            result[str(name)] = {
-                "action": "rgb",
-                "h": max(0, min(360, int(config["h"]))),
-                "s": max(0, min(1000, int(config["s"]))),
-                "v": max(0, min(1000, int(config["v"]))),
-            }
-    return result
+def _normalize_preset(name: str, config: Dict[str, Any]) -> Dict[str, Any] | None:
+    mode = str(config.get("mode") or "").lower()
+    action = str(config.get("action") or "").lower()
+    label = str(config.get("label") or name)
+    if mode == "white" and config.get("brightness") is not None and config.get("temperature") is not None:
+        return {
+            "label": label,
+            "mode": "white",
+            "brightness": max(10, min(1000, int(config["brightness"]))),
+            "temperature": max(0, min(1000, int(config["temperature"]))),
+        }
+    if mode in ("colour", "color", "rgb") and all(config.get(k) is not None for k in ("h", "s", "v")):
+        return {
+            "label": label,
+            "mode": "colour",
+            "h": max(0, min(360, int(config["h"]))),
+            "s": max(0, min(1000, int(config["s"]))),
+            "v": max(0, min(1000, int(config["v"]))),
+        }
+    if action == "brightness" and config.get("value") is not None:
+        return {"label": label, "mode": "brightness", "value": max(10, min(1000, int(config["value"])))}
+    if action in ("temperature", "temp", "cct") and config.get("value") is not None:
+        return {"label": label, "mode": "temperature", "value": max(0, min(1000, int(config["value"])))}
+    if action == "rgb" and all(config.get(k) is not None for k in ("h", "s", "v")):
+        return {
+            "label": label,
+            "mode": "colour",
+            "h": max(0, min(360, int(config["h"]))),
+            "s": max(0, min(1000, int(config["s"]))),
+            "v": max(0, min(1000, int(config["v"]))),
+        }
+    return None
+
+
+def _presets() -> tuple[Dict[str, Dict[str, Any]], str]:
+    configured = _load_json_env(PRESET_CONFIG_ENV)
+    source = configured if configured else app_module.load_scenes()
+    source_name = PRESET_CONFIG_ENV if configured else "config/scenes.json"
+    result: Dict[str, Dict[str, Any]] = {}
+    for name, config in source.items() if isinstance(source, dict) else []:
+        if isinstance(config, dict):
+            normalized = _normalize_preset(str(name), config)
+            if normalized:
+                result[str(name)] = normalized
+    return result, source_name
 
 
 def _device_key(device: Dict[str, Any]) -> str:
     return str(device.get("id") or app_module.device_target(device))
 
 
-def _zone_devices(zone: str) -> List[Dict[str, Any]]:
-    members = set(_zones().get(zone, []))
-    if not members:
-        return []
-    result = []
+def _device_match_keys(device: Dict[str, Any]) -> set[str]:
+    return {
+        value.lower()
+        for value in (
+            _device_key(device),
+            str(device.get("id") or ""),
+            str(device.get("name") or ""),
+            str(device.get("ip") or ""),
+            app_module.device_target(device),
+        )
+        if value
+    }
+
+
+def _zone_devices(zone: str) -> tuple[List[Dict[str, Any]], List[str]]:
+    configured = _zones().get(zone, [])
+    requested = {member.lower() for member in configured}
+    result: List[Dict[str, Any]] = []
+    matched: set[str] = set()
     for device in app_module.load_lights():
-        keys = {_device_key(device), str(device.get("id") or ""), app_module.device_target(device)}
-        if members.intersection(keys):
+        hits = requested.intersection(_device_match_keys(device))
+        if hits:
             result.append(device)
-    return result
+            matched.update(hits)
+    return result, sorted(requested - matched)
 
 
 def _status_for(device: Dict[str, Any]) -> Dict[str, Any]:
@@ -120,30 +160,29 @@ def _has_dp(dps: Dict[str, Any], dp: int) -> bool:
 
 def _capabilities(device: Dict[str, Any]) -> Dict[str, bool]:
     dps = _status_for(device)["dps"]
-    brightness = _has_dp(dps, 22)
-    temperature = _has_dp(dps, 23)
-    rgb = _has_dp(dps, 24)
     return {
-        "brightness": brightness,
-        "temperature": temperature,
-        "rgb": rgb,
-        "scenes": brightness or temperature or rgb,
+        "brightness": _has_dp(dps, 22),
+        "temperature": _has_dp(dps, 23),
+        "rgb": _has_dp(dps, 24),
     }
 
 
-def _supports(device: Dict[str, Any], action: str) -> bool:
-    caps = _capabilities(device)
-    if action == "brightness":
+def _preset_supported(caps: Dict[str, bool], preset: Dict[str, Any]) -> bool:
+    mode = preset.get("mode")
+    if mode == "white":
+        return caps["brightness"] and caps["temperature"]
+    if mode == "brightness":
         return caps["brightness"]
-    if action == "temperature":
+    if mode == "temperature":
         return caps["temperature"]
-    if action == "rgb":
+    if mode == "colour":
         return caps["rgb"]
     return False
 
 
 def _public_device(device: Dict[str, Any]) -> Dict[str, Any]:
     info = _status_for(device)
+    dps = info["dps"]
     return {
         "deviceid": _device_key(device),
         "target": app_module.device_target(device),
@@ -151,58 +190,97 @@ def _public_device(device: Dict[str, Any]) -> Dict[str, Any]:
         "capabilities": _capabilities(device),
         "online": bool(info["status"].get("online")),
         "status": info["status"].get("status"),
-        "dps": {key: value for key, value in info["dps"].items() if str(key) in ("21", "22", "23", "24")},
+        "values": {
+            "brightness": dps.get("22", dps.get(22)),
+            "temperature": dps.get("23", dps.get(23)),
+            "rgb": dps.get("24", dps.get(24)),
+        },
     }
 
 
-def _zone_payload(name: str) -> Dict[str, Any]:
+def _zone_payload(name: str, presets: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     configured = _zones().get(name, [])
-    devices = _zone_devices(name)
+    devices, missing = _zone_devices(name)
     public = [_public_device(device) for device in devices]
     support = {
         action: sum(1 for item in public if item["capabilities"].get(action))
-        for action in ("brightness", "temperature", "rgb", "scenes")
+        for action in ("brightness", "temperature", "rgb")
     }
     total = len(public)
+    available_presets = []
+    for preset_name, preset in presets.items():
+        count = sum(1 for item in public if _preset_supported(item["capabilities"], preset))
+        if count:
+            available_presets.append({
+                "key": preset_name,
+                **preset,
+                "supported_devices": count,
+                "total_devices": total,
+                "partial": count < total,
+            })
     return {
         "zone": name,
         "configured_members": configured,
+        "missing_members": missing,
         "devices": public,
         "support": support,
         "partial_support": any(0 < count < total for count in support.values()) if total else False,
+        "presets": available_presets,
     }
 
 
-def _command_from_payload(action: str, body: ZoneCommand, preset: Dict[str, Any] | None = None):
-    cfg = preset or {}
+def _supports(device: Dict[str, Any], action: str, preset: Dict[str, Any] | None = None) -> bool:
+    caps = _capabilities(device)
+    if action in caps:
+        return caps[action]
+    return action == "preset" and preset is not None and _preset_supported(caps, preset)
+
+
+def _apply_to_device(device: Dict[str, Any], body: ZoneCommand, preset: Dict[str, Any] | None) -> None:
+    target = app_module.device_target(device)
+    action = body.action.strip().lower()
     if action == "brightness":
-        value = cfg.get("value", body.value)
-        return app_module.LightCommand(target="", action="brightness", value=max(10, min(1000, int(value))))
-    if action == "temperature":
-        value = cfg.get("value", body.value)
-        return app_module.LightCommand(target="", action="temperature", value=max(0, min(1000, int(value))))
+        command = app_module.LightCommand(target=target, action="brightness", value=max(10, min(1000, int(body.value))))
+        app_module.apply_light(device, command)
+        return
+    if action in ("temperature", "temp", "cct"):
+        command = app_module.LightCommand(target=target, action="temperature", value=max(0, min(1000, int(body.value))))
+        app_module.apply_light(device, command)
+        return
     if action == "rgb":
-        h = cfg.get("h", body.h)
-        s = cfg.get("s", body.s)
-        v = cfg.get("v", body.v)
-        return app_module.LightCommand(
-            target="",
+        command = app_module.LightCommand(
+            target=target,
             action="rgb",
-            h=max(0, min(360, int(h))),
-            s=max(0, min(1000, int(s))),
-            v=max(0, min(1000, int(v))),
+            h=max(0, min(360, int(body.h))),
+            s=max(0, min(1000, int(body.s))),
+            v=max(0, min(1000, int(body.v))),
         )
+        app_module.apply_light(device, command)
+        return
+    if action == "preset" and preset:
+        mode = preset["mode"]
+        if mode == "white":
+            app_module.apply_light(device, app_module.LightCommand(target=target, action="brightness", value=preset["brightness"]))
+            app_module.apply_light(device, app_module.LightCommand(target=target, action="temperature", value=preset["temperature"]))
+        elif mode == "brightness":
+            app_module.apply_light(device, app_module.LightCommand(target=target, action="brightness", value=preset["value"]))
+        elif mode == "temperature":
+            app_module.apply_light(device, app_module.LightCommand(target=target, action="temperature", value=preset["value"]))
+        elif mode == "colour":
+            app_module.apply_light(device, app_module.LightCommand(target=target, action="rgb", h=preset["h"], s=preset["s"], v=preset["v"]))
+        return
     raise HTTPException(status_code=400, detail="unsupported zone action")
 
 
 @app.get("/api/lighting/zones")
 def lighting_zones():
     zones = _zones()
+    presets, preset_source = _presets()
     return {
         "ok": True,
         "configured": bool(zones),
-        "zones": [_zone_payload(name) for name in zones],
-        "presets": _presets(),
+        "zones": [_zone_payload(name, presets) for name in zones],
+        "preset_source": preset_source,
     }
 
 
@@ -211,33 +289,36 @@ def lighting_zone_command(body: ZoneCommand):
     zone = body.zone.strip()
     if zone not in _zones():
         raise HTTPException(status_code=404, detail="zone not configured")
-    action = body.action.strip().lower()
+    requested_action = body.action.strip().lower()
+    normalized_action = "temperature" if requested_action in ("temperature", "temp", "cct") else requested_action
     preset = None
-    preset_name = None
-    if action == "preset":
-        preset_name = str(body.preset or "")
-        preset = _presets().get(preset_name)
+    presets, _ = _presets()
+    if normalized_action == "preset":
+        preset = presets.get(str(body.preset or ""))
         if not preset:
             raise HTTPException(status_code=404, detail="preset not configured")
-        action = preset["action"]
-    command = _command_from_payload(action, body, preset)
+    if normalized_action not in ("brightness", "temperature", "rgb", "preset"):
+        raise HTTPException(status_code=400, detail="unsupported zone action")
+    devices, missing = _zone_devices(zone)
     results = []
-    for device in _zone_devices(zone):
+    for device in devices:
         device_id = _device_key(device)
-        if not _supports(device, action):
+        if not _supports(device, normalized_action, preset):
             results.append({"deviceid": device_id, "ok": False, "unsupported": True, "error": "capability not supported"})
             continue
         try:
-            app_module.apply_light(device, command)
+            _apply_to_device(device, body, preset)
             results.append({"deviceid": device_id, "ok": True})
         except Exception as exc:
             results.append({"deviceid": device_id, "ok": False, "error": _safe_error(exc)})
+    success = sum(1 for item in results if item.get("ok"))
     return {
-        "ok": any(item.get("ok") for item in results),
+        "ok": success > 0,
         "zone": zone,
-        "action": body.action,
-        "preset": preset_name,
-        "partial": any(not item.get("ok") for item in results) and any(item.get("ok") for item in results),
+        "action": normalized_action,
+        "preset": body.preset,
+        "partial": success != len(results),
+        "missing_members": missing,
         "results": results,
     }
 
@@ -254,9 +335,7 @@ def _ha_request(path: str, method: str = "GET", payload: Dict[str, Any] | None =
     )
     with urllib.request.urlopen(request, timeout=10) as response:
         raw = response.read()
-    if not raw:
-        return {}
-    return json.loads(raw.decode("utf-8"))
+    return json.loads(raw.decode("utf-8")) if raw else {}
 
 
 def _normalize_automation(item: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -282,6 +361,7 @@ def _fetch_automations(force: bool = False) -> List[Dict[str, Any]]:
     with _automation_lock:
         if not force and _automation_cache["items"] and now - int(_automation_cache["fetched_ts"] or 0) < HA_AUTOMATION_CACHE_SEC:
             return list(_automation_cache["items"])
+        _automation_cache["last_poll_ts"] = now
     try:
         payload = _ha_request("/api/states")
         items = []
@@ -299,17 +379,25 @@ def _fetch_automations(force: bool = False) -> List[Dict[str, Any]]:
             return list(_automation_cache["items"])
 
 
+def _automation_poll_loop() -> None:
+    while True:
+        _fetch_automations(force=True)
+        time.sleep(HA_AUTOMATION_CACHE_SEC)
+
+
 @app.get("/api/ha/automations")
 def ha_automations():
     items = _fetch_automations()
     with _automation_lock:
         error = _automation_cache["last_error"]
         fetched_ts = _automation_cache["fetched_ts"]
+        last_poll_ts = _automation_cache["last_poll_ts"]
     return {
         "ok": error is None or bool(items),
         "configured": bool(HA_BASE_URL and HA_TOKEN),
         "automations": items,
         "last_success_ts": fetched_ts or None,
+        "last_poll_ts": last_poll_ts or None,
         "stale": bool(error and items),
         "error": error if error and not items else None,
     }
@@ -324,7 +412,7 @@ def ha_automation_action(body: AutomationCommand):
     latest = {item["entity_id"] for item in _fetch_automations(force=True)}
     if entity_id not in latest:
         raise HTTPException(status_code=404, detail="automation not found")
-    services = {"enable": "turn_on", "disable": "turn_off", "trigger": "trigger"}
+    services = {"enable": "turn_on", "disable": "turn_off", "run": "trigger", "trigger": "trigger"}
     service = services.get(action)
     if not service:
         raise HTTPException(status_code=400, detail="unsupported automation action")
@@ -334,3 +422,8 @@ def ha_automation_action(body: AutomationCommand):
         return {"ok": True, "entity_id": entity_id, "action": action}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=_safe_error(exc))
+
+
+if HA_BASE_URL and HA_TOKEN:
+    _automation_thread = threading.Thread(target=_automation_poll_loop, name="ha-automation-poller", daemon=True)
+    _automation_thread.start()
