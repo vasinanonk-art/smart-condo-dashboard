@@ -32,12 +32,14 @@ ARRIVAL_CHANNEL = 1
 ARRIVAL_COOLDOWN_SEC = 600
 ARRIVAL_WARMUP_SEC = 60
 ARRIVAL_STABLE_HOME_SEC = 10
+DEPARTURE_STABLE_AWAY_SEC = 300
 ARRIVAL_PEOPLE = ("beer", "seem")
 ARRIVAL_HOME_SOURCES = ("Router", "MQTT", "Ping")
 _automation_state = {
     "startup_ts": int(time.time()) if time is not None else 0,
     "home": {"beer": None, "seem": None},
     "pending_since": {"beer": 0, "seem": 0},
+    "away_since": {"beer": 0, "seem": 0},
     "last_ts": {"beer": 0, "seem": 0},
 }
 
@@ -155,30 +157,35 @@ def _run_person_arrival_automation(person, presence):
     item = presence.get(person) if isinstance(presence, dict) else None
     current_home = _is_arrived_home(item)
     confirmed_away = _is_confirmed_away(item)
-    previous_home = _automation_state["home"].get(person)
+    automation_home = _automation_state["home"].get(person)
     source = _presence_source(item)
     now = int(time.time()) if time is not None else 0
     uptime_ok = now - int(_automation_state.get("startup_ts") or now) >= ARRIVAL_WARMUP_SEC
 
     if current_home:
-        if previous_home is None or not uptime_ok:
-            _log_transition(person, previous_home, True, source)
+        _automation_state["away_since"][person] = 0
+
+        if automation_home is None or not uptime_ok:
+            _log_transition(person, automation_home, True, source)
             _automation_state["home"][person] = True
             _automation_state["pending_since"][person] = 0
             return
-        if previous_home is True:
+
+        if automation_home is True:
             _automation_state["pending_since"][person] = 0
             return
+
         pending_since = int(_automation_state["pending_since"].get(person) or 0)
         if not pending_since:
             _automation_state["pending_since"][person] = now
-            _log_transition(person, previous_home, True, source)
             return
+
         stable_ok = now - pending_since >= ARRIVAL_STABLE_HOME_SEC
         cooldown_ok = now - int(_automation_state["last_ts"].get(person) or 0) >= ARRIVAL_COOLDOWN_SEC
-        should_run = previous_home is False and stable_ok and cooldown_ok
-        if not should_run:
+        if not stable_ok or not cooldown_ok:
             return
+
+        _log_transition(person, automation_home, True, source)
         _automation_state["home"][person] = True
         _automation_state["pending_since"][person] = 0
         try:
@@ -188,14 +195,23 @@ def _run_person_arrival_automation(person, presence):
             print(f"automation result: ok=false error={error}", flush=True)
         return
 
+    _automation_state["pending_since"][person] = 0
+
     if confirmed_away:
-        _log_transition(person, previous_home, False, source)
-        _automation_state["home"][person] = False
-        _automation_state["pending_since"][person] = 0
+        away_since = int(_automation_state["away_since"].get(person) or 0)
+        if not away_since:
+            _automation_state["away_since"][person] = now
+            return
+        if now - away_since < DEPARTURE_STABLE_AWAY_SEC:
+            return
+        if automation_home is not False:
+            _log_transition(person, automation_home, False, source)
+            _automation_state["home"][person] = False
         return
 
-    # Ignore Cached / Recently Seen / brief unknown loss for automation state.
-    return
+    # Cached / Recently Seen / unknown states break the continuous Away timer,
+    # but never change automation_home.
+    _automation_state["away_since"][person] = 0
 
 
 def _run_arrival_automation(presence):
@@ -209,7 +225,8 @@ def _resolve_store_and_evaluate_presence(app_mod):
         presence = raw_presence if isinstance(raw_presence, dict) else {}
     else:
         presence = resolve_presence(raw_presence)
-    app_mod.state["condo_presence"] = presence
+    # Preserve condo_presence as the raw MQTT/router input. Store the resolved
+    # view separately so repeated evaluations never resolve already-resolved data.
     app_mod.state["presence"] = presence
     _run_arrival_automation(presence)
     return presence
