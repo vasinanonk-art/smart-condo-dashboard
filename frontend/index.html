@@ -7,13 +7,14 @@
   <link rel="stylesheet" href="/assets/dashboard_v3.css">
   <link rel="stylesheet" href="/assets/dashboard_v3_layout.css">
   <link rel="stylesheet" href="/assets/dashboard_upgrade.css">
+  <link rel="stylesheet" href="/assets/dashboard_polish.css">
 </head>
 <body>
 <div class="app">
   <aside class="sidebar">
     <div class="brand"><div class="brand-mark">SC</div><div><strong>Smart Condo</strong><small>Dashboard 8090</small></div></div>
     <nav class="nav">
-      <button data-nav="overview">Overview</button><button data-nav="lighting">Lighting</button><button data-nav="climate">Climate & Air Quality</button><button data-nav="entertainment">Entertainment</button><button data-nav="presence">Presence & Automation</button><button data-nav="system">System</button>
+      <button data-nav="overview" data-short="OV">Overview</button><button data-nav="lighting" data-short="LT">Lighting</button><button data-nav="climate" data-short="AQ">Climate & Air Quality</button><button data-nav="entertainment" data-short="TV">Entertainment</button><button data-nav="presence" data-short="PA">Presence & Automation</button><button data-nav="system" data-short="SY">System</button>
     </nav>
     <div class="sidebar-foot">Smart Home · Port 8090</div>
   </aside>
@@ -21,10 +22,9 @@
     <header class="topbar"><div><h1 id="pageTitle">Overview</h1><p>Live condo controls, climate, air quality and system health</p></div><div class="status-row"><span id="mqttBadge" class="badge">MQTT Checking</span><span id="haBadge" class="badge">HA Air Checking</span><button class="btn ghost" onclick="refresh()">Refresh</button></div></header>
 
     <section class="page active" data-page="overview">
-      <div id="overviewMetrics" class="grid"></div>
+      <div id="overviewMetrics" class="summary-grid"></div>
       <div class="grid" style="margin-top:14px">
-        <div class="card span-8"><div class="card-head"><h2>Temperature & Humidity</h2><div id="overviewRanges" class="range-controls"></div></div><div class="chart-wrap"><svg id="overviewChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--yellow)"></i>Temperature</span><span><i style="background:var(--cyan)"></i>Humidity</span></div></div>
-        <div class="card span-4"><div class="card-head"><h2>Presence & System</h2></div><div id="overviewPresence" class="metric-grid"></div><div class="card-head" style="margin-top:18px"><h2>Device summary</h2></div><div id="deviceSummary"></div></div>
+        <div class="card span-12"><div class="card-head"><h2>Temperature & Humidity</h2><div id="overviewRanges" class="range-controls"></div></div><div class="chart-wrap"><svg id="overviewChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--yellow)"></i>Temperature</span><span><i style="background:var(--cyan)"></i>Humidity</span></div></div>
         <div class="card span-12"><div class="card-head"><h2>PM2.5 Living Room vs Bedroom</h2></div><div class="chart-wrap"><svg id="overviewPmChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--accent)"></i>Living Room</span><span><i style="background:var(--purple)"></i>Bedroom</span></div></div>
         <div id="overviewStats" class="span-12 grid"></div>
         <div class="card span-12"><div class="card-head"><h2>Alerts & System Health</h2></div><div id="alerts" class="alert-list"></div></div>
@@ -55,8 +55,10 @@
   <nav class="mobile-nav"><button data-nav="overview">Overview</button><button data-nav="lighting">Lighting</button><button data-nav="climate">Climate</button><button data-nav="entertainment">TV</button><button data-nav="presence">Presence</button><button data-nav="system">System</button></nav>
 </div>
 <div id="toast" class="toast"></div>
+<script src="/assets/dashboard_polling_guard.js"></script>
 <script src="/assets/dashboard_v3.js"></script>
 <script src="/assets/dashboard_upgrade.js"></script>
 <script src="/assets/dashboard_upgrade_patch.js"></script>
+<script src="/assets/dashboard_polish.js"></script>
 </body>
 </html>
