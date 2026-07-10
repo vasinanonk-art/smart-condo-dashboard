@@ -31,21 +31,34 @@ def _number(value: Any):
 
 def normalize_row(row: Any) -> Dict[str, Any]:
     row = row if isinstance(row, dict) else {}
-    pm25 = None
+    living = _number(row.get("pm25_living_room"))
+    bedroom = _number(row.get("pm25_bedroom"))
+    legacy = None
     for key in ("pm25", "pm2_5", "pm2.5", "PM25", "pm_25"):
         if key in row and row.get(key) is not None:
-            pm25 = _number(row.get(key))
+            legacy = _number(row.get(key))
             break
+    if living is None:
+        living = legacy
     return {
         "ts": int(row.get("ts") or 0),
         "temperature": _number(row.get("temperature", row.get("temp"))),
         "humidity": _number(row.get("humidity", row.get("hum"))),
-        "pm25": pm25,
+        "pm25": living,
+        "pm25_living_room": living,
+        "pm25_bedroom": bedroom,
     }
 
 
 def _signature(row: Dict[str, Any]):
-    return (row.get("ts"), row.get("temperature"), row.get("humidity"), row.get("pm25"))
+    return (
+        row.get("ts"),
+        row.get("temperature"),
+        row.get("humidity"),
+        row.get("pm25"),
+        row.get("pm25_living_room"),
+        row.get("pm25_bedroom"),
+    )
 
 
 def _read_rows_unlocked() -> List[Dict[str, Any]]:
