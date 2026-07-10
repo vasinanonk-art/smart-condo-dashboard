@@ -21,7 +21,7 @@ from backend.sensor_history_store import (
 )
 
 app = app_module.app
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.1.0"
 FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
 FRONTEND_ASSETS_DIR = os.path.join(FRONTEND_DIR, "assets")
 DASHBOARD_V3_ASSETS = (
@@ -405,3 +405,4 @@ async def sensor_history_diagnostics_middleware(request: Request, call_next):
 
 _mount_dashboard_assets()
 _initialize_persistent_history()
+import backend.dashboard_extensions  # noqa: E402,F401
