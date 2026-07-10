@@ -174,7 +174,7 @@ def _install_pm25_mqtt_source() -> None:
 
 def _initialize_persistent_history() -> None:
     app_module.HISTORY_TTL_SEC = HISTORY_RETENTION_SEC
-    app_module.HISTORY_MAX_POINTS = max(int(getattr(app_module, "HISTORY_MAX_POINTS", 0)), 20000)
+    app_module.HISTORY_MAX_POINTS = max(int(getattr(app_module, "HISTORY_MAX_POINTS", 0)), 200000)
     existing = app_module.state.get("condo_sensor_history", [])
     rows = load_history(existing)
     _sync_history_state(rows)
