@@ -35,6 +35,8 @@ ARRIVAL_STABLE_HOME_SEC = 10
 DEPARTURE_STABLE_AWAY_SEC = 300
 ARRIVAL_PEOPLE = ("beer", "seem")
 ARRIVAL_HOME_SOURCES = ("Router", "MQTT", "Ping")
+HISTORY_RANGE_SEC = {"24h": 86400, "3d": 259200, "7d": 604800}
+HISTORY_MAX_RETURN = {"24h": 720, "3d": 720, "7d": 840}
 _automation_state = {
     "startup_ts": int(time.time()) if time is not None else 0,
     "home": {"beer": None, "seem": None},
@@ -111,6 +113,60 @@ async def _sonoff_all_handler(request: Request):
     if not result.get("devices") and not result.get("ok"):
         raise HTTPException(status_code=502, detail=result.get("error", "sonoff bulk command failed"))
     return _sonoff_payload(result)
+
+
+def _first_sensor_value(row, keys):
+    if not isinstance(row, dict):
+        return None
+    for key in keys:
+        value = row.get(key)
+        if value is not None and value != "":
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _normalize_sensor_row(row):
+    row = row if isinstance(row, dict) else {}
+    return {
+        "ts": int(row.get("ts") or 0),
+        "temperature": _first_sensor_value(row, ("temperature", "temp", "t")),
+        "humidity": _first_sensor_value(row, ("humidity", "hum", "h")),
+        "pm25": _first_sensor_value(row, ("pm25", "pm2_5", "pm2.5", "PM25", "pm_25")),
+    }
+
+
+def _downsample_history(rows, limit):
+    if len(rows) <= limit:
+        return rows
+    step = len(rows) / float(limit)
+    indexes = sorted({min(len(rows) - 1, int(i * step)) for i in range(limit)} | {len(rows) - 1})
+    return [rows[i] for i in indexes]
+
+
+async def _sensor_history_handler(request: Request):
+    import backend.app as app_mod
+    range_key = str(request.query_params.get("range", "24h")).lower()
+    if range_key not in HISTORY_RANGE_SEC:
+        range_key = "24h"
+    now = int(time.time())
+    cutoff = now - HISTORY_RANGE_SEC[range_key]
+    raw = app_mod.state.get("condo_sensor_history", [])
+    normalized = [_normalize_sensor_row(row) for row in raw if isinstance(row, dict)]
+    normalized = [row for row in normalized if row["ts"] >= cutoff]
+    raw_count = len(normalized)
+    points = _downsample_history(normalized, HISTORY_MAX_RETURN[range_key])
+    current = _normalize_sensor_row(app_mod.state.get("condo_sensor", {}))
+    return {
+        "ok": True,
+        "range": range_key,
+        "history": points,
+        "points": points,
+        "raw_count": raw_count,
+        "current": current,
+    }
 
 
 def _presence_source(item):
@@ -256,6 +312,15 @@ def _install_presence_refresh_hook():
         print(f"automation hook error: {repr(exc)}", flush=True)
 
 
+def _install_sensor_history_support():
+    try:
+        import backend.app as app_mod
+        app_mod.HISTORY_TTL_SEC = max(int(getattr(app_mod, "HISTORY_TTL_SEC", 0)), HISTORY_RANGE_SEC["7d"])
+        app_mod.HISTORY_MAX_POINTS = max(int(getattr(app_mod, "HISTORY_MAX_POINTS", 0)), 20000)
+    except Exception as exc:
+        print(f"sensor history setup error: {repr(exc)}", flush=True)
+
+
 def _presence_status_handler():
     import backend.app as app_mod
     sensor = app_mod.state.get("condo_sensor", {})
@@ -270,6 +335,7 @@ def _presence_api_handler():
 
 def _initialize_presence_state(label="startup"):
     try:
+        _install_sensor_history_support()
         _install_presence_refresh_hook()
         data = _presence_status_handler()
         print(f"presence initialized: source={label} count={len(data.get('presence', {}))}", flush=True)
@@ -295,6 +361,7 @@ def _dashboard_index_handler():
     scripts = [
         '<script src="/assets/sonoff_bulk.js"></script>',
         '<script src="/assets/presence_stabilizer.js"></script>',
+        '<script src="/assets/sensor_dashboard.js"></script>',
     ]
     for script in scripts:
         if script not in html:
@@ -333,6 +400,8 @@ if APIRouter is not None and not getattr(APIRouter, "_sonoff_route_patch", False
                 endpoint = _sonoff_post_handler
         elif path == "/api/condo/status" and "GET" in methods:
             endpoint = _presence_status_handler
+        elif path == "/api/condo/history" and "GET" in methods:
+            endpoint = _sensor_history_handler
         elif path == "/" and "GET" in methods and HTMLResponse is not None:
             endpoint = _dashboard_index_handler
         return _orig_router_add_api_route(self, path, endpoint, **kwargs)
@@ -374,6 +443,8 @@ if FastAPI is not None and not getattr(FastAPI, "_sonoff_route_patch", False):
                 endpoint = _sonoff_post_handler
         elif path == "/api/condo/status" and "GET" in methods:
             endpoint = _presence_status_handler
+        elif path == "/api/condo/history" and "GET" in methods:
+            endpoint = _sensor_history_handler
         elif path == "/" and "GET" in methods and HTMLResponse is not None:
             endpoint = _dashboard_index_handler
         return _orig_fastapi_add_api_route(self, path, endpoint, **kwargs)
