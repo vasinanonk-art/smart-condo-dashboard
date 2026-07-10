@@ -8,6 +8,7 @@ from typing import Any, Dict
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from backend import app as app_module
 from backend.sensor_history_store import (
@@ -21,6 +22,13 @@ from backend.sensor_history_store import (
 
 app = app_module.app
 APP_VERSION = "3.0.0"
+FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
+FRONTEND_ASSETS_DIR = os.path.join(FRONTEND_DIR, "assets")
+DASHBOARD_V3_ASSETS = (
+    "dashboard_v3.css",
+    "dashboard_v3_layout.css",
+    "dashboard_v3.js",
+)
 MI_AIR_PURIFIER_MQTT_TOPIC = os.getenv("MI_AIR_PURIFIER_MQTT_TOPIC", "").strip()
 HA_BASE_URL = os.getenv("HA_BASE_URL", "").strip().rstrip("/")
 HA_TOKEN = os.getenv("HA_TOKEN", "").strip()
@@ -42,6 +50,31 @@ _ha_state: Dict[str, Any] = {
     "living_room": {"entity_id": HA_PM25_LIVING_ENTITY, "value": None, "updated_ts": None, "attributes": {}},
     "bedroom": {"entity_id": HA_PM25_BEDROOM_ENTITY, "value": None, "updated_ts": None, "attributes": {}},
 }
+
+
+def _mount_dashboard_assets() -> None:
+    app.router.routes = [
+        route
+        for route in app.router.routes
+        if not (getattr(route, "path", None) == "/assets" and route.__class__.__name__ == "Mount")
+    ]
+    app.mount(
+        "/assets",
+        StaticFiles(directory=FRONTEND_ASSETS_DIR, check_dir=False),
+        name="assets",
+    )
+
+
+def _validate_dashboard_assets() -> None:
+    missing = [
+        filename
+        for filename in DASHBOARD_V3_ASSETS
+        if not os.path.isfile(os.path.join(FRONTEND_ASSETS_DIR, filename))
+    ]
+    if missing:
+        print("dashboard assets missing: " + ",".join(missing), flush=True)
+    else:
+        print("dashboard assets: ready", flush=True)
 
 
 def _sync_history_state(rows):
@@ -340,6 +373,11 @@ def _initialize_persistent_history() -> None:
         thread.start()
 
 
+@app.on_event("startup")
+def validate_dashboard_assets() -> None:
+    _validate_dashboard_assets()
+
+
 @app.middleware("http")
 async def sensor_history_diagnostics_middleware(request: Request, call_next):
     response = await call_next(request)
@@ -365,4 +403,5 @@ async def sensor_history_diagnostics_middleware(request: Request, call_next):
     return JSONResponse(content=payload, status_code=response.status_code)
 
 
+_mount_dashboard_assets()
 _initialize_persistent_history()
