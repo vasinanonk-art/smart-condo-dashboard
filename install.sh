@@ -27,10 +27,10 @@ cp -R "$APP_SRC/frontend" "$APP_RUN/frontend"
 cp -R "$APP_SRC/config" "$APP_RUN/config"
 cp "$APP_SRC/sonoff_client.py" "$APP_RUN/sonoff_client.py"
 
-# Explicitly install the production dashboard shell and v3 assets.
+# Explicitly install the production dashboard shell and assets.
 install -d "$APP_RUN/frontend/assets"
 install -m 0644 "$APP_SRC/frontend/index.html" "$APP_RUN/frontend/index.html"
-for asset in dashboard_v3.css dashboard_v3_layout.css dashboard_v3.js; do
+for asset in dashboard_v3.css dashboard_v3_layout.css dashboard_v3.js dashboard_upgrade.css dashboard_upgrade.js; do
     install -m 0644 "$APP_SRC/frontend/assets/$asset" "$APP_RUN/frontend/assets/$asset"
 done
 
