@@ -208,7 +208,7 @@ def _refresh_success_async(device):
     threading.Thread(target=refresh, name="tuya-zone-refresh", daemon=True).start()
 
 
-def _bounded_zone_command(body):
+def _bounded_zone_command(body: dashboard_extensions.ZoneCommand):
     zone = body.zone.strip()
     if zone not in dashboard_extensions._zones():
         raise dashboard_extensions.HTTPException(status_code=404, detail="zone not configured")
