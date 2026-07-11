@@ -188,9 +188,9 @@ def _is_arrived_home(item):
     if not isinstance(item, dict):
         return False
     source = _presence_source(item)
-    source_upper = source.upper()
-    if "DELAY" in source_upper or "REACHABLE" in source_upper:
-        return False
+    # Router:REACHABLE and Router:DELAY are valid Home observations. A single
+    # neighbor-state flap still cannot trigger arrival because Home must remain
+    # continuous for ARRIVAL_STABLE_HOME_SEC and arrival must already be armed.
     return bool(item.get("home")) and _presence_state(item) == "home" and source.startswith(ARRIVAL_HOME_SOURCES)
 
 
@@ -316,8 +316,8 @@ def _run_person_arrival_automation(person, presence):
             _cancel_arrival(person)
         return
 
-    # Cached, Recently Seen, unknown, Router/Ping/MQTT transient failures and
-    # every state other than exact Expired Away cancel both stability timers.
+    # Cached, Recently Seen, unknown and every state other than exact Expired
+    # Away or a positive Router/MQTT/Ping Home observation cancel both timers.
     # They never change automation_home and never arm arrival.
     _cancel_departure(person)
     _cancel_arrival(person)
