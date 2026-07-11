@@ -23,6 +23,8 @@
 
     <section class="page active" data-page="overview">
       <div id="overviewMetrics" class="summary-grid"></div>
+      <div id="overviewPresence" hidden></div>
+      <div id="deviceSummary" hidden></div>
       <div class="grid" style="margin-top:14px">
         <div class="card span-12"><div class="card-head"><h2>Temperature & Humidity</h2><div id="overviewRanges" class="range-controls"></div></div><div class="chart-wrap"><svg id="overviewChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--yellow)"></i>Temperature</span><span><i style="background:var(--cyan)"></i>Humidity</span></div></div>
         <div class="card span-12"><div class="card-head"><h2>PM2.5 Living Room vs Bedroom</h2></div><div class="chart-wrap"><svg id="overviewPmChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--accent)"></i>Living Room</span><span><i style="background:var(--purple)"></i>Bedroom</span></div></div>
@@ -55,10 +57,7 @@
   <nav class="mobile-nav"><button data-nav="overview">Overview</button><button data-nav="lighting">Lighting</button><button data-nav="climate">Climate</button><button data-nav="entertainment">TV</button><button data-nav="presence">Presence</button><button data-nav="system">System</button></nav>
 </div>
 <div id="toast" class="toast"></div>
-<script src="/assets/dashboard_polling_guard.js"></script>
-<script src="/assets/dashboard_v3.js"></script>
 <script src="/assets/dashboard_upgrade.js"></script>
-<script src="/assets/dashboard_upgrade_patch.js"></script>
-<script src="/assets/dashboard_polish.js"></script>
+<script src="/assets/dashboard_v3.js"></script>
 </body>
 </html>
