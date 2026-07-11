@@ -10,3 +10,6 @@ def _safe_dashboard_error(exc):
 
 # Keep extension errors safe: no tokens, URLs, credentials, or filesystem details.
 _dashboard_extensions._safe_error = _safe_dashboard_error
+
+# Install runtime-only reliability fixes after the app and extension routes exist.
+from backend import runtime_fixes as _runtime_fixes  # noqa: F401,E402
