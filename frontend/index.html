@@ -67,7 +67,7 @@
     <nav class="nav">
       <button data-nav="overview" data-short="OV">Overview</button><button data-nav="lighting" data-short="LT">Lighting</button><button data-nav="climate" data-short="AQ">Climate & Air Quality</button><button data-nav="entertainment" data-short="TV">Entertainment</button><button data-nav="presence" data-short="PA">Presence & Automation</button><button data-nav="system" data-short="SY">System</button>
     </nav>
-    <div class="sidebar-foot">Smart Home · Port 8090</div>
+    <div class="sidebar-foot">Smart Home · Dashboard</div>
   </aside>
   <main class="main">
     <header class="topbar"><div><h1 id="pageTitle">Overview</h1><p>Live condo controls, climate, air quality and system health</p></div><div class="status-row"><span id="mqttBadge" class="badge">MQTT Checking</span><span id="haBadge" class="badge">HA Air Checking</span><button class="btn ghost" onclick="refresh()">Refresh</button></div></header>
@@ -88,7 +88,7 @@
   <nav class="mobile-nav"><button data-nav="overview">Overview</button><button data-nav="lighting">Lighting</button><button data-nav="climate">Climate</button><button data-nav="entertainment">TV</button><button data-nav="presence">Presence</button><button data-nav="system">System</button></nav>
 </div>
 <div id="toast" class="toast"></div>
-<script src="/assets/dashboard_upgrade.js"></script><script src="/assets/dashboard_v3.js"></script>
+<script src="/assets/dashboard_upgrade.js"></script><script src="/assets/dashboard_v3.js"></script><script src="/assets/dashboard_command_fixes.js"></script>
 <script>
 (() => {
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
