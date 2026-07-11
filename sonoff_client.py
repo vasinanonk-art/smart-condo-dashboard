@@ -46,6 +46,7 @@ _automation_state = {
     "arrival_armed": {"beer": False, "seem": False},
     "last_ts": {"beer": 0, "seem": 0},
 }
+_presence_event_context = {"retained": False}
 
 
 def _stable_command_diag(detail):
@@ -225,15 +226,22 @@ def _initialize_person_state(person, item):
 
 
 def _run_arrival_action(person, now):
-    result = set_state(ARRIVAL_DEVICEID, "on", ARRIVAL_CHANNEL)
-    if not bool(result.get("ok")):
+    print(f"automation: {person}_arrived -> living_room_on", flush=True)
+    try:
+        result = set_state(ARRIVAL_DEVICEID, "on", ARRIVAL_CHANNEL)
+        ok = bool(result.get("ok"))
+        error = _backend_sonoff.safe_error(result.get("error") or result.get("last_error"))
+    except Exception as exc:
+        ok = False
+        error = _backend_sonoff.safe_error(repr(exc))
+    print(f"automation result: ok={str(ok).lower()} error={error}", flush=True)
+    if not ok:
         return False
     _automation_state["last_ts"][person] = now
     _automation_state["home"][person] = True
     _automation_state["pending_since"][person] = 0
     _automation_state["away_since"][person] = 0
     _automation_state["arrival_armed"][person] = False
-    print(f"automation: {person}_arrived -> living_room_on", flush=True)
     return True
 
 
@@ -249,6 +257,17 @@ def _run_person_arrival_automation(person, presence):
     confirmed_away = _is_confirmed_away(item)
     automation_home = _automation_state["home"].get(person)
     arrival_armed = bool(_automation_state["arrival_armed"].get(person))
+
+    # During startup warmup, current presence may initialize Home but can never
+    # start departure/arrival timers, arm arrival, or trigger a command.
+    startup_ts = int(_automation_state.get("startup_ts") or now)
+    if now - startup_ts < ARRIVAL_WARMUP_SEC:
+        _cancel_departure(person)
+        _cancel_arrival(person)
+        if current_home:
+            _automation_state["home"][person] = True
+            _automation_state["arrival_armed"][person] = False
+        return
 
     if confirmed_away:
         _cancel_arrival(person)
@@ -293,10 +312,7 @@ def _run_person_arrival_automation(person, presence):
         if now - int(_automation_state["last_ts"].get(person) or 0) < ARRIVAL_COOLDOWN_SEC:
             return
 
-        try:
-            if not _run_arrival_action(person, now):
-                _cancel_arrival(person)
-        except Exception:
+        if not _run_arrival_action(person, now):
             _cancel_arrival(person)
         return
 
@@ -339,18 +355,33 @@ def _install_presence_refresh_hook():
             return
         original_presence_topic = app_mod.update_condo_presence_from_topic
         original_condo_state = app_mod.update_condo_state
+        original_on_message = getattr(app_mod, "on_message", None)
 
         def _wrapped_update_condo_presence_from_topic(person, data, topic):
             original_presence_topic(person, data, topic)
-            _resolve_store_presence(app_mod, evaluate=True)
+            if not _presence_event_context.get("retained"):
+                _resolve_store_presence(app_mod, evaluate=True)
+            else:
+                _resolve_store_presence(app_mod, evaluate=False)
 
         def _wrapped_update_condo_state(payload):
             original_condo_state(payload)
             if _payload_contains_presence(payload):
-                _resolve_store_presence(app_mod, evaluate=True)
+                _resolve_store_presence(app_mod, evaluate=not _presence_event_context.get("retained"))
+
+        def _wrapped_on_message(client, userdata, msg):
+            previous = bool(_presence_event_context.get("retained"))
+            _presence_event_context["retained"] = bool(getattr(msg, "retain", False))
+            try:
+                return original_on_message(client, userdata, msg)
+            finally:
+                _presence_event_context["retained"] = previous
 
         app_mod.update_condo_presence_from_topic = _wrapped_update_condo_presence_from_topic
         app_mod.update_condo_state = _wrapped_update_condo_state
+        if original_on_message is not None:
+            app_mod.on_message = _wrapped_on_message
+            app_mod.mqttc.on_message = _wrapped_on_message
         app_mod._presence_automation_hook_installed = True
     except Exception as exc:
         print(f"automation hook error: {repr(exc)}", flush=True)
