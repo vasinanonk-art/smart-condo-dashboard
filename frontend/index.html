@@ -6,8 +6,8 @@
   <title>Smart Condo Dashboard</title>
   <link rel="stylesheet" href="/assets/dashboard_v3.css">
   <link rel="stylesheet" href="/assets/dashboard_v3_layout.css">
-  <link rel="stylesheet" href="/assets/dashboard_upgrade.css">
   <link rel="stylesheet" href="/assets/dashboard_polish.css">
+  <link rel="stylesheet" href="/assets/dashboard_upgrade.css">
 </head>
 <body>
 <div class="app">
@@ -43,7 +43,10 @@
     </section>
 
     <section class="page" data-page="entertainment">
-      <div class="grid"><div class="card span-8"><div class="card-head"><h2>LG TV Controls</h2></div><div id="tvButtons" class="app-buttons"></div></div><div class="card span-4"><div class="card-head"><h2>Remote Keys</h2></div><div class="remote"><span></span><button class="btn" onclick="tv('up')">▲</button><span></span><button class="btn" onclick="tv('left')">◀</button><button class="btn primary" onclick="tv('ok')">OK</button><button class="btn" onclick="tv('right')">▶</button><span></span><button class="btn" onclick="tv('down')">▼</button><span></span><button class="btn" onclick="tv('back')">Back</button><button class="btn" onclick="tv('home_key')">Home</button><span></span></div></div></div>
+      <div class="grid">
+        <div class="card span-12"><div class="card-head"><h2>LG TV Controls</h2></div><div id="tvButtons" class="tv-layout"></div></div>
+        <div class="card span-12 tv-remote-card"><div class="card-head"><h2>Remote Keys</h2></div><div class="remote"><span></span><button class="btn" onclick="tv('up')">▲</button><span></span><button class="btn" onclick="tv('left')">◀</button><button class="btn primary" onclick="tv('ok')">OK</button><button class="btn" onclick="tv('right')">▶</button><span></span><button class="btn" onclick="tv('down')">▼</button><span></span><button class="btn" onclick="tv('back')">Back</button><button class="btn" onclick="tv('home_key')">Home</button><span></span></div></div>
+      </div>
     </section>
 
     <section class="page" data-page="presence">
