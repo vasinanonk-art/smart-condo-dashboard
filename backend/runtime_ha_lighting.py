@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -161,9 +160,9 @@ def _normalized_ha_state(device: Dict[str, Any], payload: Dict[str, Any]) -> Dic
         "target": app_module.device_target(device),
         "name": str(device.get("name") or app_module.device_target(device)),
         "capabilities": {
-            "brightness": bool("brightness" in supported or brightness is not None),
+            "brightness": bool(brightness is not None or supported),
             "temperature": bool(any(mode in supported for mode in ("color_temp", "color_temp_kelvin")) or attrs.get("color_temp_kelvin") is not None),
-            "rgb": bool(any(mode in supported for mode in ("hs", "rgb", "rgbw", "rgbww")) or hs is not None),
+            "rgb": bool(any(mode in supported for mode in ("hs", "rgb", "xy", "rgbw", "rgbww")) or hs is not None),
         },
         "online": payload.get("state") not in ("unavailable", "unknown", None),
         "status": "online" if payload.get("state") not in ("unavailable", "unknown", None) else "offline",
@@ -266,6 +265,7 @@ def _zone_command(body: dashboard_extensions.ZoneCommand):
         "partial": success != len(results),
         "missing_members": missing,
         "results": results,
+        "control_source": "home_assistant",
     }
 
 
@@ -278,5 +278,18 @@ def _replace_route(path: str, method: str, endpoint: Any) -> None:
     app.add_api_route(path, endpoint, methods=[method], response_model=None)
 
 
-_replace_route("/api/lighting/zones", "GET", _zones_payload)
-_replace_route("/api/lighting/zone", "POST", _zone_command)
+def _install_ha_routes() -> None:
+    _replace_route("/api/lighting/zones", "GET", _zones_payload)
+    _replace_route("/api/lighting/zone", "POST", _zone_command)
+    app_module._ha_zone_route_installed = True
+
+
+# Install once during import, then re-assert after startup callbacks. runtime_fixes
+# registers its startup handler earlier and otherwise replaces POST with TinyTuya.
+_install_ha_routes()
+
+
+@app_module.app.on_event("startup")
+def ensure_ha_lighting_routes() -> None:
+    _install_ha_routes()
+    print("lighting zone control source: home_assistant", flush=True)
