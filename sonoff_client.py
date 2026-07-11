@@ -187,6 +187,9 @@ def _is_arrived_home(item):
     if not isinstance(item, dict):
         return False
     source = _presence_source(item)
+    source_upper = source.upper()
+    if "DELAY" in source_upper or "REACHABLE" in source_upper:
+        return False
     return bool(item.get("home")) and _presence_state(item) == "home" and source.startswith(ARRIVAL_HOME_SOURCES)
 
 
@@ -249,6 +252,8 @@ def _run_person_arrival_automation(person, presence):
 
     if confirmed_away:
         _cancel_arrival(person)
+        if arrival_armed and automation_home is False:
+            return
         away_since = int(_automation_state["away_since"].get(person) or 0)
         if not away_since:
             _automation_state["away_since"][person] = now
@@ -257,10 +262,10 @@ def _run_person_arrival_automation(person, presence):
         away_sec = now - away_since
         if away_sec < DEPARTURE_STABLE_AWAY_SEC:
             return
-        if not arrival_armed:
-            _automation_state["home"][person] = False
-            _automation_state["arrival_armed"][person] = True
-            print(f"automation departure confirmed: person={person} away_sec={away_sec}", flush=True)
+        _automation_state["home"][person] = False
+        _automation_state["arrival_armed"][person] = True
+        _automation_state["away_since"][person] = 0
+        print(f"automation departure confirmed: person={person} away_sec={away_sec}", flush=True)
         return
 
     if current_home:
@@ -319,6 +324,14 @@ def _resolve_store_presence(app_mod, evaluate=False):
     return presence
 
 
+def _payload_contains_presence(payload):
+    if not isinstance(payload, dict):
+        return False
+    if isinstance(payload.get("presence"), dict):
+        return True
+    return any(key in payload for key in ("occupancy", "motion", "present", "home", "living", "bedroom", "door", "person", "persons"))
+
+
 def _install_presence_refresh_hook():
     try:
         import backend.app as app_mod
@@ -333,7 +346,7 @@ def _install_presence_refresh_hook():
 
         def _wrapped_update_condo_state(payload):
             original_condo_state(payload)
-            if isinstance(app_mod.state.get("condo_presence"), dict):
+            if _payload_contains_presence(payload):
                 _resolve_store_presence(app_mod, evaluate=True)
 
         app_mod.update_condo_presence_from_topic = _wrapped_update_condo_presence_from_topic
