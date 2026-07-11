@@ -16,13 +16,11 @@
     .card, .summary-card, .automation-card, .sonoff-card, .tv-section { border-radius: var(--ui-radius); }
     .card { padding: var(--ui-pad); }
     .card, .summary-card, .automation-card, .sonoff-card, .tv-section, .btn { transition: border-color 150ms ease, background-color 150ms ease, transform 150ms ease, box-shadow 150ms ease; }
-
     .summary-grid { grid-auto-rows: 1fr; }
     .summary-card { display: flex; min-height: 118px; height: 100%; padding: var(--ui-pad); flex-direction: column; justify-content: space-between; }
     .summary-label { min-height: 28px; }
     .summary-value { margin: 8px 0; }
     .summary-foot { margin-top: 0; }
-
     .automation-grid { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: var(--ui-gap); align-items: start; }
     .automation-card { height: fit-content; padding: var(--ui-pad); }
     .automation-head { align-items: start; }
@@ -30,7 +28,6 @@
     .automation-meta span:first-child { grid-column: 1 / -1; }
     .automation-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
     .automation-actions .btn { width: 100%; min-width: 0; padding: 8px 10px; }
-
     .tv-dashboard { display: grid; gap: var(--ui-gap); }
     .tv-section { min-width: 0; padding: var(--ui-pad); border: 1px solid var(--line); background: #0c1119; }
     .tv-section-title { margin: 0 0 12px; color: var(--muted); font-size: 12px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
@@ -41,14 +38,11 @@
     .tv-section-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
     .tv-section-grid .btn { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .tv-remote-card { padding: var(--ui-pad); }
-
     .chart-tools { display: inline-flex; flex-wrap: nowrap; justify-content: flex-end; gap: 4px; margin-left: auto; }
     .chart-tools .btn { min-width: auto; padding: 5px 7px; font-size: 10px; line-height: 1.2; }
-
     .sonoff-card { padding: 8px; }
     .relay { min-height: 38px; padding: 6px 8px; }
     .relay-switch { margin-left: auto; }
-
     @media (max-width: 1200px) {
       .automation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .tv-status-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -77,150 +71,73 @@
   </aside>
   <main class="main">
     <header class="topbar"><div><h1 id="pageTitle">Overview</h1><p>Live condo controls, climate, air quality and system health</p></div><div class="status-row"><span id="mqttBadge" class="badge">MQTT Checking</span><span id="haBadge" class="badge">HA Air Checking</span><button class="btn ghost" onclick="refresh()">Refresh</button></div></header>
-
     <section class="page active" data-page="overview">
-      <div id="overviewMetrics" class="summary-grid"></div>
-      <div id="overviewPresence" hidden></div>
-      <div id="deviceSummary" hidden></div>
+      <div id="overviewMetrics" class="summary-grid"></div><div id="overviewPresence" hidden></div><div id="deviceSummary" hidden></div>
       <div class="grid" style="margin-top:14px">
         <div class="card span-12"><div class="card-head"><h2>Temperature & Humidity</h2><div id="overviewRanges" class="range-controls"></div></div><div class="chart-wrap"><svg id="overviewChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--yellow)"></i>Temperature</span><span><i style="background:var(--cyan)"></i>Humidity</span></div></div>
         <div class="card span-12"><div class="card-head"><h2>PM2.5 Living Room vs Bedroom</h2></div><div class="chart-wrap"><svg id="overviewPmChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--accent)"></i>Living Room</span><span><i style="background:var(--purple)"></i>Bedroom</span></div></div>
-        <div id="overviewStats" class="span-12 grid"></div>
-        <div class="card span-12"><div class="card-head"><h2>Alerts & System Health</h2></div><div id="alerts" class="alert-list"></div></div>
+        <div id="overviewStats" class="span-12 grid"></div><div class="card span-12"><div class="card-head"><h2>Alerts & System Health</h2></div><div id="alerts" class="alert-list"></div></div>
       </div>
     </section>
-
-    <section class="page" data-page="lighting">
-      <div class="grid"><div class="card span-12"><div class="card-head"><h2>Sonoff Switches</h2><div class="controls"><button class="btn primary" onclick="sonoffAll('on')">Global ALL ON</button><button class="btn danger" onclick="sonoffAll('off')">Global ALL OFF</button></div></div><div id="sonoffList" class="sonoff-grid"></div></div><div class="card span-12"><div class="card-head"><h2>Zone Lighting</h2></div><div id="tuyaList" class="zone-grid"></div></div></div>
-    </section>
-
-    <section class="page" data-page="climate">
-      <div id="airCards" class="grid"></div>
-      <div class="grid" style="margin-top:14px"><div class="card span-12"><div class="card-head"><h2>PM2.5 Room Comparison</h2><div id="climateRanges" class="range-controls"></div></div><div class="chart-wrap"><svg id="airChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--accent)"></i>Living Room</span><span><i style="background:var(--purple)"></i>Bedroom</span></div></div><div id="airStats" class="span-12 grid"></div></div>
-    </section>
-
-    <section class="page" data-page="entertainment">
-      <div class="grid">
-        <div class="card span-12"><div class="card-head"><h2>LG TV Controls</h2></div><div id="tvButtons" class="tv-layout"></div></div>
-        <div class="card span-12 tv-remote-card"><div class="card-head"><h2>Navigation</h2></div><div class="remote"><span></span><button class="btn" onclick="tv('up')">▲</button><span></span><button class="btn" onclick="tv('left')">◀</button><button class="btn primary" onclick="tv('ok')">OK</button><button class="btn" onclick="tv('right')">▶</button><span></span><button class="btn" onclick="tv('down')">▼</button><span></span><button class="btn" onclick="tv('back')">Back</button><button class="btn" onclick="tv('home_key')">Home</button><span></span></div></div>
-      </div>
-    </section>
-
-    <section class="page" data-page="presence">
-      <div id="presenceList" class="grid"></div><div class="grid" style="margin-top:14px"><div class="card span-12"><div class="card-head"><h2>Home Assistant Automations</h2></div><div id="automationEvents" class="automation-grid"></div></div></div>
-    </section>
-
-    <section class="page" data-page="system">
-      <div class="grid"><div class="card span-12"><div class="card-head"><h2>System Health</h2><button class="btn ghost" onclick="refresh()">Refresh status</button></div><div id="systemDetails"></div></div></div>
-    </section>
+    <section class="page" data-page="lighting"><div class="grid"><div class="card span-12"><div class="card-head"><h2>Sonoff Switches</h2><div class="controls"><button class="btn primary" onclick="sonoffAll('on')">Global ALL ON</button><button class="btn danger" onclick="sonoffAll('off')">Global ALL OFF</button></div></div><div id="sonoffList" class="sonoff-grid"></div></div><div class="card span-12"><div class="card-head"><h2>Zone Lighting</h2></div><div id="tuyaList" class="zone-grid"></div></div></div></section>
+    <section class="page" data-page="climate"><div id="airCards" class="grid"></div><div class="grid" style="margin-top:14px"><div class="card span-12"><div class="card-head"><h2>PM2.5 Room Comparison</h2><div id="climateRanges" class="range-controls"></div></div><div class="chart-wrap"><svg id="airChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--accent)"></i>Living Room</span><span><i style="background:var(--purple)"></i>Bedroom</span></div></div><div id="airStats" class="span-12 grid"></div></div></section>
+    <section class="page" data-page="entertainment"><div class="grid"><div class="card span-12"><div class="card-head"><h2>LG TV Controls</h2></div><div id="tvButtons" class="tv-layout"></div></div><div class="card span-12 tv-remote-card"><div class="card-head"><h2>Navigation</h2></div><div class="remote"><span></span><button class="btn" onclick="tv('up')">▲</button><span></span><button class="btn" onclick="tv('left')">◀</button><button class="btn primary" onclick="tv('ok')">OK</button><button class="btn" onclick="tv('right')">▶</button><span></span><button class="btn" onclick="tv('down')">▼</button><span></span><button class="btn" onclick="tv('back')">Back</button><button class="btn" onclick="tv('home_key')">Home</button><span></span></div></div></div></section>
+    <section class="page" data-page="presence"><div id="presenceList" class="grid"></div><div class="grid" style="margin-top:14px"><div class="card span-12"><div class="card-head"><h2>Home Assistant Automations</h2></div><div id="automationEvents" class="automation-grid"></div></div></div></section>
+    <section class="page" data-page="system"><div class="grid"><div class="card span-12"><div class="card-head"><h2>System Health</h2><button class="btn ghost" onclick="refresh()">Refresh status</button></div><div id="systemDetails"></div></div></div></section>
   </main>
   <nav class="mobile-nav"><button data-nav="overview">Overview</button><button data-nav="lighting">Lighting</button><button data-nav="climate">Climate</button><button data-nav="entertainment">TV</button><button data-nav="presence">Presence</button><button data-nav="system">System</button></nav>
 </div>
 <div id="toast" class="toast"></div>
-<script src="/assets/dashboard_upgrade.js"></script>
-<script src="/assets/dashboard_v3.js"></script>
+<script src="/assets/dashboard_upgrade.js"></script><script src="/assets/dashboard_v3.js"></script>
 <script>
 (() => {
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const relativeTime = raw => {
     if (!raw || raw === 'Never') return 'Never';
-    const date = new Date(raw);
-    if (Number.isNaN(date.getTime())) return String(raw);
-    const now = new Date();
-    const seconds = Math.max(0, Math.floor((now - date) / 1000));
+    const date = new Date(raw); if (Number.isNaN(date.getTime())) return String(raw);
+    const now = new Date(), seconds = Math.max(0, Math.floor((now - date) / 1000));
     if (seconds < 60) return 'Just now';
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes} min ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const eventDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const dayDiff = Math.round((today - eventDay) / 86400000);
-    const time = date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    const minutes = Math.floor(seconds / 60); if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()), eventDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const dayDiff = Math.round((today - eventDay) / 86400000), time = date.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
     if (dayDiff === 1) return `Yesterday ${time}`;
     if (dayDiff > 1 && dayDiff < 7) return `${dayDiff} days ago`;
     return date.toLocaleString();
   };
-
   const enhanceAutomations = host => {
     host.querySelectorAll('.automation-card .automation-meta').forEach(meta => {
-      const rows = meta.querySelectorAll('span');
-      if (rows.length < 3) return;
+      const rows = meta.querySelectorAll('span'); if (rows.length < 3) return;
       const first = rows[0].textContent || '';
-      if (first.startsWith('Last Triggered:')) {
-        rows[0].dataset.lastTriggered = first.replace(/^Last Triggered:\s*/, '').trim();
-      }
+      if (first.startsWith('Last Triggered:')) rows[0].dataset.lastTriggered = first.replace(/^Last Triggered:\s*/, '').trim();
       const raw = rows[0].dataset.lastTriggered;
-      if (raw) {
-        rows[0].textContent = `Last: ${relativeTime(raw)}`;
-        rows[0].title = raw;
-      }
-      rows[1].textContent = rows[1].textContent.replace(/^Mode:\s*/, 'Mode: ');
-      rows[2].textContent = rows[2].textContent.replace(/^Current Runs:\s*/, 'Runs: ');
+      if (raw) { const desired = `Last: ${relativeTime(raw)}`; if (rows[0].textContent !== desired) rows[0].textContent = desired; rows[0].title = raw; }
+      const mode = rows[1].textContent.replace(/^Mode:\s*/, 'Mode: '); if (rows[1].textContent !== mode) rows[1].textContent = mode;
+      const runs = rows[2].textContent.replace(/^Current Runs:\s*/, 'Runs: '); if (rows[2].textContent !== runs) rows[2].textContent = runs;
     });
   };
-
-  const statusValue = (label, value, cls = '') => `<div class="tv-status-item"><span>${label}</span><strong class="${cls}">${value}</strong></div>`;
+  const statusValue = (label, value, cls='') => `<div class="tv-status-item"><span>${esc(label)}</span><strong class="${esc(cls)}">${esc(value)}</strong></div>`;
   const enhanceTv = host => {
-    const rawGrid = host.querySelector('.tv-command-grid');
-    if (!rawGrid) return;
-    const buttons = [...rawGrid.querySelectorAll('button[data-tv-command]')];
-    let tv = null;
+    const rawGrid = host.querySelector('.tv-command-grid'); if (!rawGrid) return;
+    const buttons = [...rawGrid.querySelectorAll('button[data-tv-command]')]; let tv = null;
     try { tv = S?.tv?.lastValid || null; } catch (_) {}
-    const powerRaw = String(tv?.power ?? '').toLowerCase();
-    const online = tv && !['off','false','0','offline','unknown',''].includes(powerRaw);
-    const app = tv?.app || 'Not available';
-    const input = /hdmi/i.test(String(app)) ? app : (tv?.input || tv?.source || 'Not available');
-    const volume = tv?.volume ?? 'Not available';
-    const mute = tv?.mute === true ? 'Muted' : tv?.mute === false ? 'Sound on' : 'Not available';
+    const powerRaw = String(tv?.power ?? '').toLowerCase(), online = Boolean(tv) && !['off','false','0','offline','unknown',''].includes(powerRaw);
+    const app = tv?.app || 'Not available', input = /hdmi/i.test(String(app)) ? app : (tv?.input || tv?.source || 'Not available');
+    const volume = tv?.volume ?? 'Not available', mute = tv?.mute === true ? 'Muted' : tv?.mute === false ? 'Sound on' : 'Not available';
     const byCommand = new Map(buttons.map(button => [button.dataset.tvCommand, button]));
     const take = commands => commands.map(command => byCommand.get(command)).filter(Boolean);
-    const section = (title, items) => {
-      const wrapper = document.createElement('section');
-      wrapper.className = 'tv-section';
-      wrapper.innerHTML = `<h3 class="tv-section-title">${title}</h3><div class="tv-section-grid"></div>`;
-      const grid = wrapper.querySelector('.tv-section-grid');
-      items.forEach(button => grid.appendChild(button));
-      return wrapper;
-    };
-    const dashboard = document.createElement('div');
-    dashboard.className = 'tv-dashboard';
-    const status = document.createElement('section');
-    status.className = 'tv-section';
-    status.innerHTML = `<h3 class="tv-section-title">TV Status</h3><div class="tv-status-grid">${statusValue('Status', online ? 'Online' : 'Offline', online ? 'ok' : 'bad')}${statusValue('Current App', app)}${statusValue('Input', input)}${statusValue('Volume', volume)}${statusValue('Mute', mute)}</div>`;
-    dashboard.appendChild(status);
-    dashboard.appendChild(section('Power', take(['power_on','power_off'])));
-    dashboard.appendChild(section('Apps', take(['netflix','youtube','disney','prime','appletv','livetv','browser','viu','hbo'])));
-    dashboard.appendChild(section('Inputs', take(['hdmi1','hdmi2','hdmi3','hdmi4'])));
-    dashboard.appendChild(section('Volume', take(['volume_up','volume_down','mute','unmute'])));
-    host.replaceChildren(dashboard);
-    host.className = 'tv-dashboard-host';
+    const section = (title, items) => { const wrapper = document.createElement('section'); wrapper.className='tv-section'; wrapper.innerHTML=`<h3 class="tv-section-title">${esc(title)}</h3><div class="tv-section-grid"></div>`; const grid=wrapper.querySelector('.tv-section-grid'); items.forEach(button=>grid.appendChild(button)); return wrapper; };
+    const dashboard=document.createElement('div'); dashboard.className='tv-dashboard';
+    const status=document.createElement('section'); status.className='tv-section'; status.innerHTML=`<h3 class="tv-section-title">TV Status</h3><div class="tv-status-grid">${statusValue('Status',online?'Online':'Offline',online?'ok':'bad')}${statusValue('Current App',app)}${statusValue('Input',input)}${statusValue('Volume',volume)}${statusValue('Mute',mute)}</div>`;
+    dashboard.append(status,section('Power',take(['power_on','power_off'])),section('Apps',take(['netflix','youtube','disney','prime','appletv','livetv','browser','viu','hbo'])),section('Inputs',take(['hdmi1','hdmi2','hdmi3','hdmi4'])),section('Volume',take(['volume_up','volume_down','mute','unmute'])));
+    host.replaceChildren(dashboard); host.className='tv-dashboard-host';
   };
-
   const watch = (id, enhancer) => {
-    const host = document.getElementById(id);
-    if (!host) return;
-    let busy = false;
-    const observer = new MutationObserver(() => {
-      if (busy) return;
-      busy = true;
-      observer.disconnect();
-      try { enhancer(host); } finally {
-        observer.observe(host, {childList: true, subtree: true});
-        busy = false;
-      }
-    });
-    observer.observe(host, {childList: true, subtree: true});
-    enhancer(host);
+    const host=document.getElementById(id); if (!host) return; let busy=false;
+    const observer=new MutationObserver(()=>{ if (busy) return; busy=true; observer.disconnect(); try { enhancer(host); } finally { observer.observe(host,{childList:true}); busy=false; } });
+    observer.observe(host,{childList:true}); enhancer(host);
   };
-
-  document.addEventListener('DOMContentLoaded', () => {
-    watch('automationEvents', enhanceAutomations);
-    watch('tvButtons', enhanceTv);
-    window.setInterval(() => {
-      const host = document.getElementById('automationEvents');
-      if (host) enhanceAutomations(host);
-    }, 60000);
-  });
+  document.addEventListener('DOMContentLoaded',()=>{ watch('automationEvents',enhanceAutomations); watch('tvButtons',enhanceTv); window.setInterval(()=>{ const host=document.getElementById('automationEvents'); if(host) enhanceAutomations(host); },60000); });
 })();
 </script>
 </body>
