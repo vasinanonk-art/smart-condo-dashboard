@@ -31,17 +31,19 @@ ARRIVAL_DEVICEID = "1002354e11"
 ARRIVAL_CHANNEL = 1
 ARRIVAL_COOLDOWN_SEC = 600
 ARRIVAL_WARMUP_SEC = 60
-ARRIVAL_STABLE_HOME_SEC = 10
-DEPARTURE_STABLE_AWAY_SEC = 300
+ARRIVAL_STABLE_HOME_SEC = 60
+DEPARTURE_STABLE_AWAY_SEC = 1800
 ARRIVAL_PEOPLE = ("beer", "seem")
 ARRIVAL_HOME_SOURCES = ("Router", "MQTT", "Ping")
 HISTORY_RANGE_SEC = {"24h": 86400, "3d": 259200, "7d": 604800}
 HISTORY_MAX_RETURN = {"24h": 720, "3d": 720, "7d": 840}
 _automation_state = {
     "startup_ts": int(time.time()) if time is not None else 0,
+    "initialized": {"beer": False, "seem": False},
     "home": {"beer": None, "seem": None},
     "pending_since": {"beer": 0, "seem": 0},
     "away_since": {"beer": 0, "seem": 0},
+    "arrival_armed": {"beer": False, "seem": False},
     "last_ts": {"beer": 0, "seem": 0},
 }
 
@@ -194,80 +196,110 @@ def _is_confirmed_away(item):
     return bool(item.get("home")) is False and _presence_state(item) == "away" and _presence_source(item) == "Expired"
 
 
-def _log_transition(person, old_home, new_home, source):
-    if old_home != new_home:
-        print(f"automation transition: person={person} old_home={old_home} new_home={new_home} source={source}", flush=True)
+def _cancel_departure(person):
+    if int(_automation_state["away_since"].get(person) or 0):
+        print(f"automation departure cancelled: person={person}", flush=True)
+    _automation_state["away_since"][person] = 0
+
+
+def _cancel_arrival(person):
+    if int(_automation_state["pending_since"].get(person) or 0):
+        print(f"automation arrival cancelled: person={person}", flush=True)
+    _automation_state["pending_since"][person] = 0
+
+
+def _initialize_person_state(person, item):
+    if _is_arrived_home(item):
+        _automation_state["home"][person] = True
+    elif _is_confirmed_away(item):
+        _automation_state["home"][person] = False
+    else:
+        _automation_state["home"][person] = None
+    _automation_state["away_since"][person] = 0
+    _automation_state["pending_since"][person] = 0
+    _automation_state["arrival_armed"][person] = False
+    _automation_state["initialized"][person] = True
 
 
 def _run_arrival_action(person, now):
-    print(f"automation: {person}_arrived -> living_room_on", flush=True)
     result = set_state(ARRIVAL_DEVICEID, "on", ARRIVAL_CHANNEL)
-    ok = bool(result.get("ok"))
-    error = _backend_sonoff.safe_error(result.get("error") or result.get("last_error"))
-    print(f"automation result: ok={str(ok).lower()} error={error}", flush=True)
-    if ok:
-        _automation_state["last_ts"][person] = now
+    if not bool(result.get("ok")):
+        return False
+    _automation_state["last_ts"][person] = now
+    _automation_state["home"][person] = True
+    _automation_state["pending_since"][person] = 0
+    _automation_state["away_since"][person] = 0
+    _automation_state["arrival_armed"][person] = False
+    print(f"automation: {person}_arrived -> living_room_on", flush=True)
+    return True
 
 
 def _run_person_arrival_automation(person, presence):
     item = presence.get(person) if isinstance(presence, dict) else None
+    now = int(time.time()) if time is not None else 0
+
+    if not _automation_state["initialized"].get(person):
+        _initialize_person_state(person, item)
+        return
+
     current_home = _is_arrived_home(item)
     confirmed_away = _is_confirmed_away(item)
     automation_home = _automation_state["home"].get(person)
-    source = _presence_source(item)
-    now = int(time.time()) if time is not None else 0
-    uptime_ok = now - int(_automation_state.get("startup_ts") or now) >= ARRIVAL_WARMUP_SEC
+    arrival_armed = bool(_automation_state["arrival_armed"].get(person))
+
+    if confirmed_away:
+        _cancel_arrival(person)
+        away_since = int(_automation_state["away_since"].get(person) or 0)
+        if not away_since:
+            _automation_state["away_since"][person] = now
+            print(f"automation departure pending: person={person}", flush=True)
+            return
+        away_sec = now - away_since
+        if away_sec < DEPARTURE_STABLE_AWAY_SEC:
+            return
+        if not arrival_armed:
+            _automation_state["home"][person] = False
+            _automation_state["arrival_armed"][person] = True
+            print(f"automation departure confirmed: person={person} away_sec={away_sec}", flush=True)
+        return
 
     if current_home:
-        _automation_state["away_since"][person] = 0
-
-        if automation_home is None or not uptime_ok:
-            _log_transition(person, automation_home, True, source)
-            _automation_state["home"][person] = True
-            _automation_state["pending_since"][person] = 0
-            return
+        _cancel_departure(person)
 
         if automation_home is True:
-            _automation_state["pending_since"][person] = 0
+            _cancel_arrival(person)
+            _automation_state["arrival_armed"][person] = False
+            return
+
+        if automation_home is not False or not arrival_armed:
+            _cancel_arrival(person)
+            _automation_state["home"][person] = True
+            _automation_state["arrival_armed"][person] = False
             return
 
         pending_since = int(_automation_state["pending_since"].get(person) or 0)
         if not pending_since:
             _automation_state["pending_since"][person] = now
+            print(f"automation arrival pending: person={person}", flush=True)
             return
 
-        stable_ok = now - pending_since >= ARRIVAL_STABLE_HOME_SEC
-        cooldown_ok = now - int(_automation_state["last_ts"].get(person) or 0) >= ARRIVAL_COOLDOWN_SEC
-        if not stable_ok or not cooldown_ok:
+        if now - pending_since < ARRIVAL_STABLE_HOME_SEC:
+            return
+        if now - int(_automation_state["last_ts"].get(person) or 0) < ARRIVAL_COOLDOWN_SEC:
             return
 
-        _log_transition(person, automation_home, True, source)
-        _automation_state["home"][person] = True
-        _automation_state["pending_since"][person] = 0
         try:
-            _run_arrival_action(person, now)
-        except Exception as exc:
-            error = _backend_sonoff.safe_error(repr(exc))
-            print(f"automation result: ok=false error={error}", flush=True)
+            if not _run_arrival_action(person, now):
+                _cancel_arrival(person)
+        except Exception:
+            _cancel_arrival(person)
         return
 
-    _automation_state["pending_since"][person] = 0
-
-    if confirmed_away:
-        away_since = int(_automation_state["away_since"].get(person) or 0)
-        if not away_since:
-            _automation_state["away_since"][person] = now
-            return
-        if now - away_since < DEPARTURE_STABLE_AWAY_SEC:
-            return
-        if automation_home is not False:
-            _log_transition(person, automation_home, False, source)
-            _automation_state["home"][person] = False
-        return
-
-    # Cached / Recently Seen / unknown states break the continuous Away timer,
-    # but never change automation_home.
-    _automation_state["away_since"][person] = 0
+    # Cached, Recently Seen, unknown, Router/Ping/MQTT transient failures and
+    # every state other than exact Expired Away cancel both stability timers.
+    # They never change automation_home and never arm arrival.
+    _cancel_departure(person)
+    _cancel_arrival(person)
 
 
 def _run_arrival_automation(presence):
@@ -275,16 +307,15 @@ def _run_arrival_automation(presence):
         _run_person_arrival_automation(person, presence)
 
 
-def _resolve_store_and_evaluate_presence(app_mod):
+def _resolve_store_presence(app_mod, evaluate=False):
     raw_presence = app_mod.state.get("condo_presence", {})
     if resolve_presence is None:
         presence = raw_presence if isinstance(raw_presence, dict) else {}
     else:
         presence = resolve_presence(raw_presence)
-    # Preserve condo_presence as the raw MQTT/router input. Store the resolved
-    # view separately so repeated evaluations never resolve already-resolved data.
     app_mod.state["presence"] = presence
-    _run_arrival_automation(presence)
+    if evaluate:
+        _run_arrival_automation(presence)
     return presence
 
 
@@ -298,12 +329,12 @@ def _install_presence_refresh_hook():
 
         def _wrapped_update_condo_presence_from_topic(person, data, topic):
             original_presence_topic(person, data, topic)
-            _resolve_store_and_evaluate_presence(app_mod)
+            _resolve_store_presence(app_mod, evaluate=True)
 
         def _wrapped_update_condo_state(payload):
             original_condo_state(payload)
             if isinstance(app_mod.state.get("condo_presence"), dict):
-                _resolve_store_and_evaluate_presence(app_mod)
+                _resolve_store_presence(app_mod, evaluate=True)
 
         app_mod.update_condo_presence_from_topic = _wrapped_update_condo_presence_from_topic
         app_mod.update_condo_state = _wrapped_update_condo_state
@@ -324,7 +355,7 @@ def _install_sensor_history_support():
 def _presence_status_handler():
     import backend.app as app_mod
     sensor = app_mod.state.get("condo_sensor", {})
-    presence = _resolve_store_and_evaluate_presence(app_mod)
+    presence = _resolve_store_presence(app_mod, evaluate=False)
     return {"ok": True, "sensor": sensor, "presence": presence}
 
 
@@ -335,20 +366,19 @@ def _presence_api_handler():
 
 def _initialize_presence_state(label="startup"):
     try:
+        import backend.app as app_mod
         _install_sensor_history_support()
         _install_presence_refresh_hook()
-        data = _presence_status_handler()
-        print(f"presence initialized: source={label} count={len(data.get('presence', {}))}", flush=True)
+        presence = _resolve_store_presence(app_mod, evaluate=False)
+        for person in ARRIVAL_PEOPLE:
+            _initialize_person_state(person, presence.get(person) if isinstance(presence, dict) else None)
+        print(f"presence initialized: source={label} count={len(presence)}", flush=True)
     except Exception as exc:
         print(f"presence initialize error: source={label} error={repr(exc)}", flush=True)
 
 
 def _schedule_presence_initialization():
     _initialize_presence_state("startup")
-    if threading is not None:
-        timer = threading.Timer(2.0, lambda: _initialize_presence_state("startup-delayed"))
-        timer.daemon = True
-        timer.start()
 
 
 def _dashboard_index_handler():
