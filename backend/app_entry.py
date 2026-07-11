@@ -14,3 +14,7 @@ _dashboard_extensions._safe_error = _safe_dashboard_error
 # Install runtime-only reliability fixes after the app and extension routes exist.
 from backend import runtime_fixes as _runtime_fixes  # noqa: F401,E402
 from backend import runtime_tuya_subprocess as _runtime_tuya_subprocess  # noqa: F401,E402
+
+# Use confirmed Home Assistant entities as the authoritative lighting transport
+# and state source. This loads last so it owns only the two existing zone routes.
+from backend import runtime_ha_lighting as _runtime_ha_lighting  # noqa: F401,E402
