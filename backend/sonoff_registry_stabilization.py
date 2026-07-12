@@ -1,7 +1,7 @@
 """Stabilize the Sonoff registry provider without changing command/auth paths."""
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping
+from typing import Iterable, Mapping
 
 from backend import app as app_module
 from backend.device_framework import UnifiedDevice
@@ -18,21 +18,34 @@ def _health(configured: bool, authenticated: bool, failed: bool) -> str:
     return "unknown"
 
 
-def sonoff_provider() -> Iterable[UnifiedDevice]:
-    import sonoff_client
-
-    failed = False
+def _source_data() -> tuple[Mapping, bool]:
+    cached_devices = app_module.state.get("sonoff_devices")
+    cached_auth = app_module.state.get("sonoff_auth_status")
+    if isinstance(cached_devices, list) and (cached_devices or cached_auth is not None):
+        return {
+            "devices": cached_devices,
+            "config_loaded": bool(app_module.state.get("ewelink_config_loaded")),
+            "auth_status": cached_auth,
+            "last_error": app_module.state.get("sonoff_last_error"),
+        }, False
     try:
+        import sonoff_client
         data = sonoff_client.devices()
+        return data if isinstance(data, Mapping) else {}, False
     except Exception:
-        data = {}
-        failed = True
-    data = data if isinstance(data, Mapping) else {}
+        return {}, True
+
+
+def sonoff_provider() -> Iterable[UnifiedDevice]:
+    data, failed = _source_data()
     devices = data.get("devices") if isinstance(data.get("devices"), list) else []
     configured = bool(data.get("config_loaded"))
-    authenticated = str(data.get("auth_status") or "") == "authenticated"
+    auth_status = str(data.get("auth_status") or "")
+    authenticated = auth_status == "authenticated"
     app_module.state["ewelink_config_loaded"] = configured
     app_module.state["sonoff_devices"] = devices
+    app_module.state["sonoff_auth_status"] = auth_status or None
+    app_module.state["sonoff_last_error"] = data.get("last_error")
     result = []
     for raw in devices:
         if not isinstance(raw, Mapping):
