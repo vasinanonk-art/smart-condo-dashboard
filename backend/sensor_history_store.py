@@ -171,5 +171,8 @@ install_default_device_registry()
 # Register the read-only topology route after the unified registry exists.
 import backend.topology_runtime  # noqa: E402,F401
 
+# Replace the Sonoff registry provider with the existing authenticated client.
+import backend.sonoff_registry_stabilization  # noqa: E402,F401
+
 # Add production probes and dedicated LG TV state ownership after topology exists.
 import backend.topology_stabilization  # noqa: E402,F401
