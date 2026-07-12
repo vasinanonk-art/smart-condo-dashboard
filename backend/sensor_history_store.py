@@ -160,3 +160,11 @@ def prune_history(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def diagnostics() -> Dict[str, Any]:
     with _lock:
         return dict(_diagnostics)
+
+
+# app_runtime imports this module after backend.app has completed loading.
+# Install the passive, read-only registry here so no route or command path is
+# changed and the current runtime entrypoint remains backward compatible.
+from backend.device_registration import install_default_device_registry  # noqa: E402
+
+install_default_device_registry()
