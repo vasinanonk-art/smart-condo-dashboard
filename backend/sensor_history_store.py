@@ -163,8 +163,10 @@ def diagnostics() -> Dict[str, Any]:
 
 
 # app_runtime imports this module after backend.app has completed loading.
-# Install the passive, read-only registry here so no route or command path is
-# changed and the current runtime entrypoint remains backward compatible.
+# Install passive, read-only shared services without changing command paths.
 from backend.device_registration import install_default_device_registry  # noqa: E402
 
 install_default_device_registry()
+
+# Register the read-only topology route after the unified registry exists.
+import backend.topology_runtime  # noqa: E402,F401

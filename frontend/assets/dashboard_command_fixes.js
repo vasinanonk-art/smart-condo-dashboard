@@ -22,10 +22,8 @@
     window.setTimeout(() => { host.style.display = 'none'; }, 2200);
   }
 
-  // dashboard_v3.js binds application buttons inside renderEntertainment() while
-  // a local variable named `tv` shadows the global tv(command) function. Handle
-  // those buttons in capture phase so the existing backend command/API remains
-  // unchanged and the broken local onclick is never reached.
+  // Keep one capture handler for TV commands. The command route and MQTT bridge
+  // remain unchanged.
   document.addEventListener('click', async event => {
     const button = event.target.closest('button[data-tv-command]');
     if (!button) return;
@@ -47,3 +45,11 @@
     }
   }, true);
 })();
+
+// This file is parser-loaded after dashboard_v3.js. Insert the topology module
+// synchronously so it extends the existing renderer and refresh timer without
+// creating a second polling interval.
+if (!window.__smartCondoTopologyLoaded) {
+  window.__smartCondoTopologyLoaded = true;
+  document.write('<script src="/assets/dashboard_topology.js"><\/script>');
+}
