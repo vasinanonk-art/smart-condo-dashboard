@@ -76,3 +76,6 @@ def sonoff_provider() -> Iterable[UnifiedDevice]:
 
 registry.register_provider("sonoff", sonoff_provider, replace=True)
 app_module.state["device_registry_registered_modules"] = registry.provider_names()
+
+# Install the topology adapter after the provider exists; this does not add a loop.
+import backend.topology_post_install  # noqa: E402,F401
