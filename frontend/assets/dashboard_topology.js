@@ -13,7 +13,7 @@
       const button = document.createElement('button');
       button.dataset.nav = 'topology';
       button.dataset.short = 'NC';
-      button.textContent = navHost.classList.contains('mobile-nav') ? 'Topology' : 'Topology';
+      button.textContent = 'Topology';
       navHost.appendChild(button);
     });
     if (!document.querySelector('[data-page="topology"]')) {
@@ -32,10 +32,16 @@
   const originalRenderPage = renderPage;
   const originalNav = nav;
   const originalRenderOverview = renderOverview;
-
   const healthClass = value => ['healthy','warning','offline','unknown'].includes(String(value)) ? String(value) : 'unknown';
-  const tvOnline = tv => Boolean(tv?.online);
+  const tvPhysicalOnline = state => state?.tv_online === true || (state?.tv_online === undefined && state?.online === true);
   const tvValue = (value, fallback='Not available') => value === null || value === undefined || value === '' ? fallback : value;
+  const tvStatusText = state => {
+    if (tvPhysicalOnline(state)) return 'Online';
+    if (state?.bridge_online && (state?.tv_online === null || state?.tv_online === undefined)) return 'Bridge Online / TV State Unknown';
+    if (state?.bridge_online) return 'TV Offline / Bridge Online';
+    if (state?.tv_online === false) return 'Offline';
+    return 'Unknown';
+  };
 
   async function loadTopology() {
     try {
@@ -69,17 +75,19 @@
     originalRenderOverview();
     const host = $('overviewMetrics');
     if (!host || host.querySelector('[data-overview-tv]')) return;
-    const tv = S.tv.lastValid;
-    const online = tvOnline(tv);
-    host.insertAdjacentHTML('beforeend', `<div class="card metric" data-overview-tv><div class="label">LG TV Status</div><div class="value ${online?'ok':'bad'}">${online?'Online':'Offline'}</div><div class="sub">${safeText(tvValue(tv?.app || tv?.input))} · Updated ${safeText(when(tv?.last_update_ts || tv?.ts))}</div></div>`);
+    const tvState = S.tv.lastValid;
+    const online = tvPhysicalOnline(tvState);
+    const cls = online ? 'ok' : tvState?.bridge_online ? 'warn' : 'bad';
+    host.insertAdjacentHTML('beforeend', `<div class="card metric" data-overview-tv><div class="label">LG TV Status</div><div class="value ${cls}">${safeText(tvStatusText(tvState))}</div><div class="sub">${safeText(tvValue(tvState?.app || tvState?.input))} · Updated ${safeText(when(tvState?.last_update_ts || tvState?.ts))}</div></div>`);
   };
 
   renderEntertainment = function renderSynchronizedEntertainment() {
     const host = $('tvButtons'); if (!host) return;
     const tvState = S.tv.lastValid || {};
-    const online = tvOnline(tvState);
+    const online = tvPhysicalOnline(tvState);
     const statusItems = [
-      ['Status', online ? 'Online' : 'Offline', online ? 'ok' : 'bad'],
+      ['Status', tvStatusText(tvState), online ? 'ok' : tvState.bridge_online ? 'warn' : 'bad'],
+      ['Bridge', tvState.bridge_online === true ? 'Online' : tvState.bridge_online === false ? 'Offline' : 'Unknown', tvState.bridge_online ? 'ok' : ''],
       ['Current App', tvValue(tvState.app), ''],
       ['Input', tvValue(tvState.input), ''],
       ['Volume', tvValue(tvState.volume), ''],
@@ -87,7 +95,6 @@
       ['Last Update', when(tvState.last_update_ts || tvState.ts), ''],
     ];
     host.innerHTML = `<div class="tv-dashboard"><section class="tv-section"><h3 class="tv-section-title">TV Status</h3><div class="tv-status-grid">${statusItems.map(([label,value,cls])=>`<div class="tv-status-item"><span>${safeText(label)}</span><strong class="${cls}">${safeText(value)}</strong></div>`).join('')}</div></section><section class="tv-section"><h3 class="tv-section-title">Controls</h3><div class="tv-section-grid">${TV_COMMANDS.map(([label,command])=>`<button class="btn ${command==='power_off'?'danger':command==='power_on'?'primary':'ghost'}" data-tv-command="${command}">${safeText(label)}</button>`).join('')}</div></section></div>`;
-    host.querySelectorAll('[data-tv-command]').forEach(button => button.onclick = () => tv(button.dataset.tvCommand));
   };
 
   function nodeById(id) { return topologyState.data?.nodes?.find(node => node.id === id) || null; }
@@ -104,8 +111,8 @@
     const graph=$('topologyGraph'), roots=$('topologyRoots'), events=$('topologyEvents'), score=$('topologyHealth');
     if (!graph||!roots||!events||!score) return;
     if (!data) { graph.innerHTML='<div class="empty">Topology data is not available.</div>'; return; }
-    score.innerHTML=`<strong>${safeText(data.overall_health??0)}%</strong><span>Overall Health</span>`;
-    roots.innerHTML=data.root_causes?.length?data.root_causes.map(item=>`<div class="root-cause bad"><strong>Root Cause · ${safeText(item.label)}</strong><small>${safeText(item.message)} · Affected: ${safeText((item.affected||[]).join(', ')||'None')}</small></div>`).join(''):'<div class="root-cause"><strong>No confirmed root cause</strong><small>Unknown nodes are not treated as failures.</small></div>';
+    score.innerHTML=`<strong>${safeText(data.overall_health??0)}%</strong><span>Overall Health · ${safeText(data.measured_node_count??0)} measured / ${safeText(data.unknown_node_count??0)} unknown</span>`;
+    roots.innerHTML=data.root_causes?.length?data.root_causes.map(item=>`<div class="root-cause bad"><strong>Root Cause · ${safeText(item.label)}</strong><small>${safeText(item.message)} · Affected: ${safeText((item.affected||[]).join(', ')||'None')}</small></div>`).join(''):'<div class="root-cause"><strong>No confirmed root cause</strong><small>Unknown nodes are excluded from health scoring.</small></div>';
     graph.innerHTML=(data.nodes||[]).map(node=>`<button class="topology-node ${healthClass(node.health)}" data-topology-node="${safeText(node.id)}"><span class="pulse"></span><span><span class="node-name">${safeText(node.name)}</span><span class="node-meta">${node.latency_ms===null||node.latency_ms===undefined?'Latency unknown':`${safeText(node.latency_ms)} ms`} · ${safeText(when(node.last_update_ts))}</span></span><span class="node-health">${safeText(node.health||'unknown')}</span><span class="packet-lane"></span></button>`).join('');
     graph.querySelectorAll('[data-topology-node]').forEach(button=>button.onclick=()=>{topologyState.selected=button.dataset.topologyNode;renderDetail(nodeById(topologyState.selected));});
     events.innerHTML=data.events?.length?data.events.map(item=>`<div class="event-row"><time>${safeText(shortTime(item.ts))}</time><strong>${safeText(item.message)}</strong></div>`).join(''):'<div class="empty">No recent topology events.</div>';
