@@ -18,3 +18,7 @@ from backend import runtime_tuya_subprocess as _runtime_tuya_subprocess  # noqa:
 # Use confirmed Home Assistant entities as the authoritative lighting transport
 # and state source. This loads last so it owns only the two existing zone routes.
 from backend import runtime_ha_lighting as _runtime_ha_lighting  # noqa: F401,E402
+
+# Keep recent slider values stable until Home Assistant confirms them and force
+# brightness/temperature controls into white mode rather than retaining HS color.
+from backend import runtime_ha_lighting_stable as _runtime_ha_lighting_stable  # noqa: F401,E402
