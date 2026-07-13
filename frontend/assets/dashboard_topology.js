@@ -14,14 +14,14 @@
       const section = document.createElement('section');
       section.className = 'page';
       section.dataset.page = 'topology';
-      section.innerHTML = `<div class="topology-summary"><div id="topologyHealth" class="card health-score"></div><div id="topologyRoots" class="root-list"></div></div><div class="topology-shell"><div><div class="card topology-map-card"><div class="card-head"><h2>Live Dependency Graph</h2></div><div id="topologyGraph" class="topology-map"></div></div><div class="card" style="margin-top:16px"><div class="card-head"><h2>Recent Events</h2></div><div id="topologyEvents" class="event-list"></div></div></div><aside class="card topology-detail"><div class="card-head"><h2>Node Details</h2></div><div id="topologyDetail"><div class="empty">Select a node to inspect status and diagnostics.</div></div></aside></div>`;
+      section.innerHTML = `<div class="topology-summary"><div id="topologyHealth" class="card health-score"></div><div id="topologyRoots" class="root-list"></div></div><div class="topology-shell"><div><div class="card topology-map-card"><div class="card-head"><h2>Live Dependency Graph</h2><button id="topologyFit" class="btn ghost" type="button">Fit to View</button></div><div id="topologyGraph" class="topology-map"></div></div><div class="card" style="margin-top:16px"><div class="card-head"><h2>Recent Events</h2></div><div id="topologyEvents" class="event-list"></div></div></div><aside class="card topology-detail"><div class="card-head"><h2>Node Details</h2></div><div id="topologyDetail"><div class="empty">Select a node to inspect status and diagnostics.</div></div></aside></div>`;
       document.querySelector('.main')?.appendChild(section);
     }
   }
 
   installTopologyUi();
 
-  const topologyState = {data:null, selected:null, mobile:false};
+  const topologyState = {data:null, selected:null, mode:null};
   const originalRefresh = window.refresh;
   const originalRenderPage = window.renderPage;
   const originalNav = window.nav;
@@ -78,7 +78,10 @@
 
   window.nav = function topologyNav(page) {
     originalNav(page);
-    if (page === 'topology' && document.getElementById('pageTitle')) document.getElementById('pageTitle').textContent = 'Topology';
+    if (page === 'topology' && document.getElementById('pageTitle')) {
+      document.getElementById('pageTitle').textContent = 'Topology';
+      requestAnimationFrame(renderTopology);
+    }
   };
 
   window.renderPage = function unifiedRenderPage(page=window.currentPage()) {
@@ -158,21 +161,67 @@
     host.innerHTML = `<div class="kv"><span>Status</span><strong>${safe(node.online===null||node.online===undefined?'Unknown':node.online?'Online':'Offline')}</strong></div><div class="kv"><span>Health</span><strong class="${healthClass(node.health)}">${safe(node.health || 'unknown')}</strong></div><div class="kv"><span>Latency</span><strong>${node.latency_ms===null||node.latency_ms===undefined?'Unknown':`${safe(node.latency_ms)} ms`}</strong></div><div class="kv"><span>Last Update</span><strong>${safe(thailandTime(node.last_update_ts))}</strong></div><div class="kv"><span>Dependencies</span><strong>${safe((node.dependencies||[]).join(', ')||'None')}</strong></div><div class="kv"><span>Dependents</span><strong>${safe((node.dependents||[]).join(', ')||'None')}</strong></div>${diagnostics.map(([key,value]) => `<div class="kv"><span>${safe(key)}</span><strong>${safe(typeof value==='object'?JSON.stringify(value):value)}</strong></div>`).join('')}`;
   }
 
-  const desktopPositions = {
-    internet:[430,28], cloudflare_wan:[430,100], condo_router:[430,172], tinkerboard:[430,244],
-    dashboard:[180,338], mqtt:[430,338], zerotier_condo:[680,338], sonoff:[75,448], camera:[285,448],
-    presence:[390,448], lg_tv:[500,548], zerotier_tunnel:[680,448], zerotier_home:[680,548],
-    truenas:[680,648], home_assistant:[680,748], tuya:[500,848], electricity:[680,848], pm25:[860,848]
-  };
-  const mobileOrder = ['internet','cloudflare_wan','condo_router','tinkerboard','dashboard','sonoff','camera','mqtt','presence','lg_tv','zerotier_condo','zerotier_tunnel','zerotier_home','truenas','home_assistant','tuya','electricity','pm25'];
+  const ORDER = ['internet','cloudflare_wan','condo_router','tinkerboard','dashboard','mqtt','sonoff','camera','presence','lg_tv','zerotier_condo','zerotier_tunnel','zerotier_home','truenas','home_assistant','tuya','electricity','pm25'];
+  const LEFT_RANKS = [['dashboard'],['sonoff','camera','mqtt'],['presence','lg_tv']];
+  const RIGHT_RANKS = [['zerotier_condo'],['zerotier_tunnel'],['zerotier_home'],['truenas'],['home_assistant'],['tuya','electricity','pm25']];
+  const TRUNK = ['internet','cloudflare_wan','condo_router','tinkerboard'];
 
-  function positionsFor(nodes) {
-    const mobile = window.innerWidth <= 640;
-    topologyState.mobile = mobile;
-    if (!mobile) return {width:1040,height:930,positions:desktopPositions,nodeW:150,nodeH:52};
+  function viewportMode(width) {
+    if (width <= 640) return 'mobile';
+    if (width <= 980) return 'tablet';
+    return 'desktop';
+  }
+
+  function placeRank(ids, centerX, y, nodeW, hGap, positions) {
+    const total = ids.length * nodeW + Math.max(0, ids.length - 1) * hGap;
+    let x = centerX - total / 2;
+    ids.forEach(id => {
+      positions[id] = [Math.round(x), Math.round(y)];
+      x += nodeW + hGap;
+    });
+  }
+
+  function buildLayout(nodes) {
+    const host = document.getElementById('topologyGraph');
+    const available = Math.max(320, host?.clientWidth || 960);
+    const mode = viewportMode(available);
+    topologyState.mode = mode;
+    const present = new Set(nodes.map(node => node.id));
     const positions = {};
-    mobileOrder.forEach((id,index) => positions[id] = [35,28 + index * 60]);
-    return {width:360,height:1120,positions,nodeW:290,nodeH:46};
+
+    if (mode === 'mobile') {
+      const nodeW = Math.min(300, available - 32);
+      const nodeH = 50;
+      const vGap = 50;
+      let y = 28;
+      ORDER.filter(id => present.has(id)).forEach(id => {
+        positions[id] = [Math.round((available - nodeW) / 2), y];
+        y += nodeH + vGap;
+      });
+      return {mode,width:available,height:y + 16,nodeW,nodeH,positions,groupPadding:20};
+    }
+
+    const groupPadding = mode === 'desktop' ? 32 : 24;
+    const nodeW = mode === 'desktop' ? 154 : 138;
+    const nodeH = 52;
+    const hGap = mode === 'desktop' ? 52 : 48;
+    const vGap = mode === 'desktop' ? 56 : 48;
+    const trunkCenter = available / 2;
+    const leftCenter = available * 0.28;
+    const rightCenter = available * 0.73;
+    let y = 28;
+
+    TRUNK.filter(id => present.has(id)).forEach(id => {
+      positions[id] = [Math.round(trunkCenter - nodeW / 2), y];
+      y += nodeH + vGap;
+    });
+
+    const splitY = y + 8;
+    LEFT_RANKS.forEach((rank,index) => placeRank(rank.filter(id => present.has(id)), leftCenter, splitY + index * (nodeH + vGap), nodeW, hGap, positions));
+    RIGHT_RANKS.forEach((rank,index) => placeRank(rank.filter(id => present.has(id)), rightCenter, splitY + index * (nodeH + vGap), nodeW, hGap, positions));
+
+    const maxBottom = Math.max(...Object.values(positions).map(([,py]) => py + nodeH), splitY);
+    return {mode,width:available,height:maxBottom + groupPadding + 30,nodeW,nodeH,positions,groupPadding};
   }
 
   function edgeHealth(parent, child) {
@@ -183,55 +232,101 @@
     return 'unknown';
   }
 
+  function orthogonalPath(from, to, layout) {
+    const a = layout.positions[from];
+    const b = layout.positions[to];
+    if (!a || !b) return null;
+    const x1 = a[0] + layout.nodeW / 2;
+    const y1 = a[1] + layout.nodeH;
+    const x2 = b[0] + layout.nodeW / 2;
+    const y2 = b[1];
+    const clearance = Math.max(24, Math.min(42, (y2 - y1) / 2));
+    const elbowY = Math.max(y1 + 18, Math.min(y2 - 18, y1 + clearance));
+    return {d:`M${x1},${y1} L${x1},${elbowY} L${x2},${elbowY} L${x2},${y2}`,x1,y1,x2,y2,markX:(x1+x2)/2,markY:elbowY};
+  }
+
+  function groupBounds(ids, layout, label) {
+    const points = ids.map(id => layout.positions[id]).filter(Boolean);
+    if (!points.length || layout.mode === 'mobile') return '';
+    const pad = layout.groupPadding;
+    const x = Math.min(...points.map(([px]) => px)) - pad;
+    const y = Math.min(...points.map(([,py]) => py)) - pad;
+    const right = Math.max(...points.map(([px]) => px + layout.nodeW)) + pad;
+    const bottom = Math.max(...points.map(([,py]) => py + layout.nodeH)) + pad;
+    return `<rect class="topology-group" x="${x}" y="${y}" width="${right-x}" height="${bottom-y}" rx="20"/><text class="topology-group-label" x="${x+18}" y="${y+24}">${safe(label)}</text>`;
+  }
+
   function renderGraph(nodes) {
     const host = document.getElementById('topologyGraph');
     if (!host) return;
-    const layout = positionsFor(nodes);
+    const layout = buildLayout(nodes);
     const map = new Map(nodes.map(node => [node.id,node]));
     const edges = [];
     nodes.forEach(node => (node.dependencies || []).forEach(dep => { if (map.has(dep)) edges.push([dep,node.id]); }));
-    const groups = topologyState.mobile ? '' : `<rect class="topology-group" x="35" y="305" width="565" height="320" rx="20"/><text class="topology-group-label" x="55" y="330">CONDO</text><rect class="topology-group" x="625" y="305" width="205" height="430" rx="20"/><text class="topology-group-label" x="645" y="330">ZEROTIER</text><rect class="topology-group" x="445" y="720" width="555" height="185" rx="20"/><text class="topology-group-label" x="465" y="745">HOME</text>`;
+
+    const groups = [
+      groupBounds(['dashboard','sonoff','camera','mqtt','presence','lg_tv'], layout, 'CONDO'),
+      groupBounds(['zerotier_condo','zerotier_tunnel','zerotier_home'], layout, 'ZEROTIER'),
+      groupBounds(['truenas','home_assistant','tuya','electricity','pm25'], layout, 'HOME')
+    ].join('');
+
     const edgeSvg = edges.map(([from,to]) => {
-      const a = layout.positions[from], b = layout.positions[to];
-      if (!a || !b) return '';
-      const x1=a[0]+layout.nodeW/2, y1=a[1]+layout.nodeH, x2=b[0]+layout.nodeW/2, y2=b[1];
-      const mid=(y1+y2)/2;
-      const path=`M${x1},${y1} C${x1},${mid} ${x2},${mid} ${x2},${y2}`;
-      const cls=edgeHealth(map.get(from),map.get(to));
-      const packet=cls==='healthy'?`<path class="topology-edge-packet" d="${path}"/>`:'';
-      const failed=cls==='offline'?`<text class="topology-edge-x" x="${(x1+x2)/2-5}" y="${mid+6}">×</text>`:'';
-      return `<path class="topology-edge ${cls}" d="${path}"/>${packet}${failed}`;
+      const route = orthogonalPath(from,to,layout);
+      if (!route) return '';
+      const cls = edgeHealth(map.get(from),map.get(to));
+      const packet = cls === 'healthy' ? `<path class="topology-edge-packet" d="${route.d}"/>` : '';
+      const failed = cls === 'offline' ? `<text class="topology-edge-x" x="${route.markX-5}" y="${route.markY+6}">×</text>` : '';
+      return `<path class="topology-edge ${cls}" d="${route.d}"/>${packet}${failed}`;
     }).join('');
+
     const nodeSvg = nodes.map(node => {
-      const pos=layout.positions[node.id]; if(!pos) return '';
-      const status=node.online===true?'Online':node.online===false?'Offline':node.health==='warning'?'Warning':'Unknown';
+      const pos = layout.positions[node.id];
+      if (!pos) return '';
+      const status = node.online===true ? 'Online' : node.online===false ? 'Offline' : node.health==='warning' ? 'Warning' : 'Unknown';
       return `<g class="topology-node-svg ${healthClass(node.health)}" data-topology-node="${safe(node.id)}" tabindex="0" transform="translate(${pos[0]} ${pos[1]})"><rect class="topology-node-bg" width="${layout.nodeW}" height="${layout.nodeH}"/><circle class="topology-node-dot" cx="17" cy="17" r="6"/><text class="topology-node-name" x="30" y="20">${safe(node.name)}</text><text class="topology-node-status" x="17" y="39">${safe(status)}${node.latency_ms!=null?` · ${safe(node.latency_ms)} ms`:''}</text></g>`;
     }).join('');
-    host.innerHTML=`<svg class="topology-svg" viewBox="0 0 ${layout.width} ${layout.height}" role="img" aria-label="Smart condo dependency topology">${groups}${edgeSvg}${nodeSvg}</svg>`;
+
+    host.innerHTML = `<svg class="topology-svg" viewBox="0 0 ${layout.width} ${layout.height}" preserveAspectRatio="xMidYMin meet" role="img" aria-label="Smart condo dependency topology">${groups}${edgeSvg}${nodeSvg}</svg>`;
+    host.style.setProperty('--topology-ratio', String(layout.height / layout.width));
     host.querySelectorAll('[data-topology-node]').forEach(element => {
-      const select=()=>{topologyState.selected=element.dataset.topologyNode;renderDetail(nodeById(topologyState.selected));};
-      element.onclick=select;
-      element.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();select();}};
+      const select = () => {
+        topologyState.selected = element.dataset.topologyNode;
+        renderDetail(nodeById(topologyState.selected));
+        requestAnimationFrame(() => renderGraph(topologyState.data?.nodes || []));
+      };
+      element.onclick = select;
+      element.onkeydown = event => { if (event.key==='Enter' || event.key===' ') { event.preventDefault(); select(); } };
     });
   }
 
   function renderTopology() {
-    const data=topologyState.data;
-    const roots=document.getElementById('topologyRoots'), events=document.getElementById('topologyEvents'), score=document.getElementById('topologyHealth');
+    const data = topologyState.data;
+    const roots = document.getElementById('topologyRoots');
+    const events = document.getElementById('topologyEvents');
+    const score = document.getElementById('topologyHealth');
     if (!roots || !events || !score) return;
-    if (!data) { document.getElementById('topologyGraph').innerHTML='<div class="empty">Topology data is not available.</div>'; return; }
-    score.innerHTML=`<strong>${safe(data.overall_health ?? 0)}%</strong><span>Overall Health · ${safe(data.measured_node_count ?? 0)} measured</span>`;
-    roots.innerHTML=data.root_causes?.length?data.root_causes.map(item=>`<div class="root-cause bad"><strong>Root Cause · ${safe(item.label)}</strong><small>${safe(item.message)} · Affected: ${safe((item.affected||[]).join(', ')||'None')}</small></div>`).join(''):'<div class="root-cause"><strong>No confirmed root cause</strong><small>Unknown and unconfigured nodes are excluded from health scoring.</small></div>';
+    if (!data) {
+      const graph = document.getElementById('topologyGraph');
+      if (graph) graph.innerHTML = '<div class="empty">Topology data is not available.</div>';
+      return;
+    }
+    score.innerHTML = `<strong>${safe(data.overall_health ?? 0)}%</strong><span>Overall Health · ${safe(data.measured_node_count ?? 0)} measured</span>`;
+    roots.innerHTML = data.root_causes?.length ? data.root_causes.map(item => `<div class="root-cause bad"><strong>Root Cause · ${safe(item.label)}</strong><small>${safe(item.message)} · Affected: ${safe((item.affected||[]).join(', ')||'None')}</small></div>`).join('') : '<div class="root-cause"><strong>No confirmed root cause</strong><small>Unknown and unconfigured nodes are excluded from health scoring.</small></div>';
     renderGraph(data.nodes || []);
-    events.innerHTML=data.events?.length?data.events.map(item=>`<div class="event-row"><time>${safe(window.shortTime(item.ts))}</time><strong>${safe(item.message)}</strong></div>`).join(''):'<div class="empty">No recent topology events.</div>';
+    events.innerHTML = data.events?.length ? data.events.map(item => `<div class="event-row"><time>${safe(window.shortTime(item.ts))}</time><strong>${safe(item.message)}</strong></div>`).join('') : '<div class="empty">No recent topology events.</div>';
     renderDetail(nodeById(topologyState.selected));
   }
 
   document.querySelectorAll('[data-nav]').forEach(button => button.onclick = () => window.nav(button.dataset.nav));
+  document.getElementById('topologyFit')?.addEventListener('click', renderTopology);
+
   let resizeTimer;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
-    resizeTimer=setTimeout(()=>{if(window.currentPage()==='topology') renderTopology();},120);
+    resizeTimer = window.setTimeout(() => {
+      if (window.currentPage() === 'topology') renderTopology();
+    }, 140);
   }, {passive:true});
+
   loadTopology().then(() => window.renderPage(window.currentPage()));
 })();
