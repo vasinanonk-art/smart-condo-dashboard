@@ -22,3 +22,8 @@ from backend import runtime_ha_lighting as _runtime_ha_lighting  # noqa: F401,E4
 # Keep recent slider values stable until Home Assistant confirms them and force
 # brightness/temperature controls into white mode rather than retaining HS color.
 from backend import runtime_ha_lighting_stable as _runtime_ha_lighting_stable  # noqa: F401,E402
+
+# Install the final MQTT callback owner after every earlier runtime wrapper has
+# registered. It owns only LG TV state/heartbeat ingestion and leaves commands,
+# other MQTT topics, and the existing client unchanged.
+from backend import runtime_lg_tv_mqtt as _runtime_lg_tv_mqtt  # noqa: F401,E402
