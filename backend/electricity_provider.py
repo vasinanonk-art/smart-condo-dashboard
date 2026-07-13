@@ -84,8 +84,10 @@ def _epoch(value: Any) -> Optional[int]:
     if isinstance(value, (int, float)):
         return int(value / 1000) if value > 1_000_000_000_000 else int(value)
     try:
-        text = str(value).replace("Z", "+00:00")
-        return int(datetime.fromisoformat(text).replace(tzinfo=datetime.fromisoformat(text).tzinfo or timezone.utc).timestamp())
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp())
     except (TypeError, ValueError):
         return None
 
@@ -122,13 +124,25 @@ def _ha_states() -> tuple[list[Dict[str, Any]], Optional[str], Optional[float]]:
         return [], type(exc).__name__, round((time.monotonic() - started) * 1000, 1)
 
 
+def _entity_text(entity: Mapping[str, Any]) -> str:
+    attributes = entity.get("attributes") if isinstance(entity.get("attributes"), Mapping) else {}
+    return f"{entity.get('entity_id') or ''} {attributes.get('friendly_name') or ''}".lower().replace("_", " ")
+
+
 def _score(metric: str, entity: Mapping[str, Any]) -> int:
     entity_id = str(entity.get("entity_id") or "").lower()
     attributes = entity.get("attributes") if isinstance(entity.get("attributes"), Mapping) else {}
-    friendly = str(attributes.get("friendly_name") or "").lower()
-    text = f"{entity_id} {friendly}".replace("_", " ")
+    text = _entity_text(entity)
     unit = str(attributes.get("unit_of_measurement") or "").strip().lower()
     device_class = str(attributes.get("device_class") or "").strip().lower()
+
+    if metric == "energy_today" and not any(term in text for term in ("today", "daily")):
+        return -100
+    if metric == "energy_month" and not any(term in text for term in ("month", "monthly")):
+        return -100
+    if metric == "total_energy" and any(term in text for term in ("today", "daily", "month", "monthly")):
+        return -100
+
     score = 0
     if entity_id.startswith("sensor."):
         score += 2
@@ -141,14 +155,12 @@ def _score(metric: str, entity: Mapping[str, Any]) -> int:
             score += 5 if keyword != "energy" else 2
     if unit in _UNIT_HINTS[metric]:
         score += 3
-    if metric == "energy_today" and any(term in text for term in ("today", "daily")):
+    if metric == "energy_today":
         score += 8
-    if metric == "energy_month" and any(term in text for term in ("month", "monthly")):
+    if metric == "energy_month":
         score += 8
     if metric == "total_energy" and any(term in text for term in ("total", "lifetime")):
         score += 8
-    if metric in ("energy_today", "energy_month") and not any(term in text for term in ("today", "daily", "month", "monthly")):
-        score -= 5
     return score
 
 
