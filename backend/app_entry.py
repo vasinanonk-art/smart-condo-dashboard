@@ -28,6 +28,9 @@ from backend import runtime_ha_lighting_stable as _runtime_ha_lighting_stable  #
 # other MQTT topics, and the existing client unchanged.
 from backend import runtime_lg_tv_mqtt as _runtime_lg_tv_mqtt  # noqa: F401,E402
 
-# Register the read-only Home Assistant electricity provider and status endpoint.
-# This adds no polling loop and leaves existing routes and device behavior intact.
+# Register the read-only electricity provider and status endpoint first.
 from backend import electricity_provider as _electricity_provider  # noqa: F401,E402
+
+# Start the single PJ-1103 local polling bridge. It reuses the existing MQTT
+# client and becomes a fallback only when Home Assistant has no supported meter.
+from backend import pj1103_electricity_bridge as _pj1103_electricity_bridge  # noqa: F401,E402
