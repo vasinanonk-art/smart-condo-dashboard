@@ -1,4 +1,4 @@
-"""Electricity provider with Home Assistant priority and PJ-1103 fallbacks."""
+"""Read-only electricity provider with Home Assistant priority and PJ-1103 fallbacks."""
 from __future__ import annotations
 
 import json
@@ -181,16 +181,12 @@ def _ha_snapshot() -> Dict[str, Any]:
     configured = bool(os.getenv("HA_BASE_URL", "").strip() and os.getenv("HA_TOKEN", "").strip())
     available_count = sum(value is not None for value in values.values())
     stale = bool(last_update and now - last_update > _HA_STALE_SEC)
-    if not configured:
-        health = "unknown"
-    elif error:
-        health = "offline"
-    elif available_count == 0:
-        health = "unknown"
-    elif stale or available_count < len(METRICS):
-        health = "warning"
-    else:
-        health = "healthy"
+    health = (
+        "unknown" if not configured or available_count == 0 else
+        "offline" if error else
+        "warning" if stale or available_count < len(METRICS) else
+        "healthy"
+    )
     return {
         **values,
         "last_update": last_update,
@@ -212,16 +208,20 @@ def _ha_snapshot() -> Dict[str, Any]:
             "consecutive_failures": 0,
             "poller_started": False,
             "poller_alive": False,
+            "configured_ip": None,
+            "runtime_ip": None,
+            "last_scan_ts": None,
+            "last_scan_result": None,
+            "scan_count": 0,
             "last_error": error,
         },
     }
 
 
 def _bridge_state(kind: str) -> Dict[str, Any]:
-    poller = {"poller_started": False, "poller_alive": False}
+    poller: Dict[str, Any] = {"poller_started": False, "poller_alive": False}
     try:
         from backend import pj1103_electricity_bridge as bridge
-
         raw = bridge.local_state() if kind == "runtime" else bridge.retained_state()
         configured = bridge.configured()
         poller = bridge.poller_diagnostics()
@@ -267,6 +267,12 @@ def _bridge_state(kind: str) -> Dict[str, Any]:
             "consecutive_failures": int(raw.get("consecutive_failures") or 0),
             "poller_started": bool(poller.get("poller_started")),
             "poller_alive": bool(poller.get("poller_alive")),
+            "configured_ip": raw.get("configured_ip") or poller.get("configured_ip"),
+            "runtime_ip": raw.get("runtime_ip") or poller.get("runtime_ip"),
+            "auto_discovery": raw.get("auto_discovery") is not False,
+            "last_scan_ts": _epoch(raw.get("last_scan_ts") or poller.get("last_scan_ts")),
+            "last_scan_result": raw.get("last_scan_result") or poller.get("last_scan_result"),
+            "scan_count": int(raw.get("scan_count") or poller.get("scan_count") or 0),
             "stale": stale,
             "available_metric_count": available_count,
             "missing_metrics": [metric for metric in METRICS if values[metric] is None],
@@ -295,6 +301,8 @@ def _snapshot_uncached() -> Dict[str, Any]:
             "poll_latency_ms": None, "last_success": None, "last_attempt_ts": None,
             "last_error": None, "consecutive_failures": 0,
             "poller_started": False, "poller_alive": False,
+            "configured_ip": None, "runtime_ip": None, "auto_discovery": True,
+            "last_scan_ts": None, "last_scan_result": "not_run", "scan_count": 0,
             "stale": True, "missing_metrics": list(METRICS), "available_metric_count": 0,
         },
     }
@@ -316,7 +324,8 @@ def electricity_provider() -> Iterable[UnifiedDevice]:
     payload = electricity_status()
     health = str(payload.get("health") or "unknown")
     online = True if health in ("healthy", "warning") else (False if health == "offline" else None)
-    source = (payload.get("diagnostics") or {}).get("source")
+    diagnostics = payload.get("diagnostics") or {}
+    source = diagnostics.get("source")
     return (
         UnifiedDevice(
             id="electricity:home",
@@ -326,9 +335,9 @@ def electricity_provider() -> Iterable[UnifiedDevice]:
             online=online,
             health=health,
             last_update_ts=payload.get("last_update"),
-            latency_ms=(payload.get("diagnostics") or {}).get("poll_latency_ms") or (payload.get("diagnostics") or {}).get("latency_ms"),
+            latency_ms=diagnostics.get("poll_latency_ms") or diagnostics.get("latency_ms"),
             status={metric: payload.get(metric) for metric in METRICS},
-            diagnostics=payload.get("diagnostics") or {},
+            diagnostics=diagnostics,
             capabilities=("meter", "sensor"),
             actions=(),
             metadata={"source": source, "physical_site": "condo" if source == "tuya_local" else "home", "read_only": True},
