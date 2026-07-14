@@ -74,7 +74,7 @@ class PJ1103ElectricityBridgeTests(unittest.TestCase):
                 self.assertEqual(bridge._scan_state["last_scan_result"], "matched")
 
     def test_scan_cooldown_prevents_repeated_scan(self):
-        with patch.object(bridge, "_tiny_scan", return_value={} ) as scan:
+        with patch.object(bridge, "_tiny_scan", return_value={}) as scan:
             bridge._discover_runtime_ip("meter-id")
             bridge._discover_runtime_ip("meter-id")
         self.assertEqual(scan.call_count, 1)
@@ -94,11 +94,12 @@ class PJ1103ElectricityBridgeTests(unittest.TestCase):
              patch.object(bridge, "_publish_current_state"), \
              patch.object(bridge, "publish_discovery"):
             payload = bridge.poll_once()
+        snapshot = bridge.local_state()
         self.assertEqual(read_once.call_count, 2)
         self.assertEqual(read_once.call_args_list[1].args[0]["ip"], "192.168.1.35")
         self.assertEqual(payload["power"], 381.7)
-        self.assertEqual(payload["runtime_ip"], "192.168.1.35")
-        self.assertNotIn("local_key", payload)
+        self.assertEqual(snapshot["runtime_ip"], "192.168.1.35")
+        self.assertNotIn("local_key", snapshot)
 
     def test_repeated_start_does_not_create_duplicate_live_worker(self):
         class FakeThread:
