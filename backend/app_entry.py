@@ -15,23 +15,17 @@ _dashboard_extensions._safe_error = _safe_dashboard_error
 from backend import runtime_fixes as _runtime_fixes  # noqa: F401,E402
 from backend import runtime_tuya_subprocess as _runtime_tuya_subprocess  # noqa: F401,E402
 
-# Use confirmed Home Assistant entities as the authoritative lighting transport
-# and state source. This loads last so it owns only the two existing zone routes.
+# Use confirmed Home Assistant entities as the authoritative lighting transport.
 from backend import runtime_ha_lighting as _runtime_ha_lighting  # noqa: F401,E402
-
-# Keep recent slider values stable until Home Assistant confirms them and force
-# brightness/temperature controls into white mode rather than retaining HS color.
 from backend import runtime_ha_lighting_stable as _runtime_ha_lighting_stable  # noqa: F401,E402
 
-# Install the final MQTT callback owner for LG TV state and heartbeat.
+# Install authoritative MQTT ingestion using the existing client.
 from backend import runtime_lg_tv_mqtt as _runtime_lg_tv_mqtt  # noqa: F401,E402
 
-# Register the read-only electricity provider and status endpoint.
+# Register the read-only electricity provider and start the single local bridge.
 from backend import electricity_provider as _electricity_provider  # noqa: F401,E402
-
-# Start the single PJ-1103 local polling bridge using the existing MQTT client.
 from backend import pj1103_electricity_bridge as _pj1103_electricity_bridge  # noqa: F401,E402
-
-# Subscribe the existing client to the retained electricity state for restart
-# fallback. Current in-process bridge state remains authoritative.
 from backend import runtime_electricity_mqtt as _runtime_electricity_mqtt  # noqa: F401,E402
+
+# Apply physical-site topology metadata after the existing topology engine loads.
+from backend import topology_location_model as _topology_location_model  # noqa: F401,E402
