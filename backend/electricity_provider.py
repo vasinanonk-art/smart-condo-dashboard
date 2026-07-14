@@ -208,16 +208,23 @@ def _ha_snapshot() -> Dict[str, Any]:
             "mapping_verified": None,
             "poll_latency_ms": None,
             "last_success": last_update,
+            "last_attempt_ts": None,
+            "consecutive_failures": 0,
+            "poller_started": False,
+            "poller_alive": False,
             "last_error": error,
         },
     }
 
 
 def _bridge_state(kind: str) -> Dict[str, Any]:
+    poller = {"poller_started": False, "poller_alive": False}
     try:
         from backend import pj1103_electricity_bridge as bridge
+
         raw = bridge.local_state() if kind == "runtime" else bridge.retained_state()
         configured = bridge.configured()
+        poller = bridge.poller_diagnostics()
     except Exception:
         raw = {}
         configured = bool(
@@ -228,6 +235,7 @@ def _bridge_state(kind: str) -> Dict[str, Any]:
     raw = dict(raw) if isinstance(raw, Mapping) else {}
     now = int(time.time())
     last_success = _epoch(raw.get("last_success") or raw.get("ts"))
+    last_attempt_ts = _epoch(raw.get("last_attempt_ts"))
     age = max(0, now - last_success) if last_success else None
     stale = age is None or age > _LOCAL_STALE_SEC
     values = {metric: _number(raw.get(metric)) for metric in METRICS}
@@ -254,7 +262,11 @@ def _bridge_state(kind: str) -> Dict[str, Any]:
             "mapping_verified": raw.get("mapping_verified") is True,
             "poll_latency_ms": _number(raw.get("poll_latency_ms")),
             "last_success": last_success,
+            "last_attempt_ts": last_attempt_ts,
             "last_error": raw.get("last_error"),
+            "consecutive_failures": int(raw.get("consecutive_failures") or 0),
+            "poller_started": bool(poller.get("poller_started")),
+            "poller_alive": bool(poller.get("poller_alive")),
             "stale": stale,
             "available_metric_count": available_count,
             "missing_metrics": [metric for metric in METRICS if values[metric] is None],
@@ -280,7 +292,9 @@ def _snapshot_uncached() -> Dict[str, Any]:
         "health": "unknown",
         "diagnostics": {
             "source": "unknown", "configured": False, "mapping_verified": False,
-            "poll_latency_ms": None, "last_success": None, "last_error": None,
+            "poll_latency_ms": None, "last_success": None, "last_attempt_ts": None,
+            "last_error": None, "consecutive_failures": 0,
+            "poller_started": False, "poller_alive": False,
             "stale": True, "missing_metrics": list(METRICS), "available_metric_count": 0,
         },
     }
