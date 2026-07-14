@@ -10,6 +10,8 @@ class PJ1103ElectricityBridgeTests(unittest.TestCase):
         bridge.app_module._pj1103_bridge_started = False
         bridge.app_module._pj1103_bridge_thread = None
         bridge._runtime_snapshot = {}
+        bridge._runtime_ip = None
+        bridge._scan_state.update({"last_scan_ts": None, "last_scan_result": "not_run", "scan_count": 0})
         bridge.app_module.state.pop("electricity_local_state", None)
 
     def tearDown(self):
@@ -58,6 +60,45 @@ class PJ1103ElectricityBridgeTests(unittest.TestCase):
         self.assertIsNotNone(failed["last_attempt_ts"])
         self.assertEqual(failed["consecutive_failures"], 1)
         self.assertEqual(failed["voltage"], 234.4)
+
+    def test_scan_matches_device_id_variants(self):
+        variants = [
+            {"192.168.1.35": {"id": "meter-id", "ip": "192.168.1.35"}},
+            {"192.168.1.35": {"gwId": "meter-id"}},
+            [{"device_id": "meter-id", "ip": "192.168.1.35"}],
+        ]
+        for result in variants:
+            bridge._scan_state.update({"last_scan_ts": None, "last_scan_result": "not_run", "scan_count": 0})
+            with patch.object(bridge, "_tiny_scan", return_value=result):
+                self.assertEqual(bridge._discover_runtime_ip("meter-id"), "192.168.1.35")
+                self.assertEqual(bridge._scan_state["last_scan_result"], "matched")
+
+    def test_scan_cooldown_prevents_repeated_scan(self):
+        with patch.object(bridge, "_tiny_scan", return_value={} ) as scan:
+            bridge._discover_runtime_ip("meter-id")
+            bridge._discover_runtime_ip("meter-id")
+        self.assertEqual(scan.call_count, 1)
+        self.assertEqual(bridge._scan_state["scan_count"], 1)
+
+    def test_wrong_ip_rediscovery_retries_immediately(self):
+        environment = {
+            "TUYA_METER_DEVICE_ID": "meter-id",
+            "TUYA_METER_IP": "192.168.1.34",
+            "TUYA_METER_LOCAL_KEY": "test-only-key",
+            "TUYA_METER_VERSION": "3.5",
+        }
+        success = {"voltage": 234.4, "current": 2.22, "power": 381.7, "total_energy": 1.4, "poll_latency_ms": 20.0}
+        with patch.dict(bridge.os.environ, environment, clear=False), \
+             patch.object(bridge, "_read_once", side_effect=[TimeoutError(), success]) as read_once, \
+             patch.object(bridge, "_discover_runtime_ip", return_value="192.168.1.35"), \
+             patch.object(bridge, "_publish_current_state"), \
+             patch.object(bridge, "publish_discovery"):
+            payload = bridge.poll_once()
+        self.assertEqual(read_once.call_count, 2)
+        self.assertEqual(read_once.call_args_list[1].args[0]["ip"], "192.168.1.35")
+        self.assertEqual(payload["power"], 381.7)
+        self.assertEqual(payload["runtime_ip"], "192.168.1.35")
+        self.assertNotIn("local_key", payload)
 
     def test_repeated_start_does_not_create_duplicate_live_worker(self):
         class FakeThread:
