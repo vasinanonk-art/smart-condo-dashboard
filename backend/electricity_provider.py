@@ -1,9 +1,4 @@
-"""Electricity provider with Home Assistant priority and PJ-1103 fallback.
-
-The API and registry provider remain read-only. Home Assistant is preferred when
-supported electricity entities are available; otherwise the local MQTT bridge
-snapshot is used. No secrets are exposed through diagnostics.
-"""
+"""Electricity provider with Home Assistant priority and PJ-1103 fallbacks."""
 from __future__ import annotations
 
 import json
@@ -19,34 +14,21 @@ from backend.device_framework import UnifiedDevice
 from backend.device_registry import registry
 
 app = app_module.app
-
 _CACHE_SEC = max(5, int(os.getenv("ELECTRICITY_CACHE_SEC", "15")))
-_TIMEOUT_SEC = max(0.5, float(os.getenv("ELECTRICITY_HA_TIMEOUT_SEC", "3")))
-_STALE_SEC = max(30, int(os.getenv("ELECTRICITY_STALE_SEC", "180")))
+_TIME_OUT = max(0.5, float(os.getenv("ELECTRICITY_HA_TIMEOUT_SEC", "3")))
+_HA_STALE_SEC = max(30, int(os.getenv("ELECTRICITY_STALE_SEC", "180")))
 _LOCAL_STALE_SEC = max(60, int(os.getenv("ELECTRICITY_LOCAL_STALE_SEC", "90")))
 _lock = threading.RLock()
 _cache: Dict[str, Any] = {"ts": 0, "payload": None}
 
 METRICS = (
-    "voltage",
-    "current",
-    "power",
-    "energy_today",
-    "energy_month",
-    "total_energy",
-    "frequency",
-    "power_factor",
+    "voltage", "current", "power", "energy_today", "energy_month",
+    "total_energy", "frequency", "power_factor",
 )
-
 _DEVICE_CLASS_MAP = {
-    "voltage": "voltage",
-    "current": "current",
-    "power": "power",
-    "frequency": "frequency",
-    "power_factor": "power_factor",
-    "energy": "total_energy",
+    "voltage": "voltage", "current": "current", "power": "power",
+    "frequency": "frequency", "power_factor": "power_factor", "energy": "total_energy",
 }
-
 _KEYWORDS = {
     "voltage": ("voltage",),
     "current": ("current", "ampere", "amps"),
@@ -57,15 +39,10 @@ _KEYWORDS = {
     "energy_month": ("energy month", "monthly energy", "month energy", "energy_monthly"),
     "total_energy": ("total energy", "energy total", "lifetime energy", "energy"),
 }
-
 _UNIT_HINTS = {
-    "voltage": ("v",),
-    "current": ("a",),
-    "power": ("w", "kw"),
-    "frequency": ("hz",),
-    "power_factor": ("%", ""),
-    "energy_today": ("kwh", "wh"),
-    "energy_month": ("kwh", "wh"),
+    "voltage": ("v",), "current": ("a",), "power": ("w", "kw"),
+    "frequency": ("hz",), "power_factor": ("%", ""),
+    "energy_today": ("kwh", "wh"), "energy_month": ("kwh", "wh"),
     "total_energy": ("kwh", "wh"),
 }
 
@@ -127,7 +104,7 @@ def _ha_states() -> tuple[list[Dict[str, Any]], Optional[str], Optional[float]]:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_SEC) as response:
+        with urllib.request.urlopen(request, timeout=_TIME_OUT) as response:
             payload = json.load(response)
         latency = round((time.monotonic() - started) * 1000, 1)
         return [item for item in payload if isinstance(item, dict)] if isinstance(payload, list) else [], None, latency
@@ -146,14 +123,12 @@ def _score(metric: str, entity: Mapping[str, Any]) -> int:
     text = _entity_text(entity)
     unit = str(attributes.get("unit_of_measurement") or "").strip().lower()
     device_class = str(attributes.get("device_class") or "").strip().lower()
-
     if metric == "energy_today" and not any(term in text for term in ("today", "daily")):
         return -100
     if metric == "energy_month" and not any(term in text for term in ("month", "monthly")):
         return -100
     if metric == "total_energy" and any(term in text for term in ("today", "daily", "month", "monthly")):
         return -100
-
     score = 2 if entity_id.startswith("sensor.") else 0
     if device_class == metric:
         score += 12
@@ -205,7 +180,7 @@ def _ha_snapshot() -> Dict[str, Any]:
     last_update = max(updates) if updates else None
     configured = bool(os.getenv("HA_BASE_URL", "").strip() and os.getenv("HA_TOKEN", "").strip())
     available_count = sum(value is not None for value in values.values())
-    stale = bool(last_update and now - last_update > _STALE_SEC)
+    stale = bool(last_update and now - last_update > _HA_STALE_SEC)
     if not configured:
         health = "unknown"
     elif error:
@@ -238,42 +213,50 @@ def _ha_snapshot() -> Dict[str, Any]:
     }
 
 
-def _local_snapshot() -> Dict[str, Any]:
-    raw = app_module.state.get("electricity_local_state")
+def _bridge_state(kind: str) -> Dict[str, Any]:
+    try:
+        from backend import pj1103_electricity_bridge as bridge
+        raw = bridge.local_state() if kind == "runtime" else bridge.retained_state()
+        configured = bridge.configured()
+    except Exception:
+        raw = {}
+        configured = bool(
+            os.getenv("TUYA_METER_DEVICE_ID", "").strip()
+            and os.getenv("TUYA_METER_IP", "").strip()
+            and os.getenv("TUYA_METER_LOCAL_KEY", "").strip()
+        )
     raw = dict(raw) if isinstance(raw, Mapping) else {}
     now = int(time.time())
-    last_success = _epoch(raw.get("last_success"))
+    last_success = _epoch(raw.get("last_success") or raw.get("ts"))
     age = max(0, now - last_success) if last_success else None
     stale = age is None or age > _LOCAL_STALE_SEC
+    values = {metric: _number(raw.get(metric)) for metric in METRICS}
+    available_count = sum(value is not None for value in values.values())
     online = raw.get("online") is True and not stale
-    has_values = any(_number(raw.get(metric)) is not None for metric in ("voltage", "current", "power", "total_energy"))
-    configured = bool(
-        os.getenv("TUYA_METER_DEVICE_ID", "").strip()
-        and os.getenv("TUYA_METER_IP", "").strip()
-        and os.getenv("TUYA_METER_LOCAL_KEY", "").strip()
-    )
     if not configured and not raw:
         health = "unknown"
-    elif online and has_values:
+    elif online and available_count:
         health = "warning" if raw.get("mapping_verified") is not True else "healthy"
-    elif raw.get("last_error") and configured:
+    elif last_success and stale:
         health = "offline"
+    elif raw.get("last_error") and not last_success:
+        health = "warning"
     else:
         health = "unknown"
-    values = {metric: _number(raw.get(metric)) for metric in METRICS}
     return {
         **values,
         "last_update": last_success,
         "health": health,
         "diagnostics": {
             "source": "tuya_local" if configured or raw else "unknown",
+            "snapshot_source": kind,
             "configured": configured,
-            "mapping_verified": bool(raw.get("mapping_verified")),
+            "mapping_verified": raw.get("mapping_verified") is True,
             "poll_latency_ms": _number(raw.get("poll_latency_ms")),
             "last_success": last_success,
             "last_error": raw.get("last_error"),
             "stale": stale,
-            "available_metric_count": sum(value is not None for value in values.values()),
+            "available_metric_count": available_count,
             "missing_metrics": [metric for metric in METRICS if values[metric] is None],
         },
     }
@@ -283,22 +266,22 @@ def _snapshot_uncached() -> Dict[str, Any]:
     ha = _ha_snapshot()
     if int((ha.get("diagnostics") or {}).get("available_metric_count") or 0) > 0:
         return ha
-    local = _local_snapshot()
-    if int((local.get("diagnostics") or {}).get("available_metric_count") or 0) > 0 or (local.get("diagnostics") or {}).get("configured"):
-        return local
+    runtime = _bridge_state("runtime")
+    if int((runtime.get("diagnostics") or {}).get("available_metric_count") or 0) > 0:
+        return runtime
+    retained = _bridge_state("retained")
+    if int((retained.get("diagnostics") or {}).get("available_metric_count") or 0) > 0:
+        return retained
+    if (runtime.get("diagnostics") or {}).get("configured"):
+        return runtime
     return {
         **{metric: None for metric in METRICS},
         "last_update": None,
         "health": "unknown",
         "diagnostics": {
-            "source": "unknown",
-            "mapping_verified": False,
-            "poll_latency_ms": None,
-            "last_success": None,
-            "last_error": None,
-            "ha_status": (ha.get("diagnostics") or {}).get("last_error"),
-            "missing_metrics": list(METRICS),
-            "available_metric_count": 0,
+            "source": "unknown", "configured": False, "mapping_verified": False,
+            "poll_latency_ms": None, "last_success": None, "last_error": None,
+            "stale": True, "missing_metrics": list(METRICS), "available_metric_count": 0,
         },
     }
 
@@ -319,12 +302,13 @@ def electricity_provider() -> Iterable[UnifiedDevice]:
     payload = electricity_status()
     health = str(payload.get("health") or "unknown")
     online = True if health in ("healthy", "warning") else (False if health == "offline" else None)
+    source = (payload.get("diagnostics") or {}).get("source")
     return (
         UnifiedDevice(
             id="electricity:home",
             type="electricity",
-            name="Home Electricity",
-            room="home",
+            name="Digital Meter PJ-1103" if source == "tuya_local" else "Home Electricity",
+            room="condo" if source == "tuya_local" else "home",
             online=online,
             health=health,
             last_update_ts=payload.get("last_update"),
@@ -333,7 +317,7 @@ def electricity_provider() -> Iterable[UnifiedDevice]:
             diagnostics=payload.get("diagnostics") or {},
             capabilities=("meter", "sensor"),
             actions=(),
-            metadata={"source": (payload.get("diagnostics") or {}).get("source"), "read_only": True},
+            metadata={"source": source, "physical_site": "condo" if source == "tuya_local" else "home", "read_only": True},
         ),
     )
 
