@@ -23,14 +23,15 @@ from backend import runtime_ha_lighting as _runtime_ha_lighting  # noqa: F401,E4
 # brightness/temperature controls into white mode rather than retaining HS color.
 from backend import runtime_ha_lighting_stable as _runtime_ha_lighting_stable  # noqa: F401,E402
 
-# Install the final MQTT callback owner after every earlier runtime wrapper has
-# registered. It owns only LG TV state/heartbeat ingestion and leaves commands,
-# other MQTT topics, and the existing client unchanged.
+# Install the final MQTT callback owner for LG TV state and heartbeat.
 from backend import runtime_lg_tv_mqtt as _runtime_lg_tv_mqtt  # noqa: F401,E402
 
-# Register the read-only electricity provider and status endpoint first.
+# Register the read-only electricity provider and status endpoint.
 from backend import electricity_provider as _electricity_provider  # noqa: F401,E402
 
-# Start the single PJ-1103 local polling bridge. It reuses the existing MQTT
-# client and becomes a fallback only when Home Assistant has no supported meter.
+# Start the single PJ-1103 local polling bridge using the existing MQTT client.
 from backend import pj1103_electricity_bridge as _pj1103_electricity_bridge  # noqa: F401,E402
+
+# Subscribe the existing client to the retained electricity state for restart
+# fallback. Current in-process bridge state remains authoritative.
+from backend import runtime_electricity_mqtt as _runtime_electricity_mqtt  # noqa: F401,E402
