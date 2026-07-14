@@ -1,7 +1,7 @@
 """Local PJ-1103 electricity meter bridge.
 
 Uses the existing TinyTuya dependency and MQTT client. Secrets are read only from
-environment variables and are never logged or exposed through diagnostics.
+runtime environment variables and are never logged or exposed through diagnostics.
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import json
 import os
 import threading
 import time
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional
 
 import tinytuya
 
@@ -23,6 +23,7 @@ POLL_TIMEOUT_SEC = 5
 MAX_ATTEMPTS = 2
 MAPPING_VERIFIED = False
 LOCAL_STALE_SEC = max(60, int(os.getenv("ELECTRICITY_LOCAL_STALE_SEC", "90")))
+SCAN_COOLDOWN_SEC = max(60, int(os.getenv("TUYA_METER_SCAN_COOLDOWN_SEC", "60")))
 
 _DPS_MAPPING = {
     "total_energy": (17, 0.01),
@@ -34,6 +35,12 @@ _DPS_MAPPING = {
 _stop_event = threading.Event()
 _state_lock = threading.RLock()
 _runtime_snapshot: Dict[str, Any] = {}
+_runtime_ip: Optional[str] = None
+_scan_state: Dict[str, Any] = {
+    "last_scan_ts": None,
+    "last_scan_result": "not_run",
+    "scan_count": 0,
+}
 
 
 def _safe_error(exc: BaseException) -> str:
@@ -42,12 +49,23 @@ def _safe_error(exc: BaseException) -> str:
 
 def _configuration() -> Optional[Dict[str, str]]:
     device_id = os.getenv("TUYA_METER_DEVICE_ID", "").strip()
-    ip = os.getenv("TUYA_METER_IP", "").strip()
+    configured_ip = os.getenv("TUYA_METER_IP", "").strip()
     local_key = os.getenv("TUYA_METER_LOCAL_KEY", "").strip()
     version = os.getenv("TUYA_METER_VERSION", "3.5").strip() or "3.5"
-    if not device_id or not ip or not local_key:
+    if not device_id or not configured_ip or not local_key:
         return None
-    return {"device_id": device_id, "ip": ip, "local_key": local_key, "version": version}
+    global _runtime_ip
+    with _state_lock:
+        if not _runtime_ip:
+            _runtime_ip = configured_ip
+        runtime_ip = _runtime_ip
+    return {
+        "device_id": device_id,
+        "configured_ip": configured_ip,
+        "ip": runtime_ip or configured_ip,
+        "local_key": local_key,
+        "version": version,
+    }
 
 
 def configured() -> bool:
@@ -93,6 +111,91 @@ def _read_once(config: Mapping[str, str]) -> Dict[str, Any]:
     if not any(value is not None for value in values.values()):
         raise RuntimeError("empty_dps")
     return {**values, "poll_latency_ms": latency}
+
+
+def _connectivity_failure(exc: BaseException) -> bool:
+    name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    markers = (
+        "901", "timeout", "timed out", "refused", "unreachable", "network",
+        "host", "socket", "connection", "missing_dps", "invalid_response",
+    )
+    return any(marker in name or marker in text for marker in markers)
+
+
+def _scan_records(payload: Any) -> Iterable[Mapping[str, Any]]:
+    if isinstance(payload, Mapping):
+        for key, value in payload.items():
+            if isinstance(value, Mapping):
+                item = dict(value)
+                item.setdefault("ip", key if isinstance(key, str) and key.count(".") == 3 else item.get("ip"))
+                yield item
+    elif isinstance(payload, (list, tuple)):
+        for value in payload:
+            if isinstance(value, Mapping):
+                yield value
+
+
+def _tiny_scan() -> Any:
+    scanner = getattr(tinytuya, "deviceScan", None)
+    if not callable(scanner):
+        raise RuntimeError("device_scan_unavailable")
+    try:
+        return scanner(verbose=False, maxretry=1, color=False)
+    except TypeError:
+        try:
+            return scanner(False, 1)
+        except TypeError:
+            return scanner()
+
+
+def _discover_runtime_ip(device_id: str) -> Optional[str]:
+    now = int(time.time())
+    with _state_lock:
+        last_scan = int(_scan_state.get("last_scan_ts") or 0)
+        if last_scan and now - last_scan < SCAN_COOLDOWN_SEC:
+            return None
+        _scan_state["last_scan_ts"] = now
+        _scan_state["scan_count"] = int(_scan_state.get("scan_count") or 0) + 1
+        _scan_state["last_scan_result"] = "scanning"
+    try:
+        result = _tiny_scan()
+        match_ip = None
+        for item in _scan_records(result):
+            found_id = str(item.get("id") or item.get("gwId") or item.get("device_id") or "").strip()
+            if found_id != device_id:
+                continue
+            candidate = str(item.get("ip") or item.get("address") or "").strip()
+            if candidate:
+                match_ip = candidate
+                break
+        with _state_lock:
+            _scan_state["last_scan_result"] = "matched" if match_ip else "not_found"
+        return match_ip
+    except Exception as exc:
+        with _state_lock:
+            _scan_state["last_scan_result"] = _safe_error(exc)
+        return None
+
+
+def _set_runtime_ip(ip: str) -> None:
+    global _runtime_ip
+    with _state_lock:
+        _runtime_ip = ip
+    print(f"pj1103 rediscovered at {ip}", flush=True)
+
+
+def discovery_diagnostics() -> Dict[str, Any]:
+    config = _configuration()
+    with _state_lock:
+        return {
+            "configured_ip": config.get("configured_ip") if config else None,
+            "runtime_ip": _runtime_ip or (config.get("configured_ip") if config else None),
+            "auto_discovery": True,
+            "last_scan_ts": _scan_state.get("last_scan_ts"),
+            "last_scan_result": _scan_state.get("last_scan_result"),
+            "scan_count": int(_scan_state.get("scan_count") or 0),
+        }
 
 
 def _publish(topic: str, payload: str, *, retain: bool) -> bool:
@@ -150,7 +253,6 @@ def publish_discovery() -> None:
 def _invalidate_provider_cache() -> None:
     try:
         from backend import electricity_provider
-
         electricity_provider.invalidate_cache()
     except Exception:
         pass
@@ -158,7 +260,7 @@ def _invalidate_provider_cache() -> None:
 
 def _store_state(payload: Mapping[str, Any]) -> None:
     global _runtime_snapshot
-    snapshot = dict(payload)
+    snapshot = {**dict(payload), **discovery_diagnostics()}
     with _state_lock:
         _runtime_snapshot = snapshot
         app_module.state["electricity_local_state"] = dict(snapshot)
@@ -186,6 +288,12 @@ def ingest_retained_state(payload: Any) -> bool:
         "poll_latency_ms": _number(payload.get("poll_latency_ms")),
         "last_error": payload.get("last_error"),
         "consecutive_failures": int(payload.get("consecutive_failures") or 0),
+        "configured_ip": payload.get("configured_ip"),
+        "runtime_ip": payload.get("runtime_ip"),
+        "auto_discovery": payload.get("auto_discovery") is not False,
+        "last_scan_ts": payload.get("last_scan_ts"),
+        "last_scan_result": payload.get("last_scan_result"),
+        "scan_count": int(payload.get("scan_count") or 0),
     }
     app_module.state["electricity_retained_state"] = dict(snapshot)
     _invalidate_provider_cache()
@@ -210,6 +318,7 @@ def poller_diagnostics() -> Dict[str, Any]:
     return {
         "poller_started": bool(getattr(app_module, "_pj1103_bridge_started", False)),
         "poller_alive": bool(thread and thread.is_alive()),
+        **discovery_diagnostics(),
     }
 
 
@@ -281,6 +390,12 @@ def poll_once() -> Dict[str, Any]:
             return payload
         except Exception as exc:
             last_error = _safe_error(exc)
+            if attempt == 0 and _connectivity_failure(exc):
+                discovered_ip = _discover_runtime_ip(config["device_id"])
+                if discovered_ip and discovered_ip != config["ip"]:
+                    _set_runtime_ip(discovered_ip)
+                    config = {**config, "ip": discovered_ip}
+                    continue
             if attempt + 1 < MAX_ATTEMPTS:
                 time.sleep(0.25)
 
