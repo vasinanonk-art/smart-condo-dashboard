@@ -35,3 +35,6 @@ from backend import pj1103_electricity_bridge as _pj1103_electricity_bridge  # n
 # Subscribe the existing client to the retained electricity state for restart
 # fallback. Current in-process bridge state remains authoritative.
 from backend import runtime_electricity_mqtt as _runtime_electricity_mqtt  # noqa: F401,E402
+
+# Correct physical-site topology relationships without altering health probes.
+from backend import topology_location_model as _topology_location_model  # noqa: F401,E402
