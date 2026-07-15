@@ -26,7 +26,7 @@
     <div class="sidebar-foot">Smart Home · Dashboard</div>
   </aside>
   <main class="main">
-    <header class="topbar"><div><h1 id="pageTitle">Overview</h1><p>Live condo controls, climate, air quality and system health</p></div><div class="status-row"><span id="mqttBadge" class="badge">MQTT Checking</span><span id="haBadge" class="badge">HA Air Checking</span><button class="btn ghost" onclick="refresh()">Refresh</button><button id="dashboardLogout" class="btn ghost dashboard-logout" type="button" onclick="dashboardLogout()">Logout</button></div></header>
+    <header class="topbar"><div><h1 id="pageTitle">Overview</h1><p id="pageSubtitle">Live condo controls, climate, air quality and system health</p></div><div class="status-row"><span id="mqttBadge" class="badge">MQTT Checking</span><span id="haBadge" class="badge">HA Air Checking</span><button class="btn ghost" onclick="refresh()">Refresh</button><button id="dashboardLogout" class="btn ghost dashboard-logout" type="button" onclick="dashboardLogout()">Logout</button></div></header>
     <section class="page active" data-page="overview">
       <div id="overviewMetrics" class="summary-grid"></div><div id="overviewPresence" hidden></div><div id="deviceSummary" hidden></div>
       <div class="grid" style="margin-top:14px">
@@ -51,5 +51,6 @@
 <script>window.S=S;window.TV_COMMANDS=TV_COMMANDS;window.get=get;window.currentPage=currentPage;window.when=when;window.shortTime=shortTime;window.safeText=safeText;window.automationAction=automationAction;window.tv=tv;</script>
 <script src="/assets/dashboard_topology.js"></script>
 <script src="/assets/dashboard_electricity.js"></script>
+<script src="/assets/dashboard_page_chrome.js"></script>
 </body>
 </html>
