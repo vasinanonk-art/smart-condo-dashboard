@@ -36,9 +36,12 @@ from backend import pj1103_electricity_bridge as _pj1103_electricity_bridge  # n
 # fallback. Current in-process bridge state remains authoritative.
 from backend import runtime_electricity_mqtt as _runtime_electricity_mqtt  # noqa: F401,E402
 
-# Correct physical-site topology relationships without altering health probes.
-from backend import topology_location_model as _topology_location_model  # noqa: F401,E402
-
-# Discover Tapo IR entities lazily from Home Assistant and register a read-only
-# Unified Device provider. This adds no polling loop and sends no commands.
+# Discover Tapo IR entities lazily from Home Assistant for STORY 3.1 diagnostics.
 from backend import tapo_ir_provider as _tapo_ir_provider  # noqa: F401,E402
+
+# Register the local condo Tapo bridge last so its registry provider replaces the
+# HA-only provider. It is on-demand, read-only, and creates no worker thread.
+from backend import tapo_ir_local_bridge as _tapo_ir_local_bridge  # noqa: F401,E402
+
+# Correct physical-site topology relationships after all providers are registered.
+from backend import topology_location_model as _topology_location_model  # noqa: F401,E402
