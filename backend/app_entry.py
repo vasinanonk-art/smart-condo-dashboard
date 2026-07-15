@@ -43,5 +43,9 @@ from backend import tapo_ir_provider as _tapo_ir_provider  # noqa: F401,E402
 # HA-only provider. It is on-demand, read-only, and creates no worker thread.
 from backend import tapo_ir_local_bridge as _tapo_ir_local_bridge  # noqa: F401,E402
 
+# Expose read-only H110 modules, features, components, children and callable
+# signatures. This performs no IR command, pairing, learning, or deletion.
+from backend import tapo_ir_capability_debug as _tapo_ir_capability_debug  # noqa: F401,E402
+
 # Correct physical-site topology relationships after all providers are registered.
 from backend import topology_location_model as _topology_location_model  # noqa: F401,E402
