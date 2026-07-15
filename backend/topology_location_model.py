@@ -9,12 +9,61 @@ from backend import electricity_provider, topology_runtime
 topology_runtime.DEPENDENCIES["electricity"] = ["tinkerboard"]
 topology_runtime.NODE_LABELS["electricity"] = "Digital Meter"
 
-# Tapo IR is physically at the condo while Home Assistant is the authoritative
-# discovery/data path. It remains a separate node from the existing camera type.
-topology_runtime.DEPENDENCIES["tapo_ir"] = ["home_assistant"]
+# STORY 3.2 moves Tapo IR control to the local TinkerBoard data path. The node is
+# unknown when unconfigured and only offline after a configured device is confirmed
+# unreachable by the local discovery provider.
+topology_runtime.DEPENDENCIES["tapo_ir"] = ["tinkerboard"]
 topology_runtime.NODE_LABELS["tapo_ir"] = "Tapo IR"
 if "tapo_ir" not in topology_runtime.NODE_ORDER:
     topology_runtime.NODE_ORDER.append("tapo_ir")
+
+
+def _local_tapo_node() -> Dict[str, Any]:
+    try:
+        from backend import tapo_ir_local_bridge
+
+        status = tapo_ir_local_bridge.local_tapo_ir_status()
+        diagnostics = status.get("diagnostics") or {}
+        return {
+            "health": status.get("health") or "unknown",
+            "online": status.get("online"),
+            "last_update_ts": status.get("last_update"),
+            "latency_ms": diagnostics.get("latency_ms"),
+            "physical_site": "condo",
+            "data_source": "tapo_local",
+            "host": status.get("host"),
+            "model": status.get("model"),
+            "firmware": status.get("firmware"),
+            "capabilities": status.get("capabilities") or [],
+            "diagnostics": diagnostics,
+        }
+    except Exception as exc:
+        return {
+            "health": "unknown",
+            "online": None,
+            "physical_site": "condo",
+            "data_source": "tapo_local",
+            "capabilities": [],
+            "diagnostics": {
+                "source": "tapo_local",
+                "last_error": type(exc).__name__,
+                "local_control_supported": False,
+            },
+        }
+
+
+def _install_base_node() -> None:
+    if getattr(app_module, "_tapo_ir_topology_base_installed", False):
+        return
+    original = topology_runtime._base_nodes
+
+    def base_nodes_with_local_tapo(now: int) -> Dict[str, Dict[str, Any]]:
+        nodes = original(now)
+        nodes["tapo_ir"] = _local_tapo_node()
+        return nodes
+
+    topology_runtime._base_nodes = base_nodes_with_local_tapo
+    app_module._tapo_ir_topology_base_installed = True
 
 
 def _install_topology_details() -> None:
@@ -31,67 +80,22 @@ def _install_topology_details() -> None:
             diagnostics = status.get("diagnostics") or {}
             nodes = payload.get("nodes", [])
             for node in nodes:
-                if node.get("id") != "electricity":
-                    continue
-                node["physical_site"] = "condo"
-                node["data_source"] = diagnostics.get("source") or "tuya_local"
-                node["voltage"] = status.get("voltage")
-                node["power"] = status.get("power")
-                node["runtime_ip"] = diagnostics.get("runtime_ip")
-                node["diagnostics"] = {
-                    **(node.get("diagnostics") or {}),
-                    "voltage": status.get("voltage"),
-                    "current_power": status.get("power"),
-                    "runtime_ip": diagnostics.get("runtime_ip"),
-                    "source": diagnostics.get("source"),
-                }
-                break
-
-            try:
-                from backend import tapo_ir_provider
-
-                tapo = tapo_ir_provider.tapo_ir_status()
-                tapo_diag = tapo.get("diagnostics") or {}
-            except Exception as exc:
-                tapo = {
-                    "configured": False,
-                    "online": None,
-                    "health": "unknown",
-                    "last_update": None,
-                    "capabilities": [],
-                }
-                tapo_diag = {
-                    "source": "home_assistant",
-                    "configured": False,
-                    "last_error": type(exc).__name__,
-                }
-
-            tapo_node = {
-                "id": "tapo_ir",
-                "name": "Tapo IR",
-                "online": tapo.get("online"),
-                "health": tapo.get("health") or "unknown",
-                "last_update_ts": tapo.get("last_update"),
-                "latency_ms": tapo_diag.get("latency_ms"),
-                "dependencies": ["home_assistant"],
-                "dependents": [],
-                "capabilities": tapo.get("capabilities") or [],
-                "physical_site": "condo",
-                "data_source": "home_assistant",
-                "diagnostics": tapo_diag,
-            }
-            existing = next((index for index, node in enumerate(nodes) if node.get("id") == "tapo_ir"), None)
-            if existing is None:
-                nodes.append(tapo_node)
-            else:
-                nodes[existing] = tapo_node
-            for node in nodes:
-                if node.get("id") == "home_assistant":
-                    dependents = list(node.get("dependents") or [])
-                    if "tapo_ir" not in dependents:
-                        dependents.append("tapo_ir")
-                    node["dependents"] = dependents
-                    break
+                if node.get("id") == "electricity":
+                    node["physical_site"] = "condo"
+                    node["data_source"] = diagnostics.get("source") or "tuya_local"
+                    node["voltage"] = status.get("voltage")
+                    node["power"] = status.get("power")
+                    node["runtime_ip"] = diagnostics.get("runtime_ip")
+                    node["diagnostics"] = {
+                        **(node.get("diagnostics") or {}),
+                        "voltage": status.get("voltage"),
+                        "current_power": status.get("power"),
+                        "runtime_ip": diagnostics.get("runtime_ip"),
+                        "source": diagnostics.get("source"),
+                    }
+                elif node.get("id") == "tapo_ir":
+                    node["physical_site"] = "condo"
+                    node["data_source"] = "tapo_local"
             return payload
 
         route.endpoint = topology_with_device_detail
@@ -101,4 +105,5 @@ def _install_topology_details() -> None:
         return
 
 
+_install_base_node()
 _install_topology_details()
