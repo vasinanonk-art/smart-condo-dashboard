@@ -1,0 +1,1 @@
+.chart-wrap{overflow:visible}.chart-wrap .tooltip{max-width:calc(100% - 16px);white-space:normal;overflow-wrap:anywhere}.card:has(.chart-wrap){overflow:visible}.chart .crosshair{pointer-events:none}.chart .hover-layer{pointer-events:none}@media(max-width:760px){.chart-wrap .tooltip{font-size:11px;line-height:1.35;max-width:min(240px,calc(100% - 16px))}}
