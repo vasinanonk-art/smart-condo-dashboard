@@ -12,6 +12,7 @@ from backend import app as app_module
 app = app_module.app
 FRONTEND_DIR = Path(app_module.FRONTEND_DIR)
 TOKEN = "__ASSET_VERSION__"
+CHART_DEBUG_TOKEN = "__CHART_DEBUG__"
 
 
 def _git_revision() -> str | None:
@@ -49,16 +50,17 @@ def build_version() -> str:
     return _git_revision() or _mtime_revision()
 
 
+def chart_debug_enabled() -> bool:
+    return os.getenv("DASHBOARD_CHART_DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
 BUILD_VERSION = build_version()
 
 
 def render_html(filename: str, status_code: int = 200) -> HTMLResponse:
     content = (FRONTEND_DIR / filename).read_text(encoding="utf-8")
-    return HTMLResponse(
-        content.replace(TOKEN, BUILD_VERSION),
-        status_code=status_code,
-        headers={"Cache-Control": "no-cache"},
-    )
+    content = content.replace(TOKEN, BUILD_VERSION).replace(CHART_DEBUG_TOKEN, "true" if chart_debug_enabled() else "false")
+    return HTMLResponse(content, status_code=status_code, headers={"Cache-Control": "no-cache"})
 
 
 def _replace_route(path: str, endpoint: Callable[[], HTMLResponse]) -> None:
@@ -84,8 +86,6 @@ def _install() -> None:
         return
     _replace_route("/", dashboard_index)
     _replace_route("/login", dashboard_login)
-
-    # Keep fail-closed authentication behavior while versioning its static assets.
     try:
         from backend import dashboard_auth
 
@@ -99,7 +99,6 @@ def _install() -> None:
         dashboard_auth._config_required_response = config_required
     except Exception:
         pass
-
     app_module.state["frontend_build_version"] = BUILD_VERSION
     app_module._frontend_asset_version_installed = True
 
