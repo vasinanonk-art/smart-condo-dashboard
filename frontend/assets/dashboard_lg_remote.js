@@ -16,6 +16,19 @@
     return `<button type="button" class="lg-remote-key ${cls}" data-lg-command="${safe(command)}">${safe(label)}</button>`;
   }
 
+  function bindOnce(host) {
+    if (host.dataset.lgRemoteBound === '1') return;
+    host.dataset.lgRemoteBound = '1';
+    host.onclick = event => {
+      const button = event.target.closest('[data-lg-command]');
+      if (!button || !host.contains(button)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const command = button.dataset.lgCommand;
+      if (command && typeof window.tv === 'function') window.tv(command);
+    };
+  }
+
   function renderLgRemote() {
     const host = document.getElementById('tvButtons');
     if (!host) return;
@@ -30,19 +43,12 @@
     const navigation = [
       '<span class="lg-remote-key empty"></span>', key('▲','up'), '<span class="lg-remote-key empty"></span>',
       key('◀','left'), key('OK','ok','primary nav-ok'), key('▶','right'),
-      key('Back','back'), key('▼','down'), key('Home','home')
+      key('Back','back'), key('▼','down'), key('Home','home_key')
     ].join('');
     const groups = COMMAND_GROUPS.map(([title, commands]) => `<section class="lg-remote-command-group"><h4>${safe(title)}</h4><div class="lg-remote-command-list">${commands.map(([label,command,cls])=>key(label,command,cls||'')).join('')}</div></section>`).join('');
     host.className = 'lg-remote-panel';
     host.innerHTML = `<div class="lg-remote-status">${statusItems.map(([label,item])=>`<div class="lg-remote-status-item"><span>${safe(label)}</span><strong>${safe(item)}</strong></div>`).join('')}</div><div class="lg-remote-sections"><section class="lg-remote-card"><h3>Navigation</h3><div class="lg-remote-grid">${navigation}</div></section><section class="lg-remote-card"><h3>Commands</h3><div class="lg-remote-command-groups">${groups}</div></section></div>`;
-    host.querySelectorAll('[data-lg-command]').forEach(button => {
-      button.onclick = event => {
-        event.preventDefault();
-        event.stopPropagation();
-        const command = button.dataset.lgCommand;
-        if (command && typeof window.tv === 'function') window.tv(command);
-      };
-    });
+    bindOnce(host);
   }
 
   window.renderEntertainment = renderLgRemote;
