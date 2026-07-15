@@ -50,5 +50,13 @@ from backend import tapo_ir_capability_debug as _tapo_ir_capability_debug  # noq
 # Correct physical-site topology relationships after all providers are registered.
 from backend import topology_location_model as _topology_location_model  # noqa: F401,E402
 
+# Replace the strict topology endpoint with a provider-isolated response that keeps
+# valid nodes available when one optional provider or enrichment fails.
+from backend import topology_hotfix as _topology_hotfix  # noqa: F401,E402
+
 # Install authentication last so it protects every dashboard and extension route.
 from backend import dashboard_auth as _dashboard_auth  # noqa: F401,E402
+
+# Serve HTML with one stable build version per deployment so updated JS/CSS assets
+# are requested automatically without disabling API caching.
+from backend import frontend_asset_version as _frontend_asset_version  # noqa: F401,E402

@@ -4,18 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Login · Smart Condo Dashboard</title>
-  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
-  <link rel="stylesheet" href="/assets/dashboard_auth.css">
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg?v=__ASSET_VERSION__">
+  <link rel="stylesheet" href="/assets/dashboard_auth.css?v=__ASSET_VERSION__">
 </head>
 <body class="auth-body">
   <main class="auth-shell">
     <section class="auth-card" aria-labelledby="loginTitle">
       <div class="auth-brand"><span class="auth-mark">SC</span><div><strong>Smart Condo</strong><small>Dashboard 8090</small></div></div>
-      <div class="auth-copy">
-        <p class="auth-eyebrow">Protected access</p>
-        <h1 id="loginTitle">Sign in to Dashboard</h1>
-        <p>Use your configured dashboard account to continue.</p>
-      </div>
+      <div class="auth-copy"><p class="auth-eyebrow">Protected access</p><h1 id="loginTitle">Sign in to Dashboard</h1><p>Use your configured dashboard account to continue.</p></div>
       <div id="sessionMessage" class="auth-message info" hidden></div>
       <form id="loginForm" novalidate>
         <label>Username<input id="username" name="username" type="text" autocomplete="username" required autofocus></label>
@@ -25,6 +21,6 @@
       </form>
     </section>
   </main>
-  <script src="/assets/dashboard_login.js"></script>
+  <script src="/assets/dashboard_login.js?v=__ASSET_VERSION__"></script>
 </body>
 </html>
