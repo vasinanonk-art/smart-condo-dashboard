@@ -38,3 +38,7 @@ from backend import runtime_electricity_mqtt as _runtime_electricity_mqtt  # noq
 
 # Correct physical-site topology relationships without altering health probes.
 from backend import topology_location_model as _topology_location_model  # noqa: F401,E402
+
+# Discover Tapo IR entities lazily from Home Assistant and register a read-only
+# Unified Device provider. This adds no polling loop and sends no commands.
+from backend import tapo_ir_provider as _tapo_ir_provider  # noqa: F401,E402
