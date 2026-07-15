@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Authentication Required · Smart Condo Dashboard</title>
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+  <link rel="stylesheet" href="/assets/dashboard_auth.css">
+</head>
+<body class="auth-body">
+  <main class="auth-shell">
+    <section class="auth-card">
+      <div class="auth-brand"><span class="auth-mark">SC</span><div><strong>Smart Condo</strong><small>Dashboard 8090</small></div></div>
+      <div class="auth-copy">
+        <p class="auth-eyebrow">Configuration required</p>
+        <h1>Dashboard authentication is not configured</h1>
+        <p>Set the required authentication environment variables and restart the dashboard service.</p>
+      </div>
+      <div class="auth-message info">Required: DASHBOARD_AUTH_USERNAME, DASHBOARD_AUTH_PASSWORD_HASH and DASHBOARD_SESSION_SECRET</div>
+    </section>
+  </main>
+</body>
+</html>
