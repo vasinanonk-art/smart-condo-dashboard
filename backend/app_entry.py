@@ -49,3 +49,6 @@ from backend import tapo_ir_capability_debug as _tapo_ir_capability_debug  # noq
 
 # Correct physical-site topology relationships after all providers are registered.
 from backend import topology_location_model as _topology_location_model  # noqa: F401,E402
+
+# Install authentication last so it protects every dashboard and extension route.
+from backend import dashboard_auth as _dashboard_auth  # noqa: F401,E402
