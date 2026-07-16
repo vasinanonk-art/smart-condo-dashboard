@@ -32,6 +32,12 @@ from backend import electricity_provider as _electricity_provider  # noqa: F401,
 # Start the single PJ-1103 local polling bridge using the existing MQTT client.
 from backend import pj1103_electricity_bridge as _pj1103_electricity_bridge  # noqa: F401,E402
 
+# Persist successful results from that existing worker and expose history/billing.
+from backend import electricity_history as _electricity_history  # noqa: F401,E402
+from backend import electricity_history_hook as _electricity_history_hook  # noqa: F401,E402
+from backend import electricity_status_history as _electricity_status_history  # noqa: F401,E402
+from backend import electricity_summary_projection as _electricity_summary_projection  # noqa: F401,E402
+
 # Subscribe the existing client to the retained electricity state for restart
 # fallback. Current in-process bridge state remains authoritative.
 from backend import runtime_electricity_mqtt as _runtime_electricity_mqtt  # noqa: F401,E402
