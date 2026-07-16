@@ -37,6 +37,7 @@ from backend import electricity_history as _electricity_history  # noqa: F401,E4
 from backend import electricity_history_hook as _electricity_history_hook  # noqa: F401,E402
 from backend import electricity_status_history as _electricity_status_history  # noqa: F401,E402
 from backend import electricity_summary_projection as _electricity_summary_projection  # noqa: F401,E402
+from backend import electricity_history_coverage as _electricity_history_coverage  # noqa: F401,E402
 
 # Subscribe the existing client to the retained electricity state for restart
 # fallback. Current in-process bridge state remains authoritative.
