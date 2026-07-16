@@ -1,29 +1,30 @@
 (() => {
   'use strict';
+  if (window.__dashboardPageChromeInstalled) return;
+  window.__dashboardPageChromeInstalled = true;
 
   const PAGE_CHROME = Object.freeze({
-    overview: {title: 'Overview', subtitle: 'Live condo controls, climate, air quality and system health'},
-    lighting: {title: 'Lighting', subtitle: 'Control Sonoff switches and condo lighting zones'},
-    climate: {title: 'PM2.5 & Climate', subtitle: 'Indoor air quality, temperature and humidity monitoring'},
-    entertainment: {title: 'Entertainment', subtitle: 'LG TV status and remote controls'},
-    presence: {title: 'Presence & Automation', subtitle: 'Presence state and Home Assistant automation activity'},
-    system: {title: 'System', subtitle: 'Dashboard services, devices and integration health'},
-    topology: {title: 'Topology', subtitle: 'Physical sites and live data dependencies across Condo and Home'},
-    electricity: {title: 'Electricity Monitoring', subtitle: 'Live PJ-1103 meter data from the condo'},
-    camera: {title: 'Camera', subtitle: 'Condo camera availability and connection status'}
+    overview: {title: 'Overview', subtitle: 'Live condo controls and status'},
+    lighting: {title: 'Lighting', subtitle: 'Lighting control'},
+    climate: {title: 'PM2.5 & Air Quality', subtitle: 'Indoor air quality'},
+    entertainment: {title: 'Entertainment', subtitle: 'TV and remote control'},
+    presence: {title: 'Presence & Automation', subtitle: 'Presence and last-seen status'},
+    system: {title: 'System', subtitle: 'System health and services'},
+    topology: {title: 'Topology', subtitle: 'Live dependency graph'},
+    electricity: {title: 'Electricity Monitoring', subtitle: 'Real-time electricity monitoring'},
+    camera: {title: 'Camera', subtitle: 'Live camera monitoring'}
   });
 
   function applyPageChrome(page) {
     const chrome = PAGE_CHROME[page] || {title: 'Dashboard', subtitle: 'Smart Condo Dashboard'};
     const title = document.getElementById('pageTitle');
-    const subtitle = document.getElementById('pageSubtitle') || title?.nextElementSibling;
+    const subtitle = document.getElementById('pageSubtitle');
     if (title) title.textContent = chrome.title;
     if (subtitle) subtitle.textContent = chrome.subtitle;
   }
 
   const originalNav = window.nav;
   const originalRenderPage = window.renderPage;
-
   window.applyPageChrome = applyPageChrome;
   window.nav = function isolatedPageNav(page) {
     originalNav(page);
@@ -33,9 +34,6 @@
     originalRenderPage(page);
     applyPageChrome(page);
   };
-
-  document.querySelectorAll('[data-nav]').forEach(button => {
-    button.onclick = () => window.nav(button.dataset.nav);
-  });
+  document.querySelectorAll('[data-nav]').forEach(button => { button.onclick = () => window.nav(button.dataset.nav); });
   applyPageChrome(window.currentPage());
 })();
