@@ -1,0 +1,1 @@
+.presence-last-seen strong{display:flex;align-items:flex-end;flex-direction:column;gap:3px;text-align:right}.presence-last-seen small{display:block;color:var(--muted);font-size:10px;font-weight:600;white-space:normal}.presence-name{text-transform:none;font-size:14px;font-weight:850}@media(max-width:640px){.presence-last-seen strong{align-items:flex-start;text-align:left}}
