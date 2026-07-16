@@ -2,6 +2,17 @@
 
 The dashboard calculates estimates only from `ELECTRICITY_TARIFF_CONFIG_JSON`. It does not ship with or claim any official current utility tariff.
 
+## Interactive helper
+
+Run on TinkerBoard:
+
+```bash
+/opt/smart-condo-dashboard-run/venv/bin/python \
+  /opt/smart-condo-dashboard/scripts/generate_electricity_tariff_config.py
+```
+
+The helper validates the effective date, progressive tier ordering, nonnegative numeric values, final unlimited tier, and VAT range. It prints one compact environment line. It does not edit `/etc/default` automatically.
+
 Example structure:
 
 ```json
@@ -31,7 +42,13 @@ Validation rules:
 - VAT must be between 0 and 100.
 - Invalid or missing configuration disables billing without stopping the dashboard.
 
-History configuration:
+Read-only status:
+
+```text
+GET /api/electricity/tariff/status
+```
+
+## History configuration
 
 ```text
 ELECTRICITY_HISTORY_RETENTION_DAYS=400
@@ -39,4 +56,26 @@ ELECTRICITY_HISTORY_PATH=/root/.smart-condo-dashboard/electricity_history.jsonl
 ELECTRICITY_HISTORY_MAX_GAP_SEC=900
 ```
 
+The history API reports the actual first and last stored sample, requested duration, available duration, coverage percentage, and whether the requested range is complete. It never fabricates samples before collection began.
+
 The history file stores only timestamp, voltage, current, power, total energy, source, and health. It does not store credentials, Tuya Local Key, raw DPS, MQTT credentials, or authentication data.
+
+## Optional legitimate backfill investigation
+
+The one-time helper checks an existing `sensor_history.jsonl` and, when Home Assistant plus explicit electricity entity mappings are already configured, the Home Assistant recorder history endpoint.
+
+Dry-run only:
+
+```bash
+/opt/smart-condo-dashboard-run/venv/bin/python \
+  /opt/smart-condo-dashboard/scripts/import_electricity_history.py
+```
+
+Apply only reviewed, non-duplicate rows:
+
+```bash
+/opt/smart-condo-dashboard-run/venv/bin/python \
+  /opt/smart-condo-dashboard/scripts/import_electricity_history.py --apply
+```
+
+Home Assistant imports are marked `home_assistant_import`; existing timestamps are skipped. No cloud API is enabled automatically. When no legitimate source is available, the helper reports `no_backfill_source_available`.
