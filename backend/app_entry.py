@@ -46,6 +46,7 @@ from backend import dashboard_settings as _dashboard_settings  # noqa: F401,E402
 from backend import dashboard_settings_migration as _dashboard_settings_migration  # noqa: F401,E402
 from backend import dashboard_tariff_sync as _dashboard_tariff_sync  # noqa: F401,E402
 from backend import dashboard_settings_runtime as _dashboard_settings_runtime  # noqa: F401,E402
+from backend import dashboard_settings_hotfix09 as _dashboard_settings_hotfix09  # noqa: F401,E402
 
 # Subscribe the existing client to the retained electricity state for restart
 # fallback. Current in-process bridge state remains authoritative.
