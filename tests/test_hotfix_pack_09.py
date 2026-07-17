@@ -26,15 +26,21 @@ class HotfixPack09Tests(unittest.TestCase):
             "tariff_check_duration_ms": 0.4,
             "history_prune_duration_ms": 2.1,
         }
-        hotfix._save_runtime_state(snapshot)
-        self.assertEqual(settings._load_maintenance(), snapshot)
-        status = hotfix.electricity_status_from_runtime()
-        self.assertEqual(status["coverage_percent"], 48.5)
-        self.assertEqual(status["history_starts"], 100)
-        self.assertEqual(status["history_ends"], 200)
-        self.assertEqual(status["tariff_version"], "manual-1")
-        self.assertEqual(status["projection_status"], "available")
-        self.assertEqual(status["history_import_duration_ms"], 12.3)
+        original = hotfix._runtime_state()
+        try:
+            with patch.object(hotfix, "_ORIGINAL_SAVE", return_value=None):
+                hotfix._save_runtime_state(snapshot)
+            self.assertEqual(settings._load_maintenance(), snapshot)
+            status = hotfix.electricity_status_from_runtime()
+            self.assertEqual(status["coverage_percent"], 48.5)
+            self.assertEqual(status["history_starts"], 100)
+            self.assertEqual(status["history_ends"], 200)
+            self.assertEqual(status["tariff_version"], "manual-1")
+            self.assertEqual(status["projection_status"], "available")
+            self.assertEqual(status["history_import_duration_ms"], 12.3)
+        finally:
+            with patch.object(hotfix, "_ORIGINAL_SAVE", return_value=None):
+                hotfix._save_runtime_state(original)
 
     def test_import_invocation_matches_manual_layout(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -45,7 +51,7 @@ class HotfixPack09Tests(unittest.TestCase):
                 argv, script, cwd = hotfix._history_import_invocation(False)
             self.assertEqual(cwd, source)
             self.assertEqual(script, source / "scripts" / "import_electricity_history.py")
-            self.assertEqual(argv[0], os.path.realpath(os.sys.executable) if False else os.sys.executable)
+            self.assertEqual(argv[0], os.sys.executable)
             self.assertEqual(argv[1], str(script))
             self.assertNotIn("--apply", argv)
 
