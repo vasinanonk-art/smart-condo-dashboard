@@ -43,6 +43,7 @@ from backend import electricity_billing_cycle as _electricity_billing_cycle  # n
 # Load persistent non-secret settings after electricity modules so saved values can
 # replace environment-only tariff and billing configuration without a restart.
 from backend import dashboard_settings as _dashboard_settings  # noqa: F401,E402
+from backend import dashboard_settings_migration as _dashboard_settings_migration  # noqa: F401,E402
 from backend import dashboard_settings_runtime as _dashboard_settings_runtime  # noqa: F401,E402
 
 # Subscribe the existing client to the retained electricity state for restart
