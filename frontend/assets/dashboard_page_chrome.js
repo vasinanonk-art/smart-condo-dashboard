@@ -12,7 +12,8 @@
     system: {title: 'System', subtitle: 'System health and services'},
     topology: {title: 'Topology', subtitle: 'Live dependency graph'},
     electricity: {title: 'Electricity Monitoring', subtitle: 'Real-time electricity monitoring'},
-    camera: {title: 'Camera', subtitle: 'Live camera monitoring'}
+    camera: {title: 'Camera', subtitle: 'Live camera monitoring'},
+    settings: {title: 'Settings', subtitle: 'Dashboard configuration and maintenance'}
   });
 
   function applyPageChrome(page) {

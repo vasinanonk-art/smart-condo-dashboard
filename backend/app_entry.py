@@ -40,6 +40,13 @@ from backend import electricity_summary_projection as _electricity_summary_proje
 from backend import electricity_history_coverage as _electricity_history_coverage  # noqa: F401,E402
 from backend import electricity_billing_cycle as _electricity_billing_cycle  # noqa: F401,E402
 
+# Load persistent non-secret settings after electricity modules so saved values can
+# replace environment-only tariff and billing configuration without a restart.
+from backend import dashboard_settings as _dashboard_settings  # noqa: F401,E402
+from backend import dashboard_settings_migration as _dashboard_settings_migration  # noqa: F401,E402
+from backend import dashboard_tariff_sync as _dashboard_tariff_sync  # noqa: F401,E402
+from backend import dashboard_settings_runtime as _dashboard_settings_runtime  # noqa: F401,E402
+
 # Subscribe the existing client to the retained electricity state for restart
 # fallback. Current in-process bridge state remains authoritative.
 from backend import runtime_electricity_mqtt as _runtime_electricity_mqtt  # noqa: F401,E402
