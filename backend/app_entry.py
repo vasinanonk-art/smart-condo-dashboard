@@ -53,6 +53,7 @@ from backend import dashboard_polish_hotfix10 as _dashboard_polish_hotfix10  # n
 # worker. Trigger detection only queues pending actions; execution remains disabled.
 from backend import automation_core as _automation_core  # noqa: F401,E402
 from backend import automation_trigger_engine as _automation_trigger_engine  # noqa: F401,E402
+from backend import automation_trigger_guard as _automation_trigger_guard  # noqa: F401,E402
 
 # Subscribe the existing client to the retained electricity state for restart
 # fallback. Current in-process bridge state remains authoritative.
