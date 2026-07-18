@@ -3,7 +3,7 @@
   if (window.__dashboardTariffSyncInstalled) return;
   window.__dashboardTariffSyncInstalled = true;
 
-  const state = {status:null,candidate:null,settings:null,csrf:null,busy:false};
+  const state = {status:null,candidate:null,settings:null,csrf:null,busy:false,loading:false};
   const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
   const when = ts => ts ? new Date(Number(ts) * 1000).toLocaleString() : 'Not available';
   const valueText = value => typeof value === 'object' ? JSON.stringify(value) : String(value ?? '—');
@@ -26,15 +26,21 @@
   }
 
   async function load() {
-    const results = await Promise.allSettled([
-      request('/api/tariff/status'),
-      request('/api/tariff/candidate'),
-      request('/api/settings')
-    ]);
-    if (results[0].status === 'fulfilled') state.status = results[0].value;
-    if (results[1].status === 'fulfilled') state.candidate = results[1].value;
-    if (results[2].status === 'fulfilled') state.settings = results[2].value;
-    render();
+    if (state.loading) return;
+    state.loading = true;
+    try {
+      const results = await Promise.allSettled([
+        request('/api/tariff/status'),
+        request('/api/tariff/candidate'),
+        request('/api/settings')
+      ]);
+      if (results[0].status === 'fulfilled') state.status = results[0].value;
+      if (results[1].status === 'fulfilled') state.candidate = results[1].value;
+      if (results[2].status === 'fulfilled') state.settings = results[2].value;
+      render();
+    } finally {
+      state.loading = false;
+    }
   }
 
   function comparisonHtml() {
@@ -97,6 +103,8 @@
       await action();
       document.getElementById('tariffSyncPanel')?.remove();
       await load();
+    } catch (error) {
+      message(error.message || 'Tariff operation failed.',true);
     } finally {
       state.busy = false;
     }
@@ -115,8 +123,8 @@
           tariff_sync_interval_days:Number(document.getElementById('tariffCheckInterval').value || 1),
           tariff_provider:document.getElementById('tariffProvider').value
         };
-        await request('/api/settings','PUT',config);
-        state.settings = config;
+        const saved = await request('/api/settings','PUT',config);
+        state.settings = saved.settings || config;
         message('Tariff check settings saved.');
       } catch (error) { message(error.message || 'Save failed.',true); }
     });
@@ -132,7 +140,7 @@
   }
 
   const observer = new MutationObserver(() => {
-    if (document.getElementById('electricitySettingsForm') && !document.getElementById('tariffSyncPanel')) load();
+    if (!state.loading && document.getElementById('electricitySettingsForm') && !document.getElementById('tariffSyncPanel')) load();
   });
   observer.observe(document.documentElement,{childList:true,subtree:true});
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded',load); else load();
