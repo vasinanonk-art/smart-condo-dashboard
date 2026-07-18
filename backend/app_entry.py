@@ -54,8 +54,9 @@ from backend import automatic_tariff_sync as _automatic_tariff_sync  # noqa: F40
 from backend import automatic_tariff_sync_runtime as _automatic_tariff_sync_runtime  # noqa: F401,E402
 
 # EPIC 07.1 installs the real allow-listed official MEA provider, reviewed future
-# tariff scheduling, source archive APIs, and billing-cycle tariff segmentation.
+# tariff scheduling, source archive APIs, migration, and billing segmentation.
 from backend import mea_tariff_provider as _mea_tariff_provider  # noqa: F401,E402
+from backend import mea_tariff_migration as _mea_tariff_migration  # noqa: F401,E402
 from backend import mea_tariff_runtime as _mea_tariff_runtime  # noqa: F401,E402
 from backend import tariff_segment_billing as _tariff_segment_billing  # noqa: F401,E402
 
