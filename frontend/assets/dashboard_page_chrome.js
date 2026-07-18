@@ -13,6 +13,7 @@
     topology: {title: 'Topology', subtitle: 'Live dependency graph'},
     electricity: {title: 'Electricity Monitoring', subtitle: 'Real-time electricity monitoring'},
     camera: {title: 'Camera', subtitle: 'Live camera monitoring'},
+    history: {title: 'Electricity History', subtitle: 'History coverage and maintenance'},
     settings: {title: 'Settings', subtitle: 'Dashboard configuration and maintenance'}
   });
 
