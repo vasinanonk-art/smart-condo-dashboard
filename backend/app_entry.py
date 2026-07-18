@@ -50,10 +50,14 @@ from backend import dashboard_settings_hotfix09 as _dashboard_settings_hotfix09 
 from backend import dashboard_polish_hotfix10 as _dashboard_polish_hotfix10  # noqa: F401,E402
 
 # EPIC 07 reuses the existing daily maintenance thread for safe tariff checks.
-# Current providers are manual/local only; official provider placeholders never
-# perform request-path network access and candidates are never auto-applied.
 from backend import automatic_tariff_sync as _automatic_tariff_sync  # noqa: F401,E402
 from backend import automatic_tariff_sync_runtime as _automatic_tariff_sync_runtime  # noqa: F401,E402
+
+# EPIC 07.1 installs the real allow-listed official MEA provider, reviewed future
+# tariff scheduling, source archive APIs, and billing-cycle tariff segmentation.
+from backend import mea_tariff_provider as _mea_tariff_provider  # noqa: F401,E402
+from backend import mea_tariff_runtime as _mea_tariff_runtime  # noqa: F401,E402
+from backend import tariff_segment_billing as _tariff_segment_billing  # noqa: F401,E402
 
 # Register the declarative automation core and its single non-executing trigger
 # worker. HOTFIX 13 replaces the fixed one-second loop with bounded scheduling.
