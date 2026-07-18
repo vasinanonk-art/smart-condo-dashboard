@@ -32,6 +32,12 @@
     document.querySelectorAll('[data-nav="history"]').forEach(button=>button.onclick=()=>window.nav('history'));
   }
 
+  function normalizeTimezoneLabels(){
+    const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+    const nodes=[];while(walker.nextNode())nodes.push(walker.currentNode);
+    nodes.forEach(node=>{if(node.nodeValue&&node.nodeValue.includes('ICT'))node.nodeValue=node.nodeValue.replace(/\bICT\b/g,'Bangkok (UTC+7)');});
+  }
+
   function renderHeader(){
     const row=document.querySelector('.topbar .status-row');if(!row)return;
     let host=document.getElementById('dashboardCompactBadges');if(!host){host=document.createElement('div');host.id='dashboardCompactBadges';host.className='compact-status-badges';row.insertBefore(host,row.firstChild);}
@@ -75,7 +81,7 @@
     host.querySelectorAll('[data-history-action]').forEach(button=>button.onclick=async()=>{const action=button.dataset.historyAction;let url='/api/electricity/history/analyze',options={method:'POST'};if(action==='import'){if(!confirm('Import analyzed electricity history? A backup will be created.'))return;url='/api/electricity/history/import';options={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})};}if(action==='maintenance')url='/api/maintenance/run';const response=await fetch(url,options);const payload=await response.json();document.getElementById('historyActionResult').textContent=payload.ok===false?(payload.error||'Action failed'):'Completed';await load();});
   }
 
-  function renderAll(){ensureHistoryPage();renderHeader();renderNotifications();renderSettings();renderElectricity();renderHistory();document.querySelectorAll('[data-nav]').forEach(button=>button.onclick=()=>window.nav(button.dataset.nav));}
+  function renderAll(){ensureHistoryPage();renderHeader();renderNotifications();renderSettings();renderElectricity();renderHistory();normalizeTimezoneLabels();document.querySelectorAll('[data-nav]').forEach(button=>button.onclick=()=>window.nav(button.dataset.nav));}
 
   const originalRenderPage=window.renderPage;
   window.renderPage=function polishedRender(page=window.currentPage()){originalRenderPage(page);setTimeout(renderAll,0);};
