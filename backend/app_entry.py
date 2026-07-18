@@ -50,10 +50,11 @@ from backend import dashboard_settings_hotfix09 as _dashboard_settings_hotfix09 
 from backend import dashboard_polish_hotfix10 as _dashboard_polish_hotfix10  # noqa: F401,E402
 
 # Register the declarative automation core and its single non-executing trigger
-# worker. Trigger detection only queues pending actions; execution remains disabled.
+# worker. HOTFIX 13 replaces the fixed one-second loop with bounded scheduling.
 from backend import automation_core as _automation_core  # noqa: F401,E402
 from backend import automation_trigger_engine as _automation_trigger_engine  # noqa: F401,E402
 from backend import automation_trigger_guard as _automation_trigger_guard  # noqa: F401,E402
+from backend import automation_trigger_hotfix13 as _automation_trigger_hotfix13  # noqa: F401,E402
 
 # Subscribe the existing client to the retained electricity state for restart
 # fallback. Current in-process bridge state remains authoritative.
