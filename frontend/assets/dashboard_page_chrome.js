@@ -14,6 +14,7 @@
     electricity: {title: 'Electricity Monitoring', subtitle: 'Real-time electricity monitoring'},
     camera: {title: 'Camera', subtitle: 'Live camera monitoring'},
     history: {title: 'Electricity History', subtitle: 'History coverage and maintenance'},
+    automation: {title: 'Automation', subtitle: 'Rule validation and safe simulation'},
     settings: {title: 'Settings', subtitle: 'Dashboard configuration and maintenance'}
   });
 
