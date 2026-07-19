@@ -62,6 +62,9 @@ from backend import tariff_segment_billing as _tariff_segment_billing  # noqa: F
 # HOTFIX 14 accepts the live generic Thai MEA category page and exposes safe parser diagnostics.
 from backend import mea_tariff_hotfix14 as _mea_tariff_hotfix14  # noqa: F401,E402
 from backend import mea_tariff_hotfix14_runtime as _mea_tariff_hotfix14_runtime  # noqa: F401,E402
+# HOTFIX 16 follows the official residential detail link and parses only Type 1.2.
+from backend import mea_tariff_hotfix16 as _mea_tariff_hotfix16  # noqa: F401,E402
+from backend import mea_tariff_hotfix16_runtime as _mea_tariff_hotfix16_runtime  # noqa: F401,E402
 
 # Register the declarative automation core and its single non-executing trigger
 # worker. HOTFIX 13 replaces the fixed one-second loop with bounded scheduling.
