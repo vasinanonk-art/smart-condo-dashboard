@@ -56,6 +56,7 @@ fi
 
 "$PY" -m pip install --upgrade pip
 "$PY" -m pip install -r "$APP_RUN/backend/requirements.txt"
+"$PY" -c "from pywebostv.connection import WebOSClient; assert WebOSClient.PROMPTED == 1 and WebOSClient.REGISTERED == 2"
 
 install -m 0644 "$APP_SRC/systemd/smart-condo-dashboard.service" /etc/systemd/system/smart-condo-dashboard.service
 
