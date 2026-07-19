@@ -69,6 +69,8 @@ from backend import mea_tariff_hotfix14_runtime as _mea_tariff_hotfix14_runtime 
 # HOTFIX 16 follows the official residential detail link and parses only Type 1.2.
 from backend import mea_tariff_hotfix16 as _mea_tariff_hotfix16  # noqa: F401,E402
 from backend import mea_tariff_hotfix16_runtime as _mea_tariff_hotfix16_runtime  # noqa: F401,E402
+# HOTFIX 17 uses bounded DOM blocks for the live residential detail structure.
+from backend import mea_tariff_hotfix17 as _mea_tariff_hotfix17  # noqa: F401,E402
 
 # Register the declarative automation core and its single non-executing trigger
 # worker. HOTFIX 13 replaces the fixed one-second loop with bounded scheduling.
