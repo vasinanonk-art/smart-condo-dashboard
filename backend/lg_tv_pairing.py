@@ -1,4 +1,4 @@
-"""EPIC 08: secure LG webOS pairing and client-key management.
+"""Secure LG webOS pairing and client-key management.
 
 Pairing is bounded to one background job. API responses, diagnostics and logs never
 contain the client key. Existing MQTT topics and LG command routes are untouched.
@@ -15,7 +15,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import Body
 from fastapi.responses import JSONResponse
@@ -128,10 +128,7 @@ def _atomic_write_key(value: str) -> Optional[Path]:
         os.chmod(KEY_PATH, 0o600)
         return backup
     except Exception:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
+        temporary.unlink(missing_ok=True)
         if backup and backup.exists():
             os.replace(backup, KEY_PATH)
             os.chmod(KEY_PATH, 0o600)
@@ -149,11 +146,7 @@ def _restore_key(backup: Optional[Path], previous: Optional[str]) -> None:
 
 
 def _install_legacy_loader() -> bool:
-    """Replace only the literal assignment with env/file/fallback loading.
-
-    A timestamped source backup is retained. The fallback literal remains in the
-    patched expression solely for migration compatibility and is never logged.
-    """
+    """Patch only the literal assignment while preserving a migration fallback."""
     try:
         source = LEGACY_SCRIPT.read_text(encoding="utf-8")
     except OSError:
@@ -204,7 +197,8 @@ def migrate_legacy_key() -> bool:
         return True
     if KEY_PATH.exists():
         SECRET_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(SECRET_DIR, 0o700); os.chmod(KEY_PATH, 0o600)
+        os.chmod(SECRET_DIR, 0o700)
+        os.chmod(KEY_PATH, 0o600)
         _install_legacy_loader()
         return True
     legacy = _legacy_key()
@@ -222,7 +216,7 @@ def migrate_legacy_key() -> bool:
 
 def _webos_register(store: Dict[str, Any], cancel: Optional[threading.Event] = None) -> str:
     from pywebostv.connection import WebOSClient
-    from pywebostv.model import Registration
+
     client = WebOSClient(TV_IP, secure=True)
     client.connect()
     deadline = time.monotonic() + PAIR_TIMEOUT_SEC
@@ -232,11 +226,11 @@ def _webos_register(store: Dict[str, Any], cancel: Optional[threading.Event] = N
             raise RuntimeError("cancelled")
         if time.monotonic() >= deadline:
             raise TimeoutError("pairing_timeout")
-        if registration == Registration.PROMPTED:
+        if registration == WebOSClient.PROMPTED:
             prompted = True
             with _STATE_LOCK:
                 _JOB.update({"state": "prompted", "updated_ts": int(time.time())})
-        elif registration == Registration.REGISTERED:
+        elif registration == WebOSClient.REGISTERED:
             return "registered"
     return "prompted" if prompted else "connection_failed"
 
@@ -244,9 +238,15 @@ def _webos_register(store: Dict[str, Any], cancel: Optional[threading.Event] = N
 def _validate_key(value: str) -> bool:
     store = {"client_key": value}
     try:
-        return _webos_register(store) == "registered" and store.get("client_key") == value
+        valid = _webos_register(store) == "registered" and store.get("client_key") == value
+        if valid:
+            with _STATE_LOCK:
+                _RUNTIME["last_connection_error"] = None
+                _RUNTIME["last_error"] = None
+        return valid
     except Exception as exc:
-        _RUNTIME["last_connection_error"] = _safe_error(exc)
+        with _STATE_LOCK:
+            _RUNTIME["last_connection_error"] = _safe_error(exc)
         return False
 
 
@@ -261,7 +261,7 @@ def _pair_worker() -> None:
         if result == "registered" and isinstance(store.get("client_key"), str) and store["client_key"].strip():
             with _STATE_LOCK:
                 _JOB.update({"state": "registered", "result": "registered", "pending_key": store["client_key"].strip(), "updated_ts": int(time.time())})
-                _RUNTIME.update({"last_pair_success": int(time.time()), "last_error": None, "last_pairing_result": "registered"})
+                _RUNTIME.update({"last_pair_success": int(time.time()), "last_error": None, "last_connection_error": None, "last_pairing_result": "registered"})
             return
         error = result
     except Exception as exc:
@@ -362,7 +362,7 @@ def pairing_save(payload: Dict[str, Any] = Body(default={})):
         return JSONResponse({"detail": "save_or_reconnect_failed", "rolled_back": True}, status_code=503)
     with _STATE_LOCK:
         _JOB.update({"state": "idle", "pending_key": None, "result": "saved", "error": None, "updated_ts": int(time.time())})
-        _RUNTIME.update({"last_pair_success": int(time.time()), "last_error": None, "last_pairing_result": "saved"})
+        _RUNTIME.update({"last_pair_success": int(time.time()), "last_error": None, "last_connection_error": None, "last_pairing_result": "saved"})
     return {"ok": True, "saved": True, "service_active": True, "connection_status": "connected", "rolled_back": False}
 
 

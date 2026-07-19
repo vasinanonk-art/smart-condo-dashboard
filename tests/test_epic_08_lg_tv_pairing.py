@@ -64,11 +64,12 @@ def test_pairing_is_single_bounded_background_job():
     assert 'pairing_rate_limited' in request
 
 
-def test_register_flow_is_secure_and_supports_prompted_registered_timeout_rejected():
+def test_register_flow_is_secure_and_uses_pywebostv_089_constants():
     register = SOURCE.split('def _webos_register', 1)[1].split('def _validate_key', 1)[0]
     assert 'secure=True' in register
-    assert 'Registration.PROMPTED' in register
-    assert 'Registration.REGISTERED' in register
+    assert 'WebOSClient.PROMPTED' in register
+    assert 'WebOSClient.REGISTERED' in register
+    assert 'from pywebostv.model import Registration' not in register
     assert 'PAIR_TIMEOUT_SEC' in register
     for result in ('prompted', 'registered', 'timeout', 'rejected', 'connection_failed'):
         assert result in SOURCE
