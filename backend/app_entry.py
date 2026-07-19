@@ -26,6 +26,10 @@ from backend import runtime_ha_lighting_stable as _runtime_ha_lighting_stable  #
 # Install the final MQTT callback owner for LG TV state and heartbeat.
 from backend import runtime_lg_tv_mqtt as _runtime_lg_tv_mqtt  # noqa: F401,E402
 
+# EPIC 08 manages LG webOS pairing in one bounded background job and stores the
+# client key outside source code. It does not change MQTT topics or TV commands.
+from backend import lg_tv_pairing as _lg_tv_pairing  # noqa: F401,E402
+
 # Register the read-only electricity provider and status endpoint.
 from backend import electricity_provider as _electricity_provider  # noqa: F401,E402
 
