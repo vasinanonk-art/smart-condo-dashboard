@@ -29,6 +29,8 @@ from backend import runtime_lg_tv_mqtt as _runtime_lg_tv_mqtt  # noqa: F401,E402
 # EPIC 08 manages LG webOS pairing in one bounded background job and stores the
 # client key outside source code. It does not change MQTT topics or TV commands.
 from backend import lg_tv_pairing as _lg_tv_pairing  # noqa: F401,E402
+# pywebostv 0.8.9 emits WebOSClient registration constants (1/2), not model enums.
+from backend import lg_tv_pairing_hotfix as _lg_tv_pairing_hotfix  # noqa: F401,E402
 
 # Register the read-only electricity provider and status endpoint.
 from backend import electricity_provider as _electricity_provider  # noqa: F401,E402
