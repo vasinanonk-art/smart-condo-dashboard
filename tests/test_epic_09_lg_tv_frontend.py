@@ -8,26 +8,28 @@ REMOTE=(ROOT/'frontend'/'assets'/'dashboard_lg_remote.js').read_text(encoding='u
 
 
 def test_live_status_values_and_stable_mount():
-    for value in ('lgStatusValue','lgAppValue','lgInputValue','lgVolumeValue','lgMuteValue','lgUpdateValue'):
-        assert value in UI
-    assert 'if(S.mounted)return' in UI
+    for item in ('lgTvStatus','lgTvApp','lgTvInput','lgTvVolume','lgTvMute','lgTvUpdated'):
+        assert item in UI
+    assert 'function mountLgTvPage()' in UI
+    assert 'if (state.mounted)' in UI
     assert 'outerHTML' not in UI
-    assert '.remove()' not in UI.replace("document.getElementById('lgPairingCard')?.remove();",'')
+    assert 'MutationObserver' not in UI
 
 
 def test_background_polling_keeps_values_and_is_single():
-    assert 'S.timer=setInterval' in UI
-    assert 'if(S.timer){clearInterval(S.timer);S.timer=null;}' in UI
+    assert 'state.pollTimer = setTimeout' in UI
+    assert 'setInterval' not in UI
     assert "document.addEventListener('visibilitychange'" in UI
     assert "window.addEventListener('beforeunload'" in UI
-    assert 'S.status=status' in UI
-    assert 'innerHTML=\'\'' not in UI
+    assert 'state.status = status' in UI
+    assert "innerHTML = ''" not in UI
 
 
 def test_stale_response_and_diagnostics():
-    assert 'if(seq<S.applied){S.ignored++;return;}' in UI
-    assert 'window.dashboardLgTvDiagnostics' in UI
-    for field in ('active_pollers','last_status_fetch_started','last_status_fetch_completed','ignored_stale_responses','current_poll_interval_ms','status_age_sec','pairing_job_poll_active','command_in_progress','last_ui_error'):
+    assert 'sequence < state.appliedSequence' in UI
+    assert 'state.ignoredStale += 1' in UI
+    assert 'window.dashboardLgDiagnostics' in UI
+    for field in ('active_mounts','active_pollers','legacy_renderer_detected','duplicate_cards','css_version','last_refresh','status_age'):
         assert field in UI
     assert 'client_key' not in UI.lower()
 
@@ -35,26 +37,29 @@ def test_stale_response_and_diagnostics():
 def test_pairing_polish_and_actions():
     for text in ('Paired & Connected','LG TV is paired and ready','Repair Pairing','Test Connection','Forget Pairing','Save & Reconnect','Cancel Pairing'):
         assert text in UI
-    assert 'Available only after a new key is registered.' in UI
+    assert 'Available after a new key is registered.' in UI
     assert '/api/lg-tv/pairing/test' in UI and '/api/lg-tv/pairing/forget' in UI
     assert "confirm('Forget the saved LG TV pairing key?" in UI
 
 
 def test_manual_refresh_and_individual_command_disable():
     assert '/api/lg-tv/status/refresh' in UI
-    assert 'button.disabled=true' in UI
-    assert 'if(button)button.disabled=true' in UI
-    assert 'setTimeout(()=>req' in UI
+    assert 'button.disabled = true' in UI
+    assert 'if (button) button.disabled = true' in UI
+    assert "setTimeout(() => request('/api/lg-tv/status/refresh'" in UI
 
 
-def test_relative_time_and_unavailable_mute():
+def test_relative_time_and_null_audio_rendering():
     assert 'Just now' in UI and 'sec ago' in UI and 'min ago' in UI
-    assert "'Unavailable'" in UI
-    assert "s.audio?.muted===true?'Muted':s.audio?.muted===false?'Unmuted':'Unavailable'" in UI
+    assert "s.audio?.muted === true ? 'Muted'" in UI
+    assert "s.audio?.muted === false ? 'Unmuted'" in UI
+    assert "Math.round(Number(s.audio.volume))" in UI
 
 
 def test_responsive_and_accessibility():
-    assert '@media(max-width:980px)' in CSS and '@media(max-width:620px)' in CSS
+    assert '@media(max-width:1100px)' in CSS
+    assert '@media(max-width:760px)' in CSS
+    assert '@media(max-width:480px)' in CSS
     assert 'grid-template-columns:repeat(3' in CSS
     assert 'aria-live="polite"' in UI
     assert 'min-height' in CSS
