@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "backend" / "lg_tv_pairing.py").read_text(encoding="utf-8")
 ENTRY = (ROOT / "backend" / "app_entry.py").read_text(encoding="utf-8")
 INDEX = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
-UI = (ROOT / "frontend" / "assets" / "dashboard_lg_pairing.js").read_text(encoding="utf-8")
+UI = (ROOT / "frontend" / "assets" / "dashboard_lg_status.js").read_text(encoding="utf-8")
 
 
 def test_status_and_diagnostics_routes_exist():
@@ -93,13 +93,14 @@ def test_legacy_migration_preserves_backup_and_does_not_print_key():
     assert 'log.info' not in lowered and 'log.warning' not in lowered
 
 
-def test_ui_pairing_flow_and_remote_layout_preserved():
+def test_pairing_flow_is_preserved_in_consolidated_ui():
     assert 'dashboard_lg_remote.js' in INDEX
-    assert 'dashboard_lg_pairing.js' in INDEX
-    for label in ('Request New Key', 'Check Pairing Status', 'Save & Reconnect', 'Cancel Pairing'):
+    assert 'dashboard_lg_status.js' in INDEX
+    assert 'dashboard_lg_pairing.js' not in INDEX
+    for label in ('Repair Pairing', 'Test Connection', 'Save & Reconnect', 'Cancel Pairing'):
         assert label in UI
     assert 'Approve the connection request on the LG TV' in UI
-    assert "setInterval(refresh, 2000)" in UI
+    assert "['connecting', 'prompted']" in UI
 
 
 def test_regression_forbidden_integrations_untouched():
