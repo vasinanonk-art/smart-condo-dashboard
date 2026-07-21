@@ -20,7 +20,7 @@ def test_real_production_bundles_mount_one_lg_ui():
             </div>
           </section>
         """)
-        page.add_init_script("""
+        page.evaluate("""
           window.safeText = value => String(value ?? '');
           window.currentPage = () => 'entertainment';
           window.tv = () => Promise.resolve({ok:true});
@@ -28,12 +28,13 @@ def test_real_production_bundles_mount_one_lg_ui():
         page.route("**/api/**", lambda route: route.fulfill(
             status=200,
             content_type="application/json",
-            body='{"online":true,"paired":true,"connection_state":"connected","service_active":true,"current_app":{"id":"youtube.leanback.v4","name":"YouTube"},"current_input":{"id":"webos","name":"App / webOS"},"audio":{"volume":18,"muted":false,"sound_output":"tv_speaker"},"device":{"name":"Living Room TV","model":"OLED","product_name":"LG webOS TV","software_version":"1.0","firmware_version":"2.0","webos_version":"24"},"last_update_ts":1,"last_success_ts":1,"data_age_sec":0,"key_source":"secure_file","state":"idle"}'
+            body='{"online":true,"paired":true,"connection_state":"connected","connection_status":"connected","service_active":true,"current_app":{"id":"youtube.leanback.v4","name":"YouTube"},"current_input":{"id":"webos","name":"App / webOS"},"audio":{"volume":18,"muted":false,"sound_output":"tv_speaker"},"device":{"name":"Living Room TV","model":"OLED","product_name":"LG webOS TV","software_version":"1.0","firmware_version":"2.0","webos_version":"24"},"last_update_ts":1,"last_success_ts":1,"data_age_sec":0,"key_source":"secure_file","state":"idle"}'
         ))
         page.add_script_tag(path=str(REMOTE))
         page.evaluate("window.renderEntertainment()")
         page.add_script_tag(path=str(STATUS))
         page.wait_for_selector("#lgTvPage")
+        page.wait_for_timeout(50)
 
         assert page.locator("#lgTvPage").count() == 1
         assert page.locator('[data-lg-card="status"]').count() == 1
