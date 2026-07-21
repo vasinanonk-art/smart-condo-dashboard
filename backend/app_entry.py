@@ -84,6 +84,8 @@ from backend import mea_tariff_hotfix19 as _mea_tariff_hotfix19  # noqa: F401,E4
 from backend import mea_tariff_hotfix19_runtime as _mea_tariff_hotfix19_runtime  # noqa: F401,E402
 # Final path guard admits only official tariff-detail families after context scoring.
 from backend import mea_tariff_hotfix19_filter as _mea_tariff_hotfix19_filter  # noqa: F401,E402
+# Bind the production provider to the same authoritative selector exercised by tests.
+from backend import mea_tariff_hotfix19_selector_runtime as _mea_tariff_hotfix19_selector_runtime  # noqa: F401,E402
 
 # Register the declarative automation core and its single non-executing trigger
 # worker. HOTFIX 13 replaces the fixed one-second loop with bounded scheduling.
