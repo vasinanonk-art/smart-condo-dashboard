@@ -32,7 +32,12 @@
     const host = document.getElementById('tvButtons');
     if (!host) return;
     bindOnce(host);
-    if (host.dataset.lgRemoteRendered === '1') return;
+
+    // The legacy dashboard renderer can replace host.innerHTML after this bundle has
+    // already set its dataset flag. Trust the real DOM shape, not the stale flag.
+    const validControls = host.querySelector('.lg-remote-sections') &&
+      !host.querySelector('.tv-status-card,[data-tv-command]');
+    if (host.dataset.lgRemoteRendered === '1' && validControls) return;
 
     const navigation = [
       '<span class="lg-remote-key empty"></span>', key('▲','up'), '<span class="lg-remote-key empty"></span>',
@@ -49,5 +54,6 @@
   }
 
   // Controls only. Telemetry and pairing are owned exclusively by mountLgTvPage().
+  window.renderLgRemoteControls = renderLgRemoteControls;
   window.renderEntertainment = renderLgRemoteControls;
 })();
