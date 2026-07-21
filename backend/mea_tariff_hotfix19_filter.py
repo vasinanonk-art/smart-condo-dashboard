@@ -1,8 +1,8 @@
 """Final HOTFIX PACK 19 link-path guard.
 
-Context identifies the residential row, but only official MEA tariff-detail path
-families are eligible for selection. This prevents unrelated service links inside
-the same DOM section from winning on inherited residential text.
+Residential context is used only for ranking. Eligibility is decided first from the
+canonical MEA URL so unrelated service/navigation links can never become tariff
+candidates through inherited nearby text.
 """
 from __future__ import annotations
 
@@ -16,41 +16,46 @@ _ALLOWED_DETAIL_PREFIXES = (
     "/our-services/service-rates/other/",
 )
 _REJECTED_SLUG_TOKENS = {
-    "electric", "vehicle", "ev", "station", "payment", "payments",
-    "producer", "producers", "meter", "meters", "deposit", "deposits",
-    "bill", "bills", "contact", "faq", "news", "download", "calculator",
-    "solar", "charging", "service-center", "service-centers",
+    "electric", "vehicle", "ev", "payment", "payments", "meter", "meters",
+    "deposit", "deposits", "producer", "producers", "bill", "bills",
+    "contact", "faq", "news", "download", "calculator", "solar", "charging",
+    "service-center", "service-centers",
 }
-_GENERIC_PATHS = {"", "/", "/our-services", "/our-services/"}
+
+
+def _normalized_path(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    return re.sub(r"/{2,}", "/", parsed.path or "/").lower()
+
+
+def is_valid_tariff_detail_path(url: str) -> bool:
+    """Return True only for a specific page in an official tariff-detail family."""
+    path = _normalized_path(url)
+    prefix = next((item for item in _ALLOWED_DETAIL_PREFIXES if path.startswith(item)), None)
+    if prefix is None:
+        return False
+    slug = path[len(prefix):].strip("/")
+    if not slug:
+        return False
+    tokens = {token for token in re.split(r"[/_.-]+", slug) if token}
+    return not bool(tokens & _REJECTED_SLUG_TOKENS)
 
 
 def strict_path_quality(url: str) -> int:
-    parsed = urllib.parse.urlsplit(url)
-    path = re.sub(r"/{2,}", "/", parsed.path or "/").lower()
-    if path in _GENERIC_PATHS:
+    """Reject non-tariff links before any residential context score is applied."""
+    if not is_valid_tariff_detail_path(url):
         return -100
-
-    prefix = next((item for item in _ALLOWED_DETAIL_PREFIXES if path.startswith(item)), None)
-    if prefix is None:
-        return -100
-
-    suffix = path[len(prefix):].strip("/")
-    if not suffix:
-        return -100
-    tokens = {token for token in re.split(r"[/_.-]+", suffix) if token}
-    if tokens & _REJECTED_SLUG_TOKENS:
-        return -100
-
-    # Both current production path families are first-class candidates. A specific
-    # detail slug is mandatory, so root/navigation/service landing links can never
-    # win solely because they inherit residential context from a shared container.
+    path = _normalized_path(url)
     score = 70
-    if prefix == "/our-services/service-rates/other/":
+    if path.startswith("/our-services/service-rates/other/"):
         score += 10
-    if "residential" in suffix or "home" in suffix:
+    slug = path.rsplit("/", 1)[-1]
+    if "residential" in slug or "home" in slug:
         score += 10
     return min(score, 100)
 
 
-# select_residential_detail_link resolves this module global at call time.
+# select_residential_detail_link resolves this module global at call time. Runtime
+# imports this guard after HOTFIX 19; tests import it explicitly to verify the exact
+# production registration path without weakening HTTPS/host/redirect validation.
 h19._path_quality = strict_path_quality

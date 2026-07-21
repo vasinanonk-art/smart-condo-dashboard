@@ -1,5 +1,5 @@
 from backend import mea_tariff_hotfix19 as h19
-from backend import mea_tariff_hotfix19_filter as h19_filter  # noqa: F401
+from backend import mea_tariff_hotfix19_filter as h19_filter
 from backend import mea_tariff_hotfix14 as h14
 
 INDEX_URL = "https://www.mea.or.th/our-services/tariff-calculation/other/evlowpriority"
@@ -49,6 +49,10 @@ def test_relative_url_resolution():
 
 def test_navigation_and_unrelated_links_are_filtered_after_scoring():
     html = '''<nav><a href="/">Home</a><a href="/our-services">Services</a></nav><section><h2>ประเภทที่ 1 บ้านอยู่อาศัย</h2><a href="/our-services/payment">รายละเอียด</a><a href="/our-services/electric-vehicle">More</a><a href="/our-services/tariff-calculation/other/HomeGood">ดูเนื้อหา</a></section>'''
+    assert not h19_filter.is_valid_tariff_detail_path("https://www.mea.or.th/our-services/electric-vehicle")
+    assert not h19_filter.is_valid_tariff_detail_path("https://www.mea.or.th/our-services/payment")
+    assert not h19_filter.is_valid_tariff_detail_path("https://www.mea.or.th/our-services")
+    assert h19_filter.is_valid_tariff_detail_path("https://www.mea.or.th/our-services/tariff-calculation/other/HomeGood")
     result = _select(html)
     assert result["url"].endswith("/HomeGood")
     assert h14._SAFE_DEBUG["anchor_count"] == 5
@@ -63,6 +67,8 @@ def test_multiple_generic_labels_inside_same_residential_section():
 
 def test_both_production_tariff_path_families_are_supported():
     html = '''<main><section><h2>ประเภทที่ 1 บ้านอยู่อาศัย</h2><a href="/our-services/tariff-calculation/other/HomeLegacy">รายละเอียด</a></section><section><h2>ประเภทที่ 1 บ้านอยู่อาศัย</h2><a href="/our-services/service-rates/other/D5xEaEwgU">ดูเนื้อหา</a></section></main>'''
+    assert h19_filter.is_valid_tariff_detail_path("https://www.mea.or.th/our-services/tariff-calculation/other/HomeLegacy")
+    assert h19_filter.is_valid_tariff_detail_path("https://www.mea.or.th/our-services/service-rates/other/D5xEaEwgU")
     result = _select(html)
     assert result["url"].startswith("https://www.mea.or.th/our-services/service-rates/other/")
     assert h14._SAFE_DEBUG["candidate_after_filter"] == 2
