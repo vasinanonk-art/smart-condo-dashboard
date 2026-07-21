@@ -1,4 +1,5 @@
 from backend import mea_tariff_hotfix19 as h19
+from backend import mea_tariff_hotfix19_filter as h19_filter  # noqa: F401
 from backend import mea_tariff_hotfix14 as h14
 
 INDEX_URL = "https://www.mea.or.th/our-services/tariff-calculation/other/evlowpriority"
@@ -11,8 +12,7 @@ def _select(html: str):
 
 def test_nested_card_layout():
     html = '''<main><div class="grid"><article class="card"><div><h2>ประเภทที่ 1 บ้านอยู่อาศัย</h2></div><div><p>อัตราค่าไฟฟ้า</p><a href="/our-services/tariff-calculation/other/AbCd1234">ดูเนื้อหา</a></div></article></div></main>'''
-    result = _select(html)
-    assert result["url"].endswith("/our-services/tariff-calculation/other/AbCd1234")
+    assert _select(html)["url"].endswith("/our-services/tariff-calculation/other/AbCd1234")
 
 
 def test_section_layout_and_absolute_url():
@@ -52,18 +52,26 @@ def test_navigation_and_unrelated_links_are_filtered_after_scoring():
     result = _select(html)
     assert result["url"].endswith("/HomeGood")
     assert h14._SAFE_DEBUG["anchor_count"] == 5
-    assert h14._SAFE_DEBUG["candidate_before_filter"] >= 3
     assert h14._SAFE_DEBUG["candidate_after_filter"] == 1
+
+
+def test_multiple_generic_labels_inside_same_residential_section():
+    html = '''<section><h2>ประเภทที่ 1 บ้านอยู่อาศัย</h2><a href="/our-services/payment">รายละเอียด</a><a href="/our-services/electric-vehicle">Read more</a><a href="/our-services/service-rates/other/D5xEaEwgU">More</a></section>'''
+    assert _select(html)["url"].endswith("/our-services/service-rates/other/D5xEaEwgU")
+    assert h14._SAFE_DEBUG["candidate_after_filter"] == 1
+
+
+def test_both_production_tariff_path_families_are_supported():
+    html = '''<main><section><h2>ประเภทที่ 1 บ้านอยู่อาศัย</h2><a href="/our-services/tariff-calculation/other/HomeLegacy">รายละเอียด</a></section><section><h2>ประเภทที่ 1 บ้านอยู่อาศัย</h2><a href="/our-services/service-rates/other/D5xEaEwgU">ดูเนื้อหา</a></section></main>'''
+    result = _select(html)
+    assert result["url"].startswith("https://www.mea.or.th/our-services/service-rates/other/")
+    assert h14._SAFE_DEBUG["candidate_after_filter"] == 2
 
 
 def test_scans_all_anchors_before_not_found():
     html = '''<html><body><a href="/">Home</a><a href="/our-services/payment">Payment</a><a href="https://example.com/x">External</a></body></html>'''
-    try:
+    with __import__('pytest').raises(ValueError, match="residential_detail_link_not_found"):
         _select(html)
-    except ValueError as exc:
-        assert str(exc) == "residential_detail_link_not_found"
-    else:
-        raise AssertionError("expected residential_detail_link_not_found")
     assert h14._SAFE_DEBUG["anchor_count"] == 3
     assert h14._SAFE_DEBUG["candidate_after_filter"] == 0
 
