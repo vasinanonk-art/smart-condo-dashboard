@@ -82,6 +82,8 @@ from backend import mea_tariff_hotfix18 as _mea_tariff_hotfix18  # noqa: F401,E4
 from backend import mea_tariff_hotfix19 as _mea_tariff_hotfix19  # noqa: F401,E402
 # HOTFIX 19 runtime hardens bounded MEA fetching and reports safe transport diagnostics.
 from backend import mea_tariff_hotfix19_runtime as _mea_tariff_hotfix19_runtime  # noqa: F401,E402
+# Final path guard admits only official tariff-detail families after context scoring.
+from backend import mea_tariff_hotfix19_filter as _mea_tariff_hotfix19_filter  # noqa: F401,E402
 
 # Register the declarative automation core and its single non-executing trigger
 # worker. HOTFIX 13 replaces the fixed one-second loop with bounded scheduling.
