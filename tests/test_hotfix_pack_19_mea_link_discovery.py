@@ -74,17 +74,48 @@ def test_both_production_tariff_path_families_are_supported():
     assert h14._SAFE_DEBUG["candidate_after_filter"] == 2
 
 
+def test_exact_production_table_row_selects_d5xeaewgu():
+    html = '''
+<tr class="pwot_date-list">
+  <td>
+    <a class="doc-item-link" href="/our-services/service-rates/other/D5xEaEwgU">
+      <div class="pt-1">ประเภทที่ 1 บ้านอยู่อาศัย</div>
+    </a>
+  </td>
+  <td class="text-right">
+    <a class="btn btn-sm btn-danger" href="/our-services/service-rates/other/D5xEaEwgU">
+      ดูเนื้อหา
+    </a>
+  </td>
+</tr>
+'''
+    result = _select(html)
+    assert result["url"] == "https://www.mea.or.th/our-services/service-rates/other/D5xEaEwgU"
+    assert h19._norm("ประเภทที่ 1 บ้านอยู่อาศัย") == "ประเภท 1 บ้านอยู่อาศัย"
+    assert h14._SAFE_DEBUG["total_anchor_count"] == 2
+    assert h14._SAFE_DEBUG["allowed_path_anchor_count"] == 2
+    assert h14._SAFE_DEBUG["residential_text_anchor_count"] == 2
+    assert h14._SAFE_DEBUG["candidate_after_filter"] == 1
+    assert h14._SAFE_DEBUG["top_candidate_href"].endswith("/D5xEaEwgU")
+
+
 def test_scans_all_anchors_before_not_found():
     html = '''<html><body><a href="/">Home</a><a href="/our-services/payment">Payment</a><a href="https://example.com/x">External</a></body></html>'''
     with __import__('pytest').raises(ValueError, match="residential_detail_link_not_found"):
         _select(html)
     assert h14._SAFE_DEBUG["anchor_count"] == 3
     assert h14._SAFE_DEBUG["candidate_after_filter"] == 0
+    assert h14._SAFE_DEBUG["rejected_candidate_reasons"]
 
 
 def test_safe_diagnostics_exist():
     html = '''<section><h2>ประเภทที่ 1 บ้านอยู่อาศัย</h2><a href="/our-services/tariff-calculation/other/HomeDiag">รายละเอียด</a></section>'''
     _select(html)
-    for key in ("anchor_count", "candidate_before_filter", "candidate_after_filter", "top_candidate_context", "top_candidate_href", "context_tokens"):
+    for key in (
+        "anchor_count", "total_anchor_count", "allowed_path_anchor_count",
+        "residential_text_anchor_count", "candidate_before_filter",
+        "candidate_after_filter", "rejected_candidate_reasons",
+        "top_candidate_context", "top_candidate_href", "context_tokens",
+    ):
         assert key in h14._SAFE_DEBUG
     assert "<html" not in str(h14._SAFE_DEBUG).lower()

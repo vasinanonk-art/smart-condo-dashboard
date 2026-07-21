@@ -1,8 +1,8 @@
 """HOTFIX PACK 19: robust residential link discovery from the official MEA index.
 
-Every anchor is scanned before rejection. Context is assembled from multiple DOM
-relationships so current nested/card/list/accordion layouts are supported without
-relying on one fixed container.
+Every anchor is scanned. URL eligibility is decided from the canonical allow-listed
+MEA URL before residential context is scored, so unrelated service/navigation links
+cannot become candidates through inherited nearby text.
 """
 from __future__ import annotations
 
@@ -17,15 +17,18 @@ from backend import mea_tariff_hotfix17 as h17
 from backend import mea_tariff_hotfix18 as h18
 from backend import mea_tariff_provider as mea
 
-PARSER_VERSION = "mea-1.5-robust-link-discovery"
+PARSER_VERSION = "mea-1.6-production-row-link-discovery"
 _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 _CONTEXT_TAGS = {"section", "article", "li", "div", "tr", "td", "main"}
-_GENERIC_PATHS = {"", "/", "/our-services", "/our-services/"}
-_REJECT_TOKENS = {
-    "electric-vehicle", "electric_vehicle", "ev", "payment", "payments",
-    "producer", "producers", "meter", "meters", "deposit", "deposits",
-    "bill", "bills", "contact", "faq", "news", "download", "calculator",
-    "solar", "charging", "service-center", "service_centers",
+_ALLOWED_DETAIL_PREFIXES = (
+    "/our-services/tariff-calculation/other/",
+    "/our-services/service-rates/other/",
+)
+_REJECTED_SLUG_TOKENS = {
+    "electric", "vehicle", "ev", "payment", "payments", "meter", "meters",
+    "deposit", "deposits", "producer", "producers", "bill", "bills",
+    "contact", "faq", "news", "download", "calculator", "solar", "charging",
+    "service-center", "service-centers",
 }
 _LINK_WORDS = ("ดูเนื้อหา", "รายละเอียด", "more", "read more", "view", "อ่านเพิ่มเติม")
 
@@ -36,6 +39,42 @@ def _norm(value: Any) -> str:
 
 def _canonical_url(url: str) -> str:
     return h18._canonical_url(url)
+
+
+def _normalized_path(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    return re.sub(r"/{2,}", "/", parsed.path or "/").lower()
+
+
+def _tariff_detail_path(url: str) -> tuple[bool, str]:
+    """Return eligibility and a safe rejection reason for a canonical MEA URL."""
+    path = _normalized_path(url)
+    prefix = next((item for item in _ALLOWED_DETAIL_PREFIXES if path.startswith(item)), None)
+    if prefix is None:
+        if path in {"", "/", "/our-services", "/our-services/"}:
+            return False, "navigation_or_landing_path"
+        return False, "non_tariff_detail_path"
+    slug = path[len(prefix):].strip("/")
+    if not slug:
+        return False, "missing_detail_slug"
+    tokens = {token for token in re.split(r"[/_.-]+", slug) if token}
+    if tokens & _REJECTED_SLUG_TOKENS:
+        return False, "unrelated_tariff_slug"
+    return True, "allowed_tariff_detail_path"
+
+
+def _path_quality(url: str) -> int:
+    allowed, _reason = _tariff_detail_path(url)
+    if not allowed:
+        return -100
+    path = _normalized_path(url)
+    score = 70
+    if path.startswith("/our-services/service-rates/other/"):
+        score += 10
+    slug = path.rsplit("/", 1)[-1]
+    if "residential" in slug or "home" in slug:
+        score += 10
+    return min(score, 100)
 
 
 def _iter_ancestors(node: h17._DomNode) -> Iterable[h17._DomNode]:
@@ -79,7 +118,9 @@ def _sibling_headings(node: h17._DomNode) -> list[str]:
 
 
 def _context(node: h17._DomNode) -> Dict[str, Any]:
-    chunks: list[tuple[str, str]] = []
+    # Include the anchor's own text first. The live MEA row puts the residential label
+    # inside one anchor and the generic action label inside a sibling anchor.
+    chunks: list[tuple[str, str]] = [("anchor", node.text())]
     parent = node.parent
     if parent:
         chunks.append(("parent", parent.text()))
@@ -88,7 +129,7 @@ def _context(node: h17._DomNode) -> Dict[str, Any]:
     for ancestor in _iter_ancestors(node):
         classes = _norm(ancestor.attrs.get("class", ""))
         role = _norm(ancestor.attrs.get("role", ""))
-        if ancestor.tag in {"section", "article", "li"}:
+        if ancestor.tag in {"section", "article", "li", "tr"}:
             chunks.append((ancestor.tag, ancestor.text()))
         elif ancestor.tag == "div" and any(token in classes or token in role for token in ("card", "accordion", "item", "tariff", "rate")):
             chunks.append(("card", ancestor.text()))
@@ -114,6 +155,15 @@ def _context(node: h17._DomNode) -> Dict[str, Any]:
     return {"text": combined, "parts": dedup, "tokens": tokens}
 
 
+def _has_residential_text(value: str) -> bool:
+    text = _norm(value)
+    return bool(
+        re.search(r"(?:^|\s)ประเภท\s*1\s*บ้านอยู่อาศัย(?:\s|$)", text)
+        or ("บ้านอยู่อาศัย" in text and re.search(r"(?:^|\s)ประเภท\s*1(?:\s|$)", text))
+        or ("residential" in text and re.search(r"(?:^|\s)(?:type\s*)?1(?:\s|$)", text))
+    )
+
+
 def _context_score(context: Dict[str, Any], link_text: str) -> int:
     text = context["text"]
     score = 0
@@ -134,47 +184,50 @@ def _context_score(context: Dict[str, Any], link_text: str) -> int:
     for source, _ in context["parts"]:
         if source == "previous_heading":
             score += 8
-        elif source in {"section", "article", "li", "card"}:
+        elif source in {"section", "article", "li", "tr", "card"}:
             score += 3
     return min(score, 100)
-
-
-def _path_quality(url: str) -> int:
-    parsed = urllib.parse.urlsplit(url)
-    path = parsed.path.lower()
-    if path in _GENERIC_PATHS:
-        return -100
-    tokens = {token for token in re.split(r"[/_.-]+", path) if token}
-    if tokens & _REJECT_TOKENS:
-        return -80
-    score = 0
-    if "tariff" in path or "rate" in path:
-        score += 20
-    if "residential" in path or "home" in path:
-        score += 20
-    if "tariff-calculation" in path:
-        score += 15
-    if len([part for part in path.split("/") if part]) >= 3:
-        score += 5
-    return score
 
 
 def select_residential_detail_link(index_body: bytes, index_url: str) -> Dict[str, Any]:
     parser = h17._DomParser()
     parser.feed(index_body.decode("utf-8", errors="replace"))
     anchors = [node for node in h17._walk(parser.root) if node.tag == "a" and node.attrs.get("href")]
+    allowed_path_anchor_count = 0
+    residential_text_anchor_count = 0
+    rejected_reasons: Dict[str, int] = {}
     before: list[Dict[str, Any]] = []
+
+    def reject(reason: str) -> None:
+        rejected_reasons[reason] = rejected_reasons.get(reason, 0) + 1
 
     for node in anchors:
         href = node.attrs.get("href", "")
         link_text = _norm(node.text())
         context = _context(node)
-        context_score = _context_score(context, link_text)
+        if _has_residential_text(link_text) or _has_residential_text(context["text"]):
+            residential_text_anchor_count += 1
         try:
             resolved = urllib.parse.urljoin(index_url, href)
             mea._safe_url(resolved)
             canonical = _canonical_url(resolved)
         except Exception:
+            reject("url_allowlist_or_scheme_rejection")
+            continue
+
+        path_allowed, path_reason = _tariff_detail_path(canonical)
+        if not path_allowed:
+            reject(path_reason)
+            continue
+        allowed_path_anchor_count += 1
+
+        context_score = _context_score(context, link_text)
+        if context_score <= 0:
+            reject("no_residential_context")
+            continue
+        path_score = _path_quality(canonical)
+        if path_score < 0:
+            reject("path_quality_rejection")
             continue
         before.append({
             "url": canonical,
@@ -182,15 +235,11 @@ def select_residential_detail_link(index_body: bytes, index_url: str) -> Dict[st
             "link_text": link_text,
             "context_score": context_score,
             "context": context,
-            "path_score": _path_quality(canonical),
+            "path_score": path_score,
         })
 
-    # Navigation/generic/unrelated filtering happens only after every anchor has been
-    # scanned and context-scored.
     by_url: Dict[str, Dict[str, Any]] = {}
     for item in before:
-        if item["context_score"] <= 0 or item["path_score"] < 0:
-            continue
         score = min(100, item["context_score"] + item["path_score"])
         candidate = {
             "url": item["url"],
@@ -204,17 +253,22 @@ def select_residential_detail_link(index_body: bytes, index_url: str) -> Dict[st
 
     candidates = sorted(by_url.values(), key=lambda item: (-item["score"], item["url"]))
     best = candidates[0] if candidates else None
-    h14._SAFE_DEBUG.update({
+    diagnostics = {
         "parser_version": PARSER_VERSION,
         "anchor_count": len(anchors),
+        "total_anchor_count": len(anchors),
+        "allowed_path_anchor_count": allowed_path_anchor_count,
+        "residential_text_anchor_count": residential_text_anchor_count,
         "candidate_before_filter": len(before),
         "candidate_after_filter": len(candidates),
+        "rejected_candidate_reasons": dict(sorted(rejected_reasons.items())),
         "residential_link_candidates": copy.deepcopy(candidates[:8]),
         "top_candidate_context": best.get("evidence") if best else None,
         "top_candidate_href": best.get("url") if best else None,
         "context_tokens": best.get("context_tokens", []) if best else [],
         "deduplicated_residential_link_count": len(candidates),
-    })
+    }
+    h14._SAFE_DEBUG.update(diagnostics)
     if not candidates:
         raise ValueError("residential_detail_link_not_found")
     return candidates[0]
@@ -234,7 +288,9 @@ _original_debug = h18.provider_debug
 def provider_debug() -> Dict[str, Any]:
     payload = _original_debug()
     for key in (
-        "anchor_count", "candidate_before_filter", "candidate_after_filter",
+        "anchor_count", "total_anchor_count", "allowed_path_anchor_count",
+        "residential_text_anchor_count", "candidate_before_filter",
+        "candidate_after_filter", "rejected_candidate_reasons",
         "top_candidate_context", "top_candidate_href", "context_tokens",
     ):
         if key in h14._SAFE_DEBUG:
