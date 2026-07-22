@@ -72,6 +72,50 @@ def _descendants(node: h17._DomNode) -> Iterable[h17._DomNode]:
         yield from _descendants(child)
 
 
+def _node_outer_html(node: h17._DomNode) -> str:
+    attrs = "".join(
+        f' {key}="{str(value).replace(chr(34), "&quot;")}"'
+        for key, value in sorted(node.attrs.items())
+    )
+    inner = " ".join(node.text().split())
+    return h14._safe_section(f"<{node.tag}{attrs}>{inner}</{node.tag}>", 500)
+
+
+def _parser_diagnostics(index_body: bytes, parser: h17._DomParser) -> Dict[str, Any]:
+    anchors = [
+        node for node in h17._walk(parser.root)
+        if node.tag == "a" and node.attrs.get("href")
+    ]
+    hrefs = [str(node.attrs.get("href") or "") for node in anchors]
+    doc_item = [
+        node for node in anchors
+        if "doc-item-link" in str(node.attrs.get("class") or "").split()
+    ]
+    service_rates = [
+        node for node in anchors
+        if "/our-services/service-rates/other/" in str(node.attrs.get("href") or "")
+    ]
+    matching = doc_item[0] if doc_item else (service_rates[0] if service_rates else None)
+    fixture = (
+        '<a class="doc-item-link" href="/our-services/service-rates/other/D5xEaEwgU">'
+        '<div class="pt-1">ประเภทที่ 1 บ้านอยู่อาศัย</div></a>'
+    ).encode("utf-8")
+    body_compact = re.sub(rb"\s+", b"", index_body)
+    fixture_compact = re.sub(rb"\s+", b"", fixture)
+    return {
+        "raw_html_length": len(index_body),
+        "first_20_anchor_hrefs": hrefs[:20],
+        "total_anchor_count": len(anchors),
+        "anchors_matching_doc_item_link": len(doc_item),
+        "anchors_matching_service_rates_other": len(service_rates),
+        "first_matching_anchor_outer_html": _node_outer_html(matching) if matching is not None else None,
+        "beautifulsoup_parser_used": False,
+        "html_parser_used": "html.parser.HTMLParser",
+        "response_body_equals_production_fixture": body_compact == fixture_compact,
+        "response_body_contains_production_fixture": fixture_compact in body_compact,
+    }
+
+
 def _card_candidates(root: h17._DomNode) -> list[h17._DomNode]:
     cards: list[h17._DomNode] = []
     for node in h17._walk(root):
@@ -80,7 +124,6 @@ def _card_candidates(root: h17._DomNode) -> list[h17._DomNode]:
         text = node.text()
         if not _is_exact_residential_card(text):
             continue
-        # Prefer the smallest exact container that actually owns an anchor.
         if not any(child.tag == "a" and child.attrs.get("href") for child in _descendants(node)):
             continue
         if any(_is_exact_residential_card(child.text()) for child in node.children if child.tag in _BLOCK_TAGS):
@@ -92,6 +135,7 @@ def _card_candidates(root: h17._DomNode) -> list[h17._DomNode]:
 def select_residential_detail_link(index_body: bytes, index_url: str) -> Dict[str, Any]:
     parser = h17._DomParser()
     parser.feed(index_body.decode("utf-8", errors="replace"))
+    h14._SAFE_DEBUG.update(_parser_diagnostics(index_body, parser))
     by_url: Dict[str, Dict[str, Any]] = {}
     for card in _card_candidates(parser.root):
         card_text = _norm(card.text())
@@ -221,7 +265,6 @@ def extract_type_1_2_dom_section(detail_body: bytes, content_type: str) -> Dict[
         text = candidate.text()
         values = _extract_values(text)
         score = _candidate_score(text, values)
-        # Heading-only, TOC, breadcrumb, sidebar and label-only blocks never validate.
         valid = values is not None and len(text) >= 100 and candidate.tag not in _IGNORED_TAGS
         fingerprint = _content_fingerprint(text)
         item = {
@@ -280,7 +323,6 @@ def parse_type_1_2_dom(detail_body: bytes, content_type: str, source_url: str) -
     return result
 
 
-# HOTFIX 17's provider resolves these module globals at request time.
 h17.select_residential_detail_link = select_residential_detail_link
 h17.extract_type_1_2_dom_section = extract_type_1_2_dom_section
 h17.parse_type_1_2_dom = parse_type_1_2_dom
@@ -300,6 +342,11 @@ def provider_debug() -> Dict[str, Any]:
         "deduplicated_type_1_2_candidate_count", "valid_type_1_2_candidate_count",
         "selected_candidate_score", "selected_candidate_fingerprint",
         "duplicate_candidate_count", "candidate_value_sets",
+        "raw_html_length", "first_20_anchor_hrefs", "total_anchor_count",
+        "anchors_matching_doc_item_link", "anchors_matching_service_rates_other",
+        "first_matching_anchor_outer_html", "beautifulsoup_parser_used",
+        "html_parser_used", "response_body_equals_production_fixture",
+        "response_body_contains_production_fixture",
     }
     return {"provider": "mea", "official_source_only": True, **{
         key: copy.deepcopy(value) for key, value in h14._SAFE_DEBUG.items() if key in allowed
@@ -347,7 +394,6 @@ def tariff_check_hotfix18() -> Dict[str, Any]:
     }
 
 
-# Replace the existing routes after all earlier tariff runtime layers are installed.
 for route in h14.app.routes:
     path = getattr(route, "path", None)
     methods = set(getattr(route, "methods", set()) or set())
