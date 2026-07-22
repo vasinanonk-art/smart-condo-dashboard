@@ -88,6 +88,8 @@ from backend import mea_tariff_hotfix19_filter as _mea_tariff_hotfix19_filter  #
 from backend import mea_tariff_hotfix19_selector_runtime as _mea_tariff_hotfix19_selector_runtime  # noqa: F401,E402
 # Canonicalize the provider debug endpoint after all earlier serializers/routes exist.
 from backend import mea_tariff_hotfix19_debug_runtime as _mea_tariff_hotfix19_debug_runtime  # noqa: F401,E402
+# Persist one canonical tariff run object shared by status, candidate, and debug APIs.
+from backend import mea_tariff_hotfix19_state_runtime as _mea_tariff_hotfix19_state_runtime  # noqa: F401,E402
 
 # Register the declarative automation core and its single non-executing trigger
 # worker. HOTFIX 13 replaces the fixed one-second loop with bounded scheduling.
