@@ -49,6 +49,23 @@ _INDEX_DEBUG_FIELDS = (
 )
 
 
+def _debug_object_snapshot(location: str) -> Dict[str, Any]:
+    debug = h14._SAFE_DEBUG
+    snapshot = {
+        "location": location,
+        "object_id": id(debug),
+        "module": getattr(debug, "__module__", type(debug).__module__),
+        "type": type(debug).__name__,
+        "keys": sorted(str(key) for key in debug.keys()),
+        "key_count": len(debug),
+    }
+    print(f"HOTFIX19.2 debug object {snapshot}", flush=True)
+    return snapshot
+
+
+_RUNTIME_DEBUG_OBJECT = _debug_object_snapshot("backend.mea_tariff_hotfix19_runtime")
+
+
 def _stage(url: str) -> str:
     if url == mea.MEA_TARIFF_PAGE:
         return "index"
@@ -190,6 +207,7 @@ _original_debug = h19.provider_debug
 
 
 def provider_debug() -> Dict[str, Any]:
+    endpoint_snapshot = _debug_object_snapshot("backend.mea_tariff_hotfix19_runtime.provider_debug")
     payload = _original_debug()
     for key in _SAFE_FIELDS:
         if key in h14._SAFE_DEBUG:
@@ -198,6 +216,20 @@ def provider_debug() -> Dict[str, Any]:
         for key in _INDEX_DEBUG_FIELDS:
             if key in h14._SAFE_DEBUG:
                 payload[key] = h14._SAFE_DEBUG[key]
+    payload.update({
+        "debug_object_identity": endpoint_snapshot["object_id"],
+        "debug_module": endpoint_snapshot["module"],
+        "debug_key_count": endpoint_snapshot["key_count"],
+        "debug_object_snapshots": {
+            "runtime_module": _RUNTIME_DEBUG_OBJECT,
+            "provider_debug_endpoint": endpoint_snapshot,
+        },
+    })
+    if _RUNTIME_DEBUG_OBJECT["object_id"] != endpoint_snapshot["object_id"]:
+        payload["debug_object_id_mismatch"] = {
+            "runtime_module": _RUNTIME_DEBUG_OBJECT["object_id"],
+            "provider_debug_endpoint": endpoint_snapshot["object_id"],
+        }
     return payload
 
 

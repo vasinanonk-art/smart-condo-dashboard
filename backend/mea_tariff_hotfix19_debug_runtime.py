@@ -14,6 +14,20 @@ from backend import mea_tariff_hotfix17 as h17
 from backend import mea_tariff_hotfix19_selector_runtime as selector_runtime
 
 
+def _debug_object_snapshot(location: str) -> Dict[str, Any]:
+    debug = h14._SAFE_DEBUG
+    snapshot = {
+        "location": location,
+        "object_id": id(debug),
+        "module": getattr(debug, "__module__", type(debug).__module__),
+        "type": type(debug).__name__,
+        "keys": sorted(str(key) for key in debug.keys()),
+        "key_count": len(debug),
+    }
+    print(f"HOTFIX19.2 debug object {snapshot}", flush=True)
+    return snapshot
+
+
 def runtime_route_map() -> Dict[str, Any]:
     provider = sync.PROVIDERS.get("mea")
     provider_class = (
@@ -54,12 +68,19 @@ def runtime_route_map() -> Dict[str, Any]:
 
 
 def serialize_provider_debug() -> Dict[str, Any]:
+    snapshot = _debug_object_snapshot("backend.mea_tariff_hotfix19_debug_runtime.serialize_provider_debug")
     return {
         "provider": "mea",
         "official_source_only": True,
         **copy.deepcopy(h14._SAFE_DEBUG),
         **selector_runtime.selector_identity(),
         "runtime_route_map": runtime_route_map(),
+        "debug_object_identity": snapshot["object_id"],
+        "debug_module": snapshot["module"],
+        "debug_key_count": snapshot["key_count"],
+        "debug_object_snapshots": {
+            "provider_debug_endpoint": snapshot,
+        },
     }
 
 

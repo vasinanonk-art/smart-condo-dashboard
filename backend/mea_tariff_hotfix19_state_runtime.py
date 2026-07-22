@@ -28,6 +28,20 @@ _original_candidate_endpoint = runtime.tariff_candidate_071
 _original_provider_debug_endpoint = debug_runtime.serialize_provider_debug
 
 
+def _debug_object_snapshot(location: str) -> Dict[str, Any]:
+    debug = h14._SAFE_DEBUG
+    snapshot = {
+        "location": location,
+        "object_id": id(debug),
+        "module": getattr(debug, "__module__", type(debug).__module__),
+        "type": type(debug).__name__,
+        "keys": sorted(str(key) for key in debug.keys()),
+        "key_count": len(debug),
+    }
+    print(f"HOTFIX19.2 debug object {snapshot}", flush=True)
+    return snapshot
+
+
 def _canonical_run_from_state(state: Mapping[str, Any]) -> Dict[str, Any]:
     run = state.get("tariff_run") if isinstance(state.get("tariff_run"), Mapping) else {}
     return copy.deepcopy(dict(run))
@@ -90,6 +104,7 @@ def tariff_candidate_canonical() -> Dict[str, Any]:
 
 
 def provider_debug_canonical() -> Dict[str, Any]:
+    state_snapshot = _debug_object_snapshot("backend.mea_tariff_hotfix19_state_runtime.provider_debug_canonical")
     payload = _original_provider_debug_endpoint()
     run = _canonical_run_from_state(settings._load_maintenance())
     if run:
@@ -100,6 +115,21 @@ def provider_debug_canonical() -> Dict[str, Any]:
             "parser_error_code": run.get("error"),
             **copy.deepcopy(run.get("diagnostics") or {}),
         })
+    snapshots = payload.get("debug_object_snapshots") if isinstance(payload.get("debug_object_snapshots"), Mapping) else {}
+    snapshots = {**copy.deepcopy(dict(snapshots)), "state_runtime_provider_debug_canonical": state_snapshot}
+    payload.update({
+        "debug_object_identity": state_snapshot["object_id"],
+        "debug_module": state_snapshot["module"],
+        "debug_key_count": state_snapshot["key_count"],
+        "debug_object_snapshots": snapshots,
+    })
+    object_ids = {
+        name: item.get("object_id")
+        for name, item in snapshots.items()
+        if isinstance(item, Mapping) and item.get("object_id") is not None
+    }
+    if len(set(object_ids.values())) > 1:
+        payload["debug_object_id_mismatch"] = object_ids
     return payload
 
 
