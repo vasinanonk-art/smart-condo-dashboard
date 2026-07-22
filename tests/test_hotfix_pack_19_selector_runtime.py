@@ -28,12 +28,12 @@ def test_selector_identity_diagnostics_are_safe_and_complete():
 
 
 def test_exact_production_fragment_through_bound_runtime_selector():
-    html = b'''<tr class="pwot_date-list">
+    html = '''<tr class="pwot_date-list">
       <td><a class="doc-item-link" href="/our-services/service-rates/other/D5xEaEwgU">
         <div class="pt-1">ประเภทที่ 1 บ้านอยู่อาศัย</div>
       </a></td>
       <td class="text-right"><a class="btn btn-sm btn-danger" href="/our-services/service-rates/other/D5xEaEwgU">ดูเนื้อหา</a></td>
-    </tr>'''
+    </tr>'''.encode("utf-8")
     selected = h17.select_residential_detail_link(
         html, "https://www.mea.or.th/our-services/service-rates/other"
     )
