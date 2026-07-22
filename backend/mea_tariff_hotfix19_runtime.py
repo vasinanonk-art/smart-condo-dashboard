@@ -156,6 +156,53 @@ def _capture_detail_fixture(body: bytes) -> None:
         })
 
 
+def _instrument_detail_fixture_guard(
+    requested_url: str,
+    final_url: str,
+    final_host: str,
+    status: int,
+    content_type: str,
+) -> bool:
+    parsed = urllib.parse.urlsplit(final_url)
+    final_scheme = parsed.scheme.lower()
+    final_path = parsed.path
+    expected_path = urllib.parse.urlsplit(_DETAIL_FIXTURE_URL).path
+    path_matches = final_path == expected_path
+    exact_url_match = final_url == _DETAIL_FIXTURE_URL
+    detail_request = requested_url == _DETAIL_FIXTURE_URL or path_matches
+    h14._SAFE_DEBUG.update({
+        "detail_fixture_guard_entered": True,
+        "detail_fixture_requested_url": requested_url,
+        "detail_fixture_final_url": final_url,
+        "detail_fixture_final_scheme": final_scheme,
+        "detail_fixture_final_host": final_host,
+        "detail_fixture_final_path": final_path,
+        "detail_fixture_http_status": status,
+        "detail_fixture_content_type": content_type,
+        "detail_fixture_path_matches": path_matches,
+        "detail_fixture_exact_url_match": exact_url_match,
+    })
+    if not detail_request:
+        reason = "not_detail_request"
+    elif not exact_url_match:
+        reason = "exact_url_mismatch"
+    elif final_host != "www.mea.or.th":
+        reason = "host_mismatch"
+    elif not path_matches:
+        reason = "path_mismatch"
+    elif status != 200:
+        reason = "status_mismatch"
+    elif content_type != "text/html":
+        reason = "content_type_mismatch"
+    else:
+        return True
+    h14._SAFE_DEBUG.update({
+        "detail_fixture_capture_status": "skipped",
+        "detail_fixture_capture_reason": reason,
+    })
+    return False
+
+
 def fetch_official(url: str, allowed_types: Iterable[str]) -> Dict[str, Any]:
     allowed = set(allowed_types)
     url = mea._safe_url(url)
@@ -205,12 +252,7 @@ def fetch_official(url: str, allowed_types: Iterable[str]) -> Dict[str, Any]:
                     raise ValueError("response_too_large")
                 if url == mea.MEA_TARIFF_PAGE and content_type == "text/html":
                     _capture_index_html_debug(body)
-                if (
-                    final_url == _DETAIL_FIXTURE_URL
-                    and final_host == "www.mea.or.th"
-                    and status == 200
-                    and content_type == "text/html"
-                ):
+                if _instrument_detail_fixture_guard(url, final_url, final_host, status, content_type):
                     _capture_detail_fixture(body)
                 h14._SAFE_DEBUG.update({
                     "fetch_failure_kind": None,
