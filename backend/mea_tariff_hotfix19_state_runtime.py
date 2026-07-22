@@ -19,6 +19,15 @@ from backend import mea_tariff_runtime as runtime
 from backend import mea_tariff_hotfix19_debug_runtime as debug_runtime
 
 
+# Save every original callable before any runtime symbol is monkey-patched. Canonical
+# wrappers must only call these stable references so a later assignment cannot create
+# a self-recursive lookup through the module globals.
+_original_check = h18.tariff_check_hotfix18
+_original_status_endpoint = runtime.tariff_status_071
+_original_candidate_endpoint = runtime.tariff_candidate_071
+_original_provider_debug_endpoint = debug_runtime.serialize_provider_debug
+
+
 def _canonical_run_from_state(state: Mapping[str, Any]) -> Dict[str, Any]:
     run = state.get("tariff_run") if isinstance(state.get("tariff_run"), Mapping) else {}
     return copy.deepcopy(dict(run))
@@ -47,9 +56,6 @@ def _write_canonical_run(result: Mapping[str, Any]) -> Dict[str, Any]:
     return copy.deepcopy(canonical)
 
 
-_original_check = h18.tariff_check_hotfix18
-
-
 def tariff_check_canonical() -> Dict[str, Any]:
     result = _original_check()
     run = _write_canonical_run(result)
@@ -57,7 +63,7 @@ def tariff_check_canonical() -> Dict[str, Any]:
 
 
 def tariff_status_canonical() -> Dict[str, Any]:
-    payload = runtime.tariff_status_071()
+    payload = _original_status_endpoint()
     run = _canonical_run_from_state(settings._load_maintenance())
     if run:
         payload.update({
@@ -71,7 +77,7 @@ def tariff_status_canonical() -> Dict[str, Any]:
 
 
 def tariff_candidate_canonical() -> Dict[str, Any]:
-    payload = runtime.tariff_candidate_071()
+    payload = _original_candidate_endpoint()
     run = _canonical_run_from_state(settings._load_maintenance())
     if run:
         payload.update({
@@ -84,7 +90,7 @@ def tariff_candidate_canonical() -> Dict[str, Any]:
 
 
 def provider_debug_canonical() -> Dict[str, Any]:
-    payload = debug_runtime.serialize_provider_debug()
+    payload = _original_provider_debug_endpoint()
     run = _canonical_run_from_state(settings._load_maintenance())
     if run:
         payload.update({
@@ -97,24 +103,43 @@ def provider_debug_canonical() -> Dict[str, Any]:
     return payload
 
 
-for route in h14.app.routes:
+# Remove duplicate GET registrations for the canonical read endpoints, then register
+# exactly one owner for each. The POST check route is replaced in place.
+for route in list(h14.app.router.routes):
     path = getattr(route, "path", None)
     methods = set(getattr(route, "methods", set()) or set())
-    endpoint = None
     if path == "/api/tariff/check" and "POST" in methods:
-        endpoint = tariff_check_canonical
-    elif path == "/api/tariff/status" and "GET" in methods:
-        endpoint = tariff_status_canonical
-    elif path == "/api/tariff/candidate" and "GET" in methods:
-        endpoint = tariff_candidate_canonical
-    elif path == "/api/tariff/provider/debug" and "GET" in methods:
-        endpoint = provider_debug_canonical
-    if endpoint is not None:
-        route.endpoint = endpoint
+        route.endpoint = tariff_check_canonical
         if getattr(route, "dependant", None) is not None:
-            route.dependant.call = endpoint
+            route.dependant.call = tariff_check_canonical
+    elif path in {
+        "/api/tariff/status",
+        "/api/tariff/candidate",
+        "/api/tariff/provider/debug",
+    } and "GET" in methods:
+        h14.app.router.routes.remove(route)
 
-# Collapse internal readers onto the same canonical state-backed serializers.
+h14.app.add_api_route(
+    "/api/tariff/status",
+    tariff_status_canonical,
+    methods=["GET"],
+    name="tariff_status_hotfix19_canonical",
+)
+h14.app.add_api_route(
+    "/api/tariff/candidate",
+    tariff_candidate_canonical,
+    methods=["GET"],
+    name="tariff_candidate_hotfix19_canonical",
+)
+h14.app.add_api_route(
+    "/api/tariff/provider/debug",
+    provider_debug_canonical,
+    methods=["GET"],
+    name="provider_debug_hotfix19_canonical",
+)
+
+# Internal aliases point to the canonical wrappers, but the wrappers themselves only
+# call the saved originals above and therefore cannot recurse through these names.
 runtime.tariff_status_071 = tariff_status_canonical
 runtime.tariff_candidate_071 = tariff_candidate_canonical
 debug_runtime.serialize_provider_debug = provider_debug_canonical
