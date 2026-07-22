@@ -11,6 +11,8 @@ import time
 import uuid
 from typing import Any, Dict, Mapping
 
+from fastapi import Request
+
 from backend import automatic_tariff_sync as sync
 from backend import dashboard_settings as settings
 from backend import mea_tariff_hotfix14 as h14
@@ -40,6 +42,21 @@ def _debug_object_snapshot(location: str) -> Dict[str, Any]:
     }
     print(f"HOTFIX19.2 debug object {snapshot}", flush=True)
     return snapshot
+
+
+def _registered_provider_debug_routes() -> list[Dict[str, Any]]:
+    routes: list[Dict[str, Any]] = []
+    for order, route in enumerate(h14.app.router.routes):
+        if getattr(route, "path", None) != "/api/tariff/provider/debug":
+            continue
+        endpoint = getattr(route, "endpoint", None)
+        routes.append({
+            "module": getattr(endpoint, "__module__", "unknown"),
+            "function": getattr(endpoint, "__name__", "unknown"),
+            "object_id": id(endpoint) if endpoint is not None else None,
+            "registration_order": order,
+        })
+    return routes
 
 
 def _canonical_run_from_state(state: Mapping[str, Any]) -> Dict[str, Any]:
@@ -103,7 +120,7 @@ def tariff_candidate_canonical() -> Dict[str, Any]:
     return payload
 
 
-def provider_debug_canonical() -> Dict[str, Any]:
+def provider_debug_canonical(request: Request) -> Dict[str, Any]:
     state_snapshot = _debug_object_snapshot("backend.mea_tariff_hotfix19_state_runtime.provider_debug_canonical")
     payload = _original_provider_debug_endpoint()
     run = _canonical_run_from_state(settings._load_maintenance())
@@ -117,11 +134,19 @@ def provider_debug_canonical() -> Dict[str, Any]:
         })
     snapshots = payload.get("debug_object_snapshots") if isinstance(payload.get("debug_object_snapshots"), Mapping) else {}
     snapshots = {**copy.deepcopy(dict(snapshots)), "state_runtime_provider_debug_canonical": state_snapshot}
+    endpoint = request.scope.get("endpoint")
+    route = request.scope.get("route")
     payload.update({
         "debug_object_identity": state_snapshot["object_id"],
         "debug_module": state_snapshot["module"],
         "debug_key_count": state_snapshot["key_count"],
         "debug_object_snapshots": snapshots,
+        "request_url_path": request.url.path,
+        "request_endpoint_module": getattr(endpoint, "__module__", "unknown"),
+        "request_endpoint_function": getattr(endpoint, "__name__", "unknown"),
+        "request_route_path": getattr(route, "path", None),
+        "request_endpoint_object_id": id(endpoint) if endpoint is not None else None,
+        "registered_provider_debug_routes": _registered_provider_debug_routes(),
     })
     object_ids = {
         name: item.get("object_id")
