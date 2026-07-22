@@ -7,6 +7,7 @@ bounded browser-compatible request profile, and expose only safe diagnostics.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import socket
 import ssl
@@ -47,6 +48,8 @@ _INDEX_DEBUG_FIELDS = (
     "all_anchor_texts_first_100", "all_anchor_hrefs_first_100",
     "all_anchor_pairs_first_100",
 )
+_DETAIL_FIXTURE_URL = "https://www.mea.or.th/our-services/service-rates/other/D5xEaEwgU"
+_DETAIL_FIXTURE_PATH = "/tmp/mea_residential_type_1_2_production.html"
 
 
 def _debug_object_snapshot(location: str) -> Dict[str, Any]:
@@ -131,6 +134,28 @@ def _capture_index_html_debug(body: bytes) -> None:
     })
 
 
+def _capture_detail_fixture(body: bytes) -> None:
+    sha256 = hashlib.sha256(body).hexdigest()
+    try:
+        with open(_DETAIL_FIXTURE_PATH, "wb") as fixture:
+            fixture.write(body)
+            fixture.flush()
+            os.fsync(fixture.fileno())
+        h14._SAFE_DEBUG.update({
+            "detail_fixture_capture_status": "captured",
+            "detail_fixture_capture_path": _DETAIL_FIXTURE_PATH,
+            "detail_fixture_capture_bytes": len(body),
+            "detail_fixture_capture_sha256": sha256,
+        })
+    except OSError:
+        h14._SAFE_DEBUG.update({
+            "detail_fixture_capture_status": "write_failed",
+            "detail_fixture_capture_path": _DETAIL_FIXTURE_PATH,
+            "detail_fixture_capture_bytes": 0,
+            "detail_fixture_capture_sha256": sha256,
+        })
+
+
 def fetch_official(url: str, allowed_types: Iterable[str]) -> Dict[str, Any]:
     allowed = set(allowed_types)
     url = mea._safe_url(url)
@@ -163,10 +188,11 @@ def fetch_official(url: str, allowed_types: Iterable[str]) -> Dict[str, Any]:
                 content_type = str(response.headers.get_content_type() or "").lower()
                 if content_type == "application/xhtml+xml" and "text/html" in allowed:
                     content_type = "text/html"
+                final_host = (urllib.parse.urlsplit(final_url).hostname or "").lower()
                 h14._SAFE_DEBUG.update({
                     "fetch_http_status": status,
                     "fetch_redirect_count": int(getattr(redirect, "count", 0)),
-                    "fetch_final_host": (urllib.parse.urlsplit(final_url).hostname or "").lower(),
+                    "fetch_final_host": final_host,
                     "fetch_content_type": content_type,
                 })
                 if content_type not in allowed:
@@ -179,6 +205,13 @@ def fetch_official(url: str, allowed_types: Iterable[str]) -> Dict[str, Any]:
                     raise ValueError("response_too_large")
                 if url == mea.MEA_TARIFF_PAGE and content_type == "text/html":
                     _capture_index_html_debug(body)
+                if (
+                    final_url == _DETAIL_FIXTURE_URL
+                    and final_host == "www.mea.or.th"
+                    and status == 200
+                    and content_type == "text/html"
+                ):
+                    _capture_detail_fixture(body)
                 h14._SAFE_DEBUG.update({
                     "fetch_failure_kind": None,
                     "fetch_last_success_url": final_url,
