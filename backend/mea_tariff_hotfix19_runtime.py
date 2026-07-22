@@ -7,12 +7,14 @@ bounded browser-compatible request profile, and expose only safe diagnostics.
 from __future__ import annotations
 
 import hashlib
+import re
 import socket
 import ssl
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from html import unescape
 from typing import Any, Dict, Iterable, Optional
 
 from backend import mea_tariff_hotfix14 as h14
@@ -39,6 +41,11 @@ _SAFE_FIELDS = (
     "fetch_stage", "fetch_failure_kind", "fetch_attempts", "fetch_http_status",
     "fetch_redirect_count", "fetch_final_host", "fetch_content_type",
     "fetch_timeout_sec", "fetch_last_success_url",
+)
+_INDEX_DEBUG_FIELDS = (
+    "raw_html_first_5000_chars", "raw_html_sha256", "page_title",
+    "all_anchor_texts_first_100", "all_anchor_hrefs_first_100",
+    "all_anchor_pairs_first_100",
 )
 
 
@@ -76,6 +83,35 @@ def _classify(exc: BaseException) -> str:
     if isinstance(exc, (urllib.error.URLError, OSError)):
         return "network"
     return "fetch_error"
+
+
+def _clean_html_text(value: str) -> str:
+    return " ".join(unescape(re.sub(r"<[^>]+>", " ", value)).split())
+
+
+def _capture_index_html_debug(body: bytes) -> None:
+    text = body.decode("utf-8", errors="replace")
+    title_match = re.search(r"<title\b[^>]*>(.*?)</title>", text, re.I | re.S)
+    anchor_pattern = re.compile(r"<a\b([^>]*)>(.*?)</a\s*>", re.I | re.S)
+    href_pattern = re.compile(r"\bhref\s*=\s*([\"'])(.*?)\1", re.I | re.S)
+    texts = []
+    hrefs = []
+    pairs = []
+    for attrs, inner in anchor_pattern.findall(text)[:100]:
+        href_match = href_pattern.search(attrs)
+        href = unescape(href_match.group(2)).strip() if href_match else ""
+        anchor_text = _clean_html_text(inner)
+        texts.append(anchor_text[:500])
+        hrefs.append(href[:1000])
+        pairs.append({"text": anchor_text[:500], "href": href[:1000]})
+    h14._SAFE_DEBUG.update({
+        "raw_html_first_5000_chars": text[:5000],
+        "raw_html_sha256": hashlib.sha256(body).hexdigest(),
+        "page_title": _clean_html_text(title_match.group(1))[:500] if title_match else "",
+        "all_anchor_texts_first_100": texts,
+        "all_anchor_hrefs_first_100": hrefs,
+        "all_anchor_pairs_first_100": pairs,
+    })
 
 
 def fetch_official(url: str, allowed_types: Iterable[str]) -> Dict[str, Any]:
@@ -124,6 +160,8 @@ def fetch_official(url: str, allowed_types: Iterable[str]) -> Dict[str, Any]:
                 body = response.read(mea.MAX_RESPONSE_BYTES + 1)
                 if len(body) > mea.MAX_RESPONSE_BYTES:
                     raise ValueError("response_too_large")
+                if url == mea.MEA_TARIFF_PAGE and content_type == "text/html":
+                    _capture_index_html_debug(body)
                 h14._SAFE_DEBUG.update({
                     "fetch_failure_kind": None,
                     "fetch_last_success_url": final_url,
@@ -156,6 +194,10 @@ def provider_debug() -> Dict[str, Any]:
     for key in _SAFE_FIELDS:
         if key in h14._SAFE_DEBUG:
             payload[key] = h14._SAFE_DEBUG[key]
+    if not h14._SAFE_DEBUG.get("residential_link_candidates"):
+        for key in _INDEX_DEBUG_FIELDS:
+            if key in h14._SAFE_DEBUG:
+                payload[key] = h14._SAFE_DEBUG[key]
     return payload
 
 
