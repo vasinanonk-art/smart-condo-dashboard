@@ -318,10 +318,8 @@ def _parse_production_type_1_2(detail_body: bytes, content_type: str, source_url
         return h17.parse_type_1_2_dom(detail_body, content_type, source_url)
     container, heading = _find_unique_type_1_2_container(detail_body)
     rows = [node for node in h17._walk(container) if node.tag == "tr"]
-    if len(rows) != 4:
-        raise ValueError("tier_parse_failed")
 
-    tiers: list[Dict[str, Any]] = []
+    tiers_by_limit: Dict[Optional[float], float] = {}
     service_charge: Optional[float] = None
     for row in rows:
         cells = _child_texts(row, "td")
@@ -331,12 +329,12 @@ def _parse_production_type_1_2(detail_body: bytes, content_type: str, source_url
         normalized = _norm(row_text)
         if "ค่าบริการ" in normalized:
             numbers = re.findall(r"[0-9]+(?:\.[0-9]+)?", row_text)
-            if len(numbers) != 1:
+            if len(numbers) != 1 or service_charge is not None:
                 raise ValueError("tier_parse_failed")
             service_charge = mea._number(numbers[0])
             continue
         if len(cells) != 3 or "หน่วยละ" not in _norm(cells[1]):
-            raise ValueError("tier_parse_failed")
+            continue
         rate_numbers = re.findall(r"[0-9]+(?:\.[0-9]+)?", cells[2])
         if len(rate_numbers) != 1:
             raise ValueError("tier_parse_failed")
@@ -349,9 +347,18 @@ def _parse_production_type_1_2(detail_body: bytes, content_type: str, source_url
         elif "401 เป็นต้นไป" in first:
             limit = None
         else:
+            continue
+        if limit in tiers_by_limit:
             raise ValueError("tier_parse_failed")
-        tiers.append({"up_to_kwh": limit, "rate": rate})
+        tiers_by_limit[limit] = rate
 
+    if set(tiers_by_limit) != {150.0, 400.0, None}:
+        raise ValueError("tier_parse_failed")
+    tiers = [
+        {"up_to_kwh": 150.0, "rate": tiers_by_limit[150.0]},
+        {"up_to_kwh": 400.0, "rate": tiers_by_limit[400.0]},
+        {"up_to_kwh": None, "rate": tiers_by_limit[None]},
+    ]
     if tiers != [
         {"up_to_kwh": 150.0, "rate": 3.2484},
         {"up_to_kwh": 400.0, "rate": 4.2218},
@@ -381,7 +388,7 @@ def _parse_production_type_1_2(detail_body: bytes, content_type: str, source_url
         "parser_version": PARSER_VERSION,
         "type_1_2_heading": h14._safe_section(heading, 180),
         "type_1_2_section_length": len(container.text()),
-        "category_match_method": "production_dom_exact_1_2_heading+bounded_sibling_range+exact_tier_rows+service_charge",
+        "category_match_method": "production_dom_exact_1_2_heading+bounded_sibling_range+content_identified_tier_rows+service_charge",
         "category_match_score": 100,
     })
     return {

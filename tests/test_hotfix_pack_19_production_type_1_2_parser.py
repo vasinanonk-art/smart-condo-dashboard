@@ -49,3 +49,22 @@ def test_production_type_1_2_parser_rejects_ambiguous_section():
 
     with pytest.raises(ValueError, match="type_1_2_section_ambiguous"):
         h19._parse_production_type_1_2(body, "text/html", SOURCE_URL)
+
+
+def test_production_type_1_2_parser_ignores_extra_non_tier_rows():
+    body = FIXTURE.read_bytes()
+    marker = b"<tbody>"
+    extra_rows = b"""
+    <tr class=\"decorative\"><th colspan=\"3\">decorative heading</th></tr>
+    <tr class=\"empty\"><td></td><td></td><td></td></tr>
+    """
+    body = body.replace(marker, marker + extra_rows, 1)
+
+    result = h19._parse_production_type_1_2(body, "text/html", SOURCE_URL)
+
+    assert result["tiers"] == [
+        {"up_to_kwh": 150.0, "rate": 3.2484},
+        {"up_to_kwh": 400.0, "rate": 4.2218},
+        {"up_to_kwh": None, "rate": 4.4217},
+    ]
+    assert result["service_charge"] == 24.62
