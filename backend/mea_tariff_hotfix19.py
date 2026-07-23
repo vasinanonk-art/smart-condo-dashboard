@@ -1,9 +1,4 @@
-"""HOTFIX PACK 19: robust residential link discovery from the official MEA index.
-
-Every anchor is scanned. URL eligibility is decided from the canonical allow-listed
-MEA URL before residential context is scored, so unrelated service/navigation links
-cannot become candidates through inherited nearby text.
-"""
+"""HOTFIX PACK 19: robust residential link discovery and production Type 1.2 parsing."""
 from __future__ import annotations
 
 import copy
@@ -17,7 +12,7 @@ from backend import mea_tariff_hotfix17 as h17
 from backend import mea_tariff_hotfix18 as h18
 from backend import mea_tariff_provider as mea
 
-PARSER_VERSION = "mea-1.6-production-row-link-discovery"
+PARSER_VERSION = "mea-1.7-production-type-1-2-dom"
 _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 _CONTEXT_TAGS = {"section", "article", "li", "div", "tr", "td", "main"}
 _ALLOWED_DETAIL_PREFIXES = (
@@ -48,7 +43,6 @@ def _normalized_path(url: str) -> str:
 
 
 def _tariff_detail_path(url: str) -> tuple[bool, str]:
-    """Return eligibility and a safe rejection reason for a canonical MEA URL."""
     path = _normalized_path(url)
     prefix = next((item for item in _ALLOWED_DETAIL_PREFIXES if path.startswith(item)), None)
     if prefix is None:
@@ -280,13 +274,131 @@ def select_residential_detail_link(index_body: bytes, index_url: str) -> Dict[st
     return candidates[0]
 
 
-# HOTFIX 17 provider resolves this function dynamically at request time.
-h17.select_residential_detail_link = select_residential_detail_link
-h18.select_residential_detail_link = select_residential_detail_link
+def _child_texts(node: h17._DomNode, tag: str) -> list[str]:
+    return [item.text().strip() for item in h17._walk(node) if item.tag == tag and item.text().strip()]
+
+
+def _find_unique_type_1_2_container(detail_body: bytes) -> tuple[h17._DomNode, str]:
+    parser = h17._DomParser()
+    parser.feed(detail_body.decode("utf-8", errors="replace"))
+    matches: list[h17._DomNode] = []
+    for node in h17._walk(parser.root):
+        if node.tag not in _HEADING_TAGS:
+            continue
+        heading = " ".join(node.text().split())
+        normalized = _norm(heading)
+        if re.search(r"(?:^|\s)1\.2(?:\s|$)", normalized) and "เกินกว่า 150 หน่วยต่อเดือน" in normalized:
+            matches.append(node)
+    if len(matches) != 1:
+        raise ValueError("type_1_2_section_ambiguous" if matches else "type_1_2_section_not_found")
+    heading_node = matches[0]
+    container = heading_node.parent
+    while container is not None and container.tag != "document":
+        headings = _child_texts(container, "h3")
+        if len(headings) == 1 and heading in headings:
+            break
+        container = container.parent
+    if container is None or container.tag == "document":
+        raise ValueError("type_1_2_section_not_found")
+    return container, heading
+
+
+def _parse_production_type_1_2(detail_body: bytes, content_type: str, source_url: str) -> Dict[str, Any]:
+    if content_type != "text/html":
+        return h17.parse_type_1_2_dom(detail_body, content_type, source_url)
+    container, heading = _find_unique_type_1_2_container(detail_body)
+    rows = [node for node in h17._walk(container) if node.tag == "tr"]
+    if len(rows) != 4:
+        raise ValueError("tier_parse_failed")
+
+    tiers: list[Dict[str, Any]] = []
+    service_charge: Optional[float] = None
+    for row in rows:
+        cells = _child_texts(row, "td")
+        if not cells:
+            continue
+        row_text = " ".join(cells)
+        normalized = _norm(row_text)
+        if "ค่าบริการ" in normalized:
+            numbers = re.findall(r"[0-9]+(?:\.[0-9]+)?", row_text)
+            if len(numbers) != 1:
+                raise ValueError("tier_parse_failed")
+            service_charge = mea._number(numbers[0])
+            continue
+        if len(cells) != 3 or "หน่วยละ" not in _norm(cells[1]):
+            raise ValueError("tier_parse_failed")
+        rate_numbers = re.findall(r"[0-9]+(?:\.[0-9]+)?", cells[2])
+        if len(rate_numbers) != 1:
+            raise ValueError("tier_parse_failed")
+        rate = mea._number(rate_numbers[0])
+        first = _norm(cells[0])
+        if "หน่วยที่ 1 150" in first:
+            limit: Optional[float] = 150.0
+        elif "หน่วยที่ 151 400" in first:
+            limit = 400.0
+        elif "401 เป็นต้นไป" in first:
+            limit = None
+        else:
+            raise ValueError("tier_parse_failed")
+        tiers.append({"up_to_kwh": limit, "rate": rate})
+
+    if tiers != [
+        {"up_to_kwh": 150.0, "rate": 3.2484},
+        {"up_to_kwh": 400.0, "rate": 4.2218},
+        {"up_to_kwh": None, "rate": 4.4217},
+    ]:
+        raise ValueError("tier_parse_failed")
+    if service_charge != 24.62:
+        raise ValueError("tier_parse_failed")
+
+    html = detail_body.decode("utf-8", errors="replace")
+    title_matches = re.findall(r"(?is)<title[^>]*>(.*?)</title>", html)
+    canonical_matches = re.findall(r"(?is)<link[^>]+rel=[\"']canonical[\"'][^>]+href=[\"']([^\"']+)[\"']", html)
+    date_matches = re.findall(r"<p[^>]*class=[\"'][^\"']*card-date[^\"']*[\"'][^>]*>.*?([0-9]{1,2}\s+[ก-๙.]+\s+[0-9]{4}).*?</p>", html, re.S)
+    if len(title_matches) != 1 or len(canonical_matches) != 1 or canonical_matches[0] != source_url:
+        raise ValueError("type_1_2_section_ambiguous")
+    effective = ""
+    if len(date_matches) == 1:
+        try:
+            effective = mea._date_iso(date_matches[0])
+        except Exception:
+            effective = ""
+    elif len(date_matches) > 1:
+        raise ValueError("type_1_2_section_ambiguous")
+
+    source_title = " ".join(re.sub(r"<[^>]+>", " ", title_matches[0]).split())
+    h14._SAFE_DEBUG.update({
+        "parser_version": PARSER_VERSION,
+        "type_1_2_heading": h14._safe_section(heading, 180),
+        "type_1_2_section_length": len(container.text()),
+        "category_match_method": "production_dom_exact_1_2_heading+bounded_container+exact_tier_rows+service_charge",
+        "category_match_score": 100,
+    })
+    return {
+        "tariff_name": mea.EXPECTED_TARIFF_TYPE,
+        "tariff_type": mea.EXPECTED_TARIFF_TYPE,
+        "effective_date": effective,
+        "version": "",
+        "tiers": tiers,
+        "service_charge": service_charge,
+        "minimum_charge": 0.0,
+        "source_url": source_url,
+        "source_title": source_title,
+        "document_date": effective or None,
+        "parser_confidence": "high",
+        "matched_fields": ["tariff_type", "tiers", "service_charge", "source_title", "source_url"] + (["effective_date"] if effective else []),
+        "missing_fields": [] if effective else ["effective_date"],
+        "parser_version": PARSER_VERSION,
+        "category_match_method": h14._SAFE_DEBUG["category_match_method"],
+        "category_match_score": 100,
+    }
+
+
+h17.parse_type_1_2_dom = _parse_production_type_1_2
+h18.parse_type_1_2_dom = _parse_production_type_1_2
+h16.PARSER_VERSION = PARSER_VERSION
 h17.PARSER_VERSION = PARSER_VERSION
 h18.PARSER_VERSION = PARSER_VERSION
-h16.PARSER_VERSION = PARSER_VERSION
-
 
 _original_debug = h18.provider_debug
 
@@ -307,8 +419,6 @@ def provider_debug() -> Dict[str, Any]:
 
 h18.provider_debug = provider_debug
 h16.provider_debug = provider_debug
-
-# Replace only the debug endpoint; status/check consistency remains owned by HOTFIX 18.
 for route in h14.app.routes:
     if getattr(route, "path", None) == "/api/tariff/provider/debug" and "GET" in set(getattr(route, "methods", set()) or set()):
         route.endpoint = provider_debug
