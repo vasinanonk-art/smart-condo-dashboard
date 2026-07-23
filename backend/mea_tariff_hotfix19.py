@@ -31,6 +31,7 @@ _REJECTED_SLUG_TOKENS = {
     "service-center", "service-centers",
 }
 _LINK_WORDS = ("ดูเนื้อหา", "รายละเอียด", "more", "read more", "view", "อ่านเพิ่มเติม")
+_EXACT_RESIDENTIAL_ANCHOR_TEXT = "ประเภท 1 บ้านอยู่อาศัย"
 
 
 def _norm(value: Any) -> str:
@@ -118,8 +119,6 @@ def _sibling_headings(node: h17._DomNode) -> list[str]:
 
 
 def _context(node: h17._DomNode) -> Dict[str, Any]:
-    # Include the anchor's own text first. The live MEA row puts the residential label
-    # inside one anchor and the generic action label inside a sibling anchor.
     chunks: list[tuple[str, str]] = [("anchor", node.text())]
     parent = node.parent
     if parent:
@@ -189,6 +188,15 @@ def _context_score(context: Dict[str, Any], link_text: str) -> int:
     return min(score, 100)
 
 
+def _nearest_row(node: h17._DomNode) -> Optional[h17._DomNode]:
+    current: Optional[h17._DomNode] = node
+    while current is not None and current.tag != "document":
+        if current.tag == "tr":
+            return current
+        current = current.parent
+    return None
+
+
 def select_residential_detail_link(index_body: bytes, index_url: str) -> Dict[str, Any]:
     parser = h17._DomParser()
     parser.feed(index_body.decode("utf-8", errors="replace"))
@@ -196,16 +204,15 @@ def select_residential_detail_link(index_body: bytes, index_url: str) -> Dict[st
     allowed_path_anchor_count = 0
     residential_text_anchor_count = 0
     rejected_reasons: Dict[str, int] = {}
-    before: list[Dict[str, Any]] = []
 
     def reject(reason: str) -> None:
         rejected_reasons[reason] = rejected_reasons.get(reason, 0) + 1
 
+    exact_matches: list[Dict[str, Any]] = []
     for node in anchors:
         href = node.attrs.get("href", "")
         link_text = _norm(node.text())
-        context = _context(node)
-        if _has_residential_text(link_text) or _has_residential_text(context["text"]):
+        if _has_residential_text(link_text):
             residential_text_anchor_count += 1
         try:
             resolved = urllib.parse.urljoin(index_url, href)
@@ -214,43 +221,40 @@ def select_residential_detail_link(index_body: bytes, index_url: str) -> Dict[st
         except Exception:
             reject("url_allowlist_or_scheme_rejection")
             continue
-
         path_allowed, path_reason = _tariff_detail_path(canonical)
         if not path_allowed:
             reject(path_reason)
             continue
         allowed_path_anchor_count += 1
-
-        context_score = _context_score(context, link_text)
-        if context_score <= 0:
-            reject("no_residential_context")
+        if _EXACT_RESIDENTIAL_ANCHOR_TEXT not in link_text:
+            reject("anchor_text_not_exact_residential_type_1")
             continue
-        path_score = _path_quality(canonical)
-        if path_score < 0:
-            reject("path_quality_rejection")
-            continue
-        before.append({
+        row = _nearest_row(node)
+        secondary_same_href = False
+        if row is not None:
+            for sibling in h17._walk(row):
+                if sibling is node or sibling.tag != "a" or not sibling.attrs.get("href"):
+                    continue
+                try:
+                    sibling_url = _canonical_url(urllib.parse.urljoin(index_url, sibling.attrs["href"]))
+                except Exception:
+                    continue
+                if sibling_url == canonical and any(word in _norm(sibling.text()) for word in _LINK_WORDS):
+                    secondary_same_href = True
+                    break
+        exact_matches.append({
             "url": canonical,
-            "href": href,
-            "link_text": link_text,
-            "context_score": context_score,
-            "context": context,
-            "path_score": path_score,
+            "score": 100 if secondary_same_href else 95,
+            "evidence": h14._safe_section(node.text(), 220),
+            "context_tokens": ["ประเภทที่ 1 บ้านอยู่อาศัย"],
+            "secondary_same_href": secondary_same_href,
         })
 
     by_url: Dict[str, Dict[str, Any]] = {}
-    for item in before:
-        score = min(100, item["context_score"] + item["path_score"])
-        candidate = {
-            "url": item["url"],
-            "score": score,
-            "evidence": h14._safe_section(f"{item['context']['text']} {item['link_text']}", 220),
-            "context_tokens": list(item["context"]["tokens"]),
-        }
-        previous = by_url.get(candidate["url"])
-        if previous is None or candidate["score"] > previous["score"]:
-            by_url[candidate["url"]] = candidate
-
+    for item in exact_matches:
+        previous = by_url.get(item["url"])
+        if previous is None or item["score"] > previous["score"]:
+            by_url[item["url"]] = item
     candidates = sorted(by_url.values(), key=lambda item: (-item["score"], item["url"]))
     best = candidates[0] if candidates else None
     diagnostics = {
@@ -259,7 +263,7 @@ def select_residential_detail_link(index_body: bytes, index_url: str) -> Dict[st
         "total_anchor_count": len(anchors),
         "allowed_path_anchor_count": allowed_path_anchor_count,
         "residential_text_anchor_count": residential_text_anchor_count,
-        "candidate_before_filter": len(before),
+        "candidate_before_filter": len(exact_matches),
         "candidate_after_filter": len(candidates),
         "rejected_candidate_reasons": dict(sorted(rejected_reasons.items())),
         "residential_link_candidates": copy.deepcopy(candidates[:8]),
@@ -270,6 +274,8 @@ def select_residential_detail_link(index_body: bytes, index_url: str) -> Dict[st
     }
     h14._SAFE_DEBUG.update(diagnostics)
     if not candidates:
+        raise ValueError("residential_detail_link_not_found")
+    if len(candidates) > 1 and candidates[0]["score"] == candidates[1]["score"]:
         raise ValueError("residential_detail_link_not_found")
     return candidates[0]
 
