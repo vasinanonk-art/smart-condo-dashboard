@@ -29,6 +29,21 @@ _original_status_endpoint = runtime.tariff_status_071
 _original_candidate_endpoint = runtime.tariff_candidate_071
 _original_provider_debug_endpoint = debug_runtime.serialize_provider_debug
 
+_DETAIL_CAPTURE_DEBUG_FIELDS = (
+    "detail_fixture_guard_entered",
+    "detail_fixture_requested_url",
+    "detail_fixture_final_url",
+    "detail_fixture_final_scheme",
+    "detail_fixture_final_host",
+    "detail_fixture_final_path",
+    "detail_fixture_http_status",
+    "detail_fixture_content_type",
+    "detail_fixture_path_matches",
+    "detail_fixture_exact_url_match",
+    "detail_fixture_capture_status",
+    "detail_fixture_capture_reason",
+)
+
 
 def _debug_object_snapshot(location: str) -> Dict[str, Any]:
     debug = h14._SAFE_DEBUG
@@ -132,6 +147,9 @@ def provider_debug_canonical(request: Request) -> Dict[str, Any]:
             "parser_error_code": run.get("error"),
             **copy.deepcopy(run.get("diagnostics") or {}),
         })
+    # Project capture-guard diagnostics directly from the exact object mutated by the
+    # runtime fetch. Use .get() for every key so missing values are explicitly null.
+    payload.update({key: copy.deepcopy(h14._SAFE_DEBUG.get(key)) for key in _DETAIL_CAPTURE_DEBUG_FIELDS})
     snapshots = payload.get("debug_object_snapshots") if isinstance(payload.get("debug_object_snapshots"), Mapping) else {}
     snapshots = {**copy.deepcopy(dict(snapshots)), "state_runtime_provider_debug_canonical": state_snapshot}
     endpoint = request.scope.get("endpoint")
