@@ -202,6 +202,37 @@ def parse_type_1_2_dom(detail_body: bytes, content_type: str, source_url: str) -
     return result
 
 
+def _record_fetch_call(stage: str, url: str) -> None:
+    h14._SAFE_DEBUG.update({
+        "fetch_call_stage": stage,
+        "fetch_call_url": url,
+        "fetch_return_stage": None,
+        "fetch_return_url": None,
+        "fetch_return_http_status": None,
+        "fetch_return_content_type": None,
+        "fetch_exception_stage": None,
+        "fetch_exception_type": None,
+        "fetch_exception_message": None,
+    })
+
+
+def _record_fetch_return(stage: str, source: Mapping[str, Any]) -> None:
+    h14._SAFE_DEBUG.update({
+        "fetch_return_stage": stage,
+        "fetch_return_url": source.get("url"),
+        "fetch_return_http_status": int(source.get("http_status") or 200),
+        "fetch_return_content_type": source.get("content_type"),
+    })
+
+
+def _record_fetch_exception(stage: str, exc: BaseException) -> None:
+    h14._SAFE_DEBUG.update({
+        "fetch_exception_stage": stage,
+        "fetch_exception_type": type(exc).__name__,
+        "fetch_exception_message": str(exc),
+    })
+
+
 class MEATariffProviderHotfix17(mea.MEATariffProvider):
     name = "mea"
     remote = True
@@ -217,7 +248,13 @@ class MEATariffProviderHotfix17(mea.MEATariffProvider):
         })
         sync._audit("remote_check_started", "started", "provider=mea")
         try:
-            index_source = mea._fetch(mea.MEA_TARIFF_PAGE, {"text/html", "application/pdf"})
+            _record_fetch_call("index_fetch", mea.MEA_TARIFF_PAGE)
+            try:
+                index_source = mea._fetch(mea.MEA_TARIFF_PAGE, {"text/html", "application/pdf"})
+            except Exception as exc:
+                _record_fetch_exception("index_fetch", exc)
+                raise
+            _record_fetch_return("index_fetch", index_source)
             h14._SAFE_DEBUG.update({
                 "index_source_http_status": int(index_source.get("http_status") or 200),
                 "index_source_url": index_source.get("url"),
@@ -225,26 +262,50 @@ class MEATariffProviderHotfix17(mea.MEATariffProvider):
             })
             if index_source.get("content_type") != "text/html":
                 raise ValueError("residential_detail_link_not_found")
-            selected = select_residential_detail_link(index_source["body"], index_source["url"])
+            try:
+                selected = select_residential_detail_link(index_source["body"], index_source["url"])
+            except Exception as exc:
+                h14._SAFE_DEBUG.update({
+                    "fetch_exception_stage": "selector",
+                    "fetch_exception_type": type(exc).__name__,
+                    "fetch_exception_message": str(exc),
+                })
+                raise
             h14._SAFE_DEBUG["residential_detail_url"] = selected["url"]
             mea._LAST_REMOTE_FETCH = 0.0
             h14._SAFE_DEBUG["parser_stage"] = "residential_detail_fetch"
+            _record_fetch_call("residential_detail_fetch", selected["url"])
             try:
                 detail = mea._fetch(selected["url"], {"text/html", "application/pdf"})
             except Exception as exc:
+                _record_fetch_exception("residential_detail_fetch", exc)
                 raise ValueError("residential_detail_fetch_failed") from exc
+            _record_fetch_return("residential_detail_fetch", detail)
             h14._SAFE_DEBUG.update({
                 "detail_source_http_status": int(detail.get("http_status") or 200),
                 "detail_source_content_type": detail.get("content_type"),
                 "detail_source_bytes": len(detail.get("body") or b""),
                 "parser_stage": "type_1_2_section",
             })
-            base = parse_type_1_2_dom(detail["body"], detail["content_type"], detail["url"])
+            try:
+                base = parse_type_1_2_dom(detail["body"], detail["content_type"], detail["url"])
+            except Exception as exc:
+                h14._SAFE_DEBUG.update({
+                    "fetch_exception_stage": "type_1_2_parser",
+                    "fetch_exception_type": type(exc).__name__,
+                    "fetch_exception_message": str(exc),
+                })
+                raise
 
-            # Ft begins only after the complete bounded base section has parsed.
             mea._LAST_REMOTE_FETCH = 0.0
             h14._SAFE_DEBUG["parser_stage"] = "ft_metadata_fetch"
-            metadata_source = mea._fetch(mea.MEA_FT_DATASET_API, {"application/json", "text/json"})
+            _record_fetch_call("ft_metadata_fetch", mea.MEA_FT_DATASET_API)
+            try:
+                metadata_source = mea._fetch(mea.MEA_FT_DATASET_API, {"application/json", "text/json"})
+            except Exception as exc:
+                _record_fetch_exception("ft_metadata_fetch", exc)
+                raise
+            _record_fetch_return("ft_metadata_fetch", metadata_source)
             h14._SAFE_DEBUG["ft_source_http_status"] = int(metadata_source.get("http_status") or 200)
             metadata = json.loads(metadata_source["body"].decode("utf-8"))
             package = metadata.get("result") if isinstance(metadata, Mapping) else None
@@ -253,7 +314,13 @@ class MEATariffProviderHotfix17(mea.MEATariffProvider):
             ft_url = mea._pick_ft_resource(package)
             mea._LAST_REMOTE_FETCH = 0.0
             h14._SAFE_DEBUG["parser_stage"] = "ft_resource_fetch"
-            ft_source = mea._fetch(ft_url, {"text/csv", "application/csv", "text/plain", "application/octet-stream"})
+            _record_fetch_call("ft_resource_fetch", ft_url)
+            try:
+                ft_source = mea._fetch(ft_url, {"text/csv", "application/csv", "text/plain", "application/octet-stream"})
+            except Exception as exc:
+                _record_fetch_exception("ft_resource_fetch", exc)
+                raise
+            _record_fetch_return("ft_resource_fetch", ft_source)
             ft = mea.parse_ft_csv(ft_source["body"], ft_source["url"])
             h14._SAFE_DEBUG["ft_latest_period"] = {"from": ft.get("effective_from"), "to": ft.get("effective_to")}
 
