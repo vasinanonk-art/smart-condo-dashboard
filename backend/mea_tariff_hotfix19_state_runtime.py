@@ -54,6 +54,18 @@ _FETCH_TRACE_DEBUG_FIELDS = (
     "fetch_exception_type",
     "fetch_exception_message",
 )
+_FT_DEBUG_FIELDS = (
+    "ft_csv_header",
+    "ft_csv_column_names",
+    "ft_csv_row_count",
+    "ft_candidate_rows",
+    "ft_selected_row",
+    "ft_rejected_rows",
+    "ft_detected_effective_dates",
+    "ft_detected_value_column",
+    "ft_detected_ft_column",
+    "ft_rejection_reason",
+)
 
 
 def _debug_object_snapshot(location: str) -> Dict[str, Any]:
@@ -160,6 +172,7 @@ def provider_debug_canonical(request: Request) -> Dict[str, Any]:
         })
     payload.update({key: copy.deepcopy(h14._SAFE_DEBUG.get(key)) for key in _DETAIL_CAPTURE_DEBUG_FIELDS})
     payload.update({key: copy.deepcopy(h14._SAFE_DEBUG.get(key)) for key in _FETCH_TRACE_DEBUG_FIELDS})
+    payload.update({key: copy.deepcopy(h14._SAFE_DEBUG.get(key)) for key in _FT_DEBUG_FIELDS})
     snapshots = payload.get("debug_object_snapshots") if isinstance(payload.get("debug_object_snapshots"), Mapping) else {}
     snapshots = {**copy.deepcopy(dict(snapshots)), "state_runtime_provider_debug_canonical": state_snapshot}
     endpoint = request.scope.get("endpoint")

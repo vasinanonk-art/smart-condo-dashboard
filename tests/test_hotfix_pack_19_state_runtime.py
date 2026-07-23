@@ -31,6 +31,18 @@ _FETCH_TRACE_FIELDS = {
     "fetch_exception_type": "ValueError",
     "fetch_exception_message": "type_1_2_section_not_found",
 }
+_FT_FIELDS = {
+    "ft_csv_header": "type,start,end,ft",
+    "ft_csv_column_names": ["type", "start", "end", "ft"],
+    "ft_csv_row_count": 3,
+    "ft_candidate_rows": [{"row_index": 0, "ft_rate": 0.3972, "effective_from": "2026-05-01", "effective_to": "2026-08-31", "status": "currently_effective"}],
+    "ft_selected_row": {"row_index": 0, "ft_rate": 0.3972, "effective_from": "2026-05-01", "effective_to": "2026-08-31", "status": "currently_effective"},
+    "ft_rejected_rows": [{"row_index": 1, "reason": "missing_ft"}, {"row_index": 2, "reason": "future_effective_date"}],
+    "ft_detected_effective_dates": [{"from": "2026-05-01", "to": "2026-08-31"}, {"from": "2026-09-01", "to": None}],
+    "ft_detected_value_column": "ft",
+    "ft_detected_ft_column": "ft",
+    "ft_rejection_reason": "future_effective_date",
+}
 
 
 def _authenticated_client(monkeypatch):
@@ -100,16 +112,16 @@ def test_all_tariff_endpoints_share_canonical_run_state(monkeypatch):
     assert debug["parser_error_code"] == "residential_detail_link_not_found"
 
 
-def test_provider_debug_exposes_detail_capture_diagnostics_unchanged(monkeypatch):
+def _assert_projected_unchanged(monkeypatch, values):
     client, _csrf_token = _authenticated_client(monkeypatch)
-    previous = {key: h14._SAFE_DEBUG.get(key) for key in _DETAIL_FIELDS}
-    missing = {key for key in _DETAIL_FIELDS if key not in h14._SAFE_DEBUG}
+    previous = {key: h14._SAFE_DEBUG.get(key) for key in values}
+    missing = {key for key in values if key not in h14._SAFE_DEBUG}
     try:
-        h14._SAFE_DEBUG.update(_DETAIL_FIELDS)
+        h14._SAFE_DEBUG.update(values)
         response = client.get("/api/tariff/provider/debug")
         assert response.status_code == 200
         payload = response.json()
-        for key, value in _DETAIL_FIELDS.items():
+        for key, value in values.items():
             assert key in payload
             assert payload[key] == value
             assert type(payload[key]) is type(value)
@@ -119,24 +131,15 @@ def test_provider_debug_exposes_detail_capture_diagnostics_unchanged(monkeypatch
                 h14._SAFE_DEBUG.pop(key, None)
             else:
                 h14._SAFE_DEBUG[key] = value
+
+
+def test_provider_debug_exposes_detail_capture_diagnostics_unchanged(monkeypatch):
+    _assert_projected_unchanged(monkeypatch, _DETAIL_FIELDS)
 
 
 def test_provider_debug_exposes_fetch_trace_diagnostics_unchanged(monkeypatch):
-    client, _csrf_token = _authenticated_client(monkeypatch)
-    previous = {key: h14._SAFE_DEBUG.get(key) for key in _FETCH_TRACE_FIELDS}
-    missing = {key for key in _FETCH_TRACE_FIELDS if key not in h14._SAFE_DEBUG}
-    try:
-        h14._SAFE_DEBUG.update(_FETCH_TRACE_FIELDS)
-        response = client.get("/api/tariff/provider/debug")
-        assert response.status_code == 200
-        payload = response.json()
-        for key, value in _FETCH_TRACE_FIELDS.items():
-            assert key in payload
-            assert payload[key] == value
-            assert type(payload[key]) is type(value)
-    finally:
-        for key, value in previous.items():
-            if key in missing:
-                h14._SAFE_DEBUG.pop(key, None)
-            else:
-                h14._SAFE_DEBUG[key] = value
+    _assert_projected_unchanged(monkeypatch, _FETCH_TRACE_FIELDS)
+
+
+def test_provider_debug_exposes_ft_parser_diagnostics_unchanged(monkeypatch):
+    _assert_projected_unchanged(monkeypatch, _FT_FIELDS)
