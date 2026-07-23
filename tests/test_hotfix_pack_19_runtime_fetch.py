@@ -1,7 +1,10 @@
 import socket
 from pathlib import Path
 
+import pytest
+
 from backend import mea_tariff_hotfix14 as h14
+from backend import mea_tariff_hotfix17 as h17
 from backend import mea_tariff_hotfix19_runtime as runtime
 
 DETAIL_URL = "https://www.mea.or.th/our-services/service-rates/other/D5xEaEwgU"
@@ -22,8 +25,9 @@ class _Headers:
 class _Response:
     status = 200
 
-    def __init__(self, url=DETAIL_URL, content_type="text/html"):
+    def __init__(self, url=DETAIL_URL, content_type="text/html", body=b"<html><body>production detail response</body></html>"):
         self._url = url
+        self._body = body
         self.headers = _Headers(content_type)
 
     def __enter__(self):
@@ -36,11 +40,12 @@ class _Response:
         return self._url
 
     def read(self, _limit):
-        return b"<html><body>production detail response</body></html>"
+        return self._body
 
 
-def test_exact_production_detail_timeout_retries_then_recovers(monkeypatch):
+def test_exact_production_detail_timeout_retries_then_recovers(monkeypatch, tmp_path):
     calls = {"count": 0}
+    fixture_path = tmp_path / "mea_residential_type_1_2_production.html"
 
     class _Opener:
         def open(self, request, timeout):
@@ -53,6 +58,7 @@ def test_exact_production_detail_timeout_retries_then_recovers(monkeypatch):
 
     monkeypatch.setattr(runtime.urllib.request, "build_opener", lambda *_args: _Opener())
     monkeypatch.setattr(runtime.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(runtime, "_DETAIL_FIXTURE_PATH", str(fixture_path))
     runtime.mea._LAST_REMOTE_FETCH = 0.0
     h14._SAFE_DEBUG.clear()
 
@@ -63,6 +69,35 @@ def test_exact_production_detail_timeout_retries_then_recovers(monkeypatch):
     assert h14._SAFE_DEBUG["fetch_stage"] == "residential_detail"
     assert h14._SAFE_DEBUG["fetch_attempts"] == 3
     assert h14._SAFE_DEBUG["fetch_failure_kind"] is None
+    assert fixture_path.read_bytes() == result["body"]
+
+
+def test_successful_detail_fetch_writes_exact_bytes_and_parser_failure_keeps_file(monkeypatch, tmp_path):
+    body = b"<html><body><section>exact production detail bytes without type 1.2</section></body></html>"
+    fixture_path = tmp_path / "mea_residential_type_1_2_production.html"
+
+    class _Opener:
+        def open(self, request, timeout):
+            assert request.full_url == DETAIL_URL
+            assert timeout == runtime.FETCH_TIMEOUT_SEC
+            return _Response(body=body)
+
+    monkeypatch.setattr(runtime.urllib.request, "build_opener", lambda *_args: _Opener())
+    monkeypatch.setattr(runtime, "_DETAIL_FIXTURE_PATH", str(fixture_path))
+    runtime.mea._LAST_REMOTE_FETCH = 0.0
+    h14._SAFE_DEBUG.clear()
+
+    detail = runtime.fetch_official(DETAIL_URL, {"text/html"})
+
+    assert fixture_path.read_bytes() == body
+    assert h14._SAFE_DEBUG["detail_fixture_capture_status"] == "captured"
+    assert h14._SAFE_DEBUG["detail_fixture_capture_bytes"] == len(body)
+
+    with pytest.raises(ValueError, match="type_1_2_section_not_found"):
+        h17.parse_type_1_2_dom(detail["body"], detail["content_type"], detail["url"])
+
+    assert fixture_path.exists()
+    assert fixture_path.read_bytes() == body
 
 
 def test_detail_fixture_guard_diagnostics_exist_when_capture_is_skipped(monkeypatch):
