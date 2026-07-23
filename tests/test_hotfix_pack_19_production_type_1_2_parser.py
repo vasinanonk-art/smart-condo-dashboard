@@ -36,7 +36,7 @@ def test_production_type_1_2_parser_stops_before_1_3_boundary():
 
 
 def test_production_type_1_2_parser_rejects_incomplete_fixture():
-    body = FIXTURE.read_bytes().replace(b"4.4217", b"", 1)
+    body = FIXTURE.read_bytes().replace(b"<td>4.4217 \xe0\xb8\x9a\xe0\xb8\xb2\xe0\xb8\x97</td>", b"<td></td>", 1)
 
     with pytest.raises(ValueError, match="tier_parse_failed"):
         h19._parse_production_type_1_2(body, "text/html", SOURCE_URL)
@@ -68,3 +68,12 @@ def test_production_type_1_2_parser_ignores_extra_non_tier_rows():
         {"up_to_kwh": None, "rate": 4.4217},
     ]
     assert result["service_charge"] == 24.62
+
+
+def test_production_type_1_2_parser_does_not_recover_rate_from_elsewhere():
+    body = FIXTURE.read_bytes()
+    body = body.replace(b"<td>4.4217 \xe0\xb8\x9a\xe0\xb8\xb2\xe0\xb8\x97</td>", b"<td></td>", 1)
+    body += b"<script>window.fakeRate = '4.4217';</script><div hidden>4.4217</div>"
+
+    with pytest.raises(ValueError, match="tier_parse_failed"):
+        h19._parse_production_type_1_2(body, "text/html", SOURCE_URL)

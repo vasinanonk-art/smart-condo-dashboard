@@ -313,16 +313,30 @@ def _find_unique_type_1_2_container(detail_body: bytes) -> tuple[h17._DomNode, s
     return bounded, " ".join(heading_node.text().split())
 
 
+def _direct_cells(row: h17._DomNode) -> list[str]:
+    return [child.text().strip() for child in row.children if child.tag == "td" and child.text().strip()]
+
+
 def _parse_production_type_1_2(detail_body: bytes, content_type: str, source_url: str) -> Dict[str, Any]:
     if content_type != "text/html":
         return h17.parse_type_1_2_dom(detail_body, content_type, source_url)
     container, heading = _find_unique_type_1_2_container(detail_body)
-    rows = [node for node in h17._walk(container) if node.tag == "tr"]
+    tables = [node for node in h17._walk(container) if node.tag == "table"]
+    tariff_tables: list[h17._DomNode] = []
+    for table in tables:
+        row_texts = [" ".join(_direct_cells(row)) for row in h17._walk(table) if row.tag == "tr"]
+        normalized_rows = [_norm(text) for text in row_texts if text]
+        if any("หน่วยที่ 1 150" in text for text in normalized_rows) and any("ค่าบริการ" in text for text in normalized_rows):
+            tariff_tables.append(table)
+    if len(tariff_tables) != 1:
+        raise ValueError("tier_parse_failed")
 
     tiers_by_limit: Dict[Optional[float], float] = {}
     service_charge: Optional[float] = None
-    for row in rows:
-        cells = _child_texts(row, "td")
+    for row in h17._walk(tariff_tables[0]):
+        if row.tag != "tr":
+            continue
+        cells = _direct_cells(row)
         if not cells:
             continue
         row_text = " ".join(cells)
@@ -333,12 +347,7 @@ def _parse_production_type_1_2(detail_body: bytes, content_type: str, source_url
                 raise ValueError("tier_parse_failed")
             service_charge = mea._number(numbers[0])
             continue
-        if len(cells) != 3 or "หน่วยละ" not in _norm(cells[1]):
-            continue
-        rate_numbers = re.findall(r"[0-9]+(?:\.[0-9]+)?", cells[2])
-        if len(rate_numbers) != 1:
-            raise ValueError("tier_parse_failed")
-        rate = mea._number(rate_numbers[0])
+
         first = _norm(cells[0])
         if "หน่วยที่ 1 150" in first:
             limit: Optional[float] = 150.0
@@ -348,9 +357,15 @@ def _parse_production_type_1_2(detail_body: bytes, content_type: str, source_url
             limit = None
         else:
             continue
+
+        if len(cells) != 3 or "หน่วยละ" not in _norm(cells[1]):
+            raise ValueError("tier_parse_failed")
+        rate_numbers = re.findall(r"[0-9]+(?:\.[0-9]+)?", cells[2])
+        if len(rate_numbers) != 1:
+            raise ValueError("tier_parse_failed")
         if limit in tiers_by_limit:
             raise ValueError("tier_parse_failed")
-        tiers_by_limit[limit] = rate
+        tiers_by_limit[limit] = mea._number(rate_numbers[0])
 
     if set(tiers_by_limit) != {150.0, 400.0, None}:
         raise ValueError("tier_parse_failed")
@@ -388,7 +403,7 @@ def _parse_production_type_1_2(detail_body: bytes, content_type: str, source_url
         "parser_version": PARSER_VERSION,
         "type_1_2_heading": h14._safe_section(heading, 180),
         "type_1_2_section_length": len(container.text()),
-        "category_match_method": "production_dom_exact_1_2_heading+bounded_sibling_range+content_identified_tier_rows+service_charge",
+        "category_match_method": "production_dom_exact_1_2_heading+bounded_sibling_range+single_tariff_table+strict_direct_cells",
         "category_match_score": 100,
     })
     return {
