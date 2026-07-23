@@ -291,16 +291,26 @@ def _find_unique_type_1_2_container(detail_body: bytes) -> tuple[h17._DomNode, s
             matches.append(node)
     if len(matches) != 1:
         raise ValueError("type_1_2_section_ambiguous" if matches else "type_1_2_section_not_found")
+
     heading_node = matches[0]
-    container = heading_node.parent
-    while container is not None and container.tag != "document":
-        headings = _child_texts(container, "h3")
-        if len(headings) == 1 and heading in headings:
-            break
-        container = container.parent
-    if container is None or container.tag == "document":
+    parent = heading_node.parent
+    if parent is None:
         raise ValueError("type_1_2_section_not_found")
-    return container, heading
+    try:
+        start_index = parent.children.index(heading_node)
+    except ValueError:
+        raise ValueError("type_1_2_section_not_found")
+
+    bounded = h17._DomNode("section", {"data-hotfix19": "type-1-2"})
+    for sibling in parent.children[start_index:]:
+        if sibling is not heading_node and sibling.tag in _HEADING_TAGS:
+            sibling_heading = _norm(" ".join(sibling.text().split()))
+            if re.search(r"(?:^|\s)1\.3(?:\s|$)", sibling_heading):
+                break
+        bounded.children.append(sibling)
+    if not bounded.children or bounded.children[0] is not heading_node:
+        raise ValueError("type_1_2_section_not_found")
+    return bounded, " ".join(heading_node.text().split())
 
 
 def _parse_production_type_1_2(detail_body: bytes, content_type: str, source_url: str) -> Dict[str, Any]:
@@ -371,7 +381,7 @@ def _parse_production_type_1_2(detail_body: bytes, content_type: str, source_url
         "parser_version": PARSER_VERSION,
         "type_1_2_heading": h14._safe_section(heading, 180),
         "type_1_2_section_length": len(container.text()),
-        "category_match_method": "production_dom_exact_1_2_heading+bounded_container+exact_tier_rows+service_charge",
+        "category_match_method": "production_dom_exact_1_2_heading+bounded_sibling_range+exact_tier_rows+service_charge",
         "category_match_score": 100,
     })
     return {
