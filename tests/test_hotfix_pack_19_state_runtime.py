@@ -20,6 +20,17 @@ _DETAIL_FIELDS = {
     "detail_fixture_capture_status": "captured",
     "detail_fixture_capture_reason": None,
 }
+_FETCH_TRACE_FIELDS = {
+    "fetch_call_stage": "residential_detail_fetch",
+    "fetch_call_url": "https://www.mea.or.th/our-services/service-rates/other/D5xEaEwgU",
+    "fetch_return_stage": "residential_detail_fetch",
+    "fetch_return_url": "https://www.mea.or.th/our-services/service-rates/other/D5xEaEwgU",
+    "fetch_return_http_status": 200,
+    "fetch_return_content_type": "text/html",
+    "fetch_exception_stage": "type_1_2_parser",
+    "fetch_exception_type": "ValueError",
+    "fetch_exception_message": "type_1_2_section_not_found",
+}
 
 
 def _authenticated_client(monkeypatch):
@@ -99,6 +110,27 @@ def test_provider_debug_exposes_detail_capture_diagnostics_unchanged(monkeypatch
         assert response.status_code == 200
         payload = response.json()
         for key, value in _DETAIL_FIELDS.items():
+            assert key in payload
+            assert payload[key] == value
+            assert type(payload[key]) is type(value)
+    finally:
+        for key, value in previous.items():
+            if key in missing:
+                h14._SAFE_DEBUG.pop(key, None)
+            else:
+                h14._SAFE_DEBUG[key] = value
+
+
+def test_provider_debug_exposes_fetch_trace_diagnostics_unchanged(monkeypatch):
+    client, _csrf_token = _authenticated_client(monkeypatch)
+    previous = {key: h14._SAFE_DEBUG.get(key) for key in _FETCH_TRACE_FIELDS}
+    missing = {key for key in _FETCH_TRACE_FIELDS if key not in h14._SAFE_DEBUG}
+    try:
+        h14._SAFE_DEBUG.update(_FETCH_TRACE_FIELDS)
+        response = client.get("/api/tariff/provider/debug")
+        assert response.status_code == 200
+        payload = response.json()
+        for key, value in _FETCH_TRACE_FIELDS.items():
             assert key in payload
             assert payload[key] == value
             assert type(payload[key]) is type(value)
