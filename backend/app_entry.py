@@ -127,7 +127,7 @@ from backend import dashboard_auth as _dashboard_auth  # noqa: F401,E402
 # are requested automatically without disabling API caching.
 from backend import frontend_asset_version as _frontend_asset_version  # noqa: F401,E402
 
-# Bind FT diagnostics last, after every runtime module has had a chance to replace
-# mea.parse_ft_csv. The wrapper delegates to the parser bound at this exact point.
+# Install production FT schema support, then bind the existing diagnostics wrapper last.
+from backend import mea_tariff_hotfix19_ft_parser as _mea_tariff_hotfix19_ft_parser  # noqa: F401,E402
 from backend import mea_tariff_hotfix19_ft_debug as _mea_tariff_hotfix19_ft_debug  # noqa: F401,E402
 _mea_tariff_hotfix19_ft_debug.bind_runtime_parser()
