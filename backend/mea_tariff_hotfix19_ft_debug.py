@@ -9,6 +9,7 @@ from typing import Any, Dict, Mapping, Optional
 from zoneinfo import ZoneInfo
 
 from backend import mea_tariff_hotfix14 as h14
+from backend import mea_tariff_hotfix17 as h17
 from backend import mea_tariff_provider as mea
 
 _original_parse_ft_csv = mea.parse_ft_csv
@@ -110,4 +111,11 @@ def parse_ft_csv_diagnostic(body: bytes, source_url: str, now: Optional[datetime
     return _original_parse_ft_csv(body, source_url, now)
 
 
-mea.parse_ft_csv = parse_ft_csv_diagnostic
+def _bind_runtime_parser() -> None:
+    mea.parse_ft_csv = parse_ft_csv_diagnostic
+    # The production provider resolves mea.parse_ft_csv at request time, but bind the
+    # HOTFIX 17 module alias explicitly so tests and future refactors cannot bypass it.
+    setattr(h17, "parse_ft_csv", parse_ft_csv_diagnostic)
+
+
+_bind_runtime_parser()

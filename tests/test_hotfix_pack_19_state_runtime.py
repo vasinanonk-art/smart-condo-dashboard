@@ -3,6 +3,8 @@ from fastapi.testclient import TestClient
 
 from backend import mea_tariff_hotfix14 as h14
 from backend import mea_tariff_hotfix18 as h18
+from backend import mea_tariff_hotfix19_ft_debug as ft_debug
+from backend import mea_tariff_provider as mea
 from backend.app_entry import app
 
 
@@ -143,3 +145,32 @@ def test_provider_debug_exposes_fetch_trace_diagnostics_unchanged(monkeypatch):
 
 def test_provider_debug_exposes_ft_parser_diagnostics_unchanged(monkeypatch):
     _assert_projected_unchanged(monkeypatch, _FT_FIELDS)
+
+
+def test_real_ft_parser_path_populates_and_projects_runtime_diagnostics(monkeypatch):
+    csv_body = (
+        "type,start,end,ft\n"
+        "residential,2026-05-01,2026-08-31,0.3972\n"
+        "residential,2026-09-01,,0.4120\n"
+    ).encode("utf-8")
+
+    assert mea.parse_ft_csv is ft_debug.parse_ft_csv_diagnostic
+    h14._SAFE_DEBUG.clear()
+    result = mea.parse_ft_csv(csv_body, "https://opendata.mea.or.th/ft.csv")
+    assert result["ft_rate"] == 0.3972
+
+    populated = {key: h14._SAFE_DEBUG.get(key) for key in _FT_FIELDS}
+    assert populated["ft_csv_header"] == "type,start,end,ft"
+    assert populated["ft_csv_column_names"] == ["type", "start", "end", "ft"]
+    assert populated["ft_csv_row_count"] == 2
+    assert populated["ft_candidate_rows"]
+    assert populated["ft_selected_row"] is not None
+    assert populated["ft_detected_ft_column"] == "ft"
+
+    client, _csrf_token = _authenticated_client(monkeypatch)
+    response = client.get("/api/tariff/provider/debug")
+    assert response.status_code == 200
+    payload = response.json()
+    for key, value in populated.items():
+        assert key in payload
+        assert payload[key] == value
