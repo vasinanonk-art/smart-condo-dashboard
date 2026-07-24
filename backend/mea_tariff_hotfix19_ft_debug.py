@@ -5,14 +5,15 @@ import copy
 import csv
 import io
 from datetime import datetime
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional
 from zoneinfo import ZoneInfo
 
 from backend import mea_tariff_hotfix14 as h14
 from backend import mea_tariff_hotfix17 as h17
 from backend import mea_tariff_provider as mea
 
-_original_parse_ft_csv = mea.parse_ft_csv
+_WRAPPER_MARKER = "_hotfix19_ft_diagnostic_wrapper"
+_wrapped_ft_parser: Optional[Callable[..., Dict[str, Any]]] = None
 
 
 def _safe_row(row: Mapping[str, Any]) -> Dict[str, Any]:
@@ -108,14 +109,29 @@ def _diagnose_ft_csv(body: bytes, source_url: str, now: Optional[datetime]) -> N
 
 def parse_ft_csv_diagnostic(body: bytes, source_url: str, now: Optional[datetime] = None) -> Dict[str, Any]:
     _diagnose_ft_csv(body, source_url, now)
-    return _original_parse_ft_csv(body, source_url, now)
+    if _wrapped_ft_parser is None:
+        raise RuntimeError("ft_diagnostic_wrapper_not_bound")
+    return _wrapped_ft_parser(body, source_url, now)
 
 
-def _bind_runtime_parser() -> None:
+setattr(parse_ft_csv_diagnostic, _WRAPPER_MARKER, True)
+
+
+def bind_runtime_parser() -> Callable[..., Dict[str, Any]]:
+    """Wrap the parser currently bound in production exactly once and bind aliases."""
+    global _wrapped_ft_parser
+    current = mea.parse_ft_csv
+    if current is parse_ft_csv_diagnostic:
+        setattr(h17, "parse_ft_csv", parse_ft_csv_diagnostic)
+        return parse_ft_csv_diagnostic
+    if getattr(current, _WRAPPER_MARKER, False):
+        mea.parse_ft_csv = current
+        setattr(h17, "parse_ft_csv", current)
+        return current
+    _wrapped_ft_parser = current
     mea.parse_ft_csv = parse_ft_csv_diagnostic
-    # The production provider resolves mea.parse_ft_csv at request time, but bind the
-    # HOTFIX 17 module alias explicitly so tests and future refactors cannot bypass it.
     setattr(h17, "parse_ft_csv", parse_ft_csv_diagnostic)
+    return parse_ft_csv_diagnostic
 
 
-_bind_runtime_parser()
+bind_runtime_parser()

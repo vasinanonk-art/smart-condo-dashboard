@@ -86,8 +86,6 @@ from backend import mea_tariff_hotfix19_runtime as _mea_tariff_hotfix19_runtime 
 from backend import mea_tariff_hotfix19_filter as _mea_tariff_hotfix19_filter  # noqa: F401,E402
 # Bind the production provider to the same authoritative selector exercised by tests.
 from backend import mea_tariff_hotfix19_selector_runtime as _mea_tariff_hotfix19_selector_runtime  # noqa: F401,E402
-# Add FT CSV diagnostics without changing the existing parser result or error behavior.
-from backend import mea_tariff_hotfix19_ft_debug as _mea_tariff_hotfix19_ft_debug  # noqa: F401,E402
 # Canonicalize the provider debug endpoint after all earlier serializers/routes exist.
 from backend import mea_tariff_hotfix19_debug_runtime as _mea_tariff_hotfix19_debug_runtime  # noqa: F401,E402
 # Persist one canonical tariff run object shared by status, candidate, and debug APIs.
@@ -128,3 +126,8 @@ from backend import dashboard_auth as _dashboard_auth  # noqa: F401,E402
 # Serve HTML with one stable build version per deployment so updated JS/CSS assets
 # are requested automatically without disabling API caching.
 from backend import frontend_asset_version as _frontend_asset_version  # noqa: F401,E402
+
+# Bind FT diagnostics last, after every runtime module has had a chance to replace
+# mea.parse_ft_csv. The wrapper delegates to the parser bound at this exact point.
+from backend import mea_tariff_hotfix19_ft_debug as _mea_tariff_hotfix19_ft_debug  # noqa: F401,E402
+_mea_tariff_hotfix19_ft_debug.bind_runtime_parser()
