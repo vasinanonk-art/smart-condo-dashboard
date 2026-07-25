@@ -1,0 +1,106 @@
+diff --git a/backend/mea_tariff_hotfix19_ft_debug.py b/backend/mea_tariff_hotfix19_ft_debug.py
+index 4d33fcc..1111111 100644
+--- a/backend/mea_tariff_hotfix19_ft_debug.py
++++ b/backend/mea_tariff_hotfix19_ft_debug.py
+@@ -11,7 +11,6 @@ from typing import Any, Callable, Dict, Mapping, Optional
+ from zoneinfo import ZoneInfo
+ 
+ from backend import mea_tariff_hotfix14 as h14
+-from backend import mea_tariff_hotfix17 as h17
+ from backend import mea_tariff_provider as mea
+ 
+ _WRAPPER_MARKER = "_hotfix19_ft_diagnostic_wrapper"
+@@ -120,20 +119,15 @@ setattr(parse_ft_csv_diagnostic, _WRAPPER_MARKER, True)
+ 
+ 
+ def bind_runtime_parser() -> Callable[..., Dict[str, Any]]:
+-    """Wrap the currently active production FT parser exactly once and bind aliases."""
++    """Wrap the currently active production FT parser exactly once."""
+     global _wrapped_ft_parser
+     current = mea.parse_ft_csv
+     if current is parse_ft_csv_diagnostic:
+-        setattr(h17, "parse_ft_csv", parse_ft_csv_diagnostic)
+         return parse_ft_csv_diagnostic
+     if getattr(current, _WRAPPER_MARKER, False):
+         mea.parse_ft_csv = current
+-        setattr(h17, "parse_ft_csv", current)
+         return current
+     _wrapped_ft_parser = current
+     mea.parse_ft_csv = parse_ft_csv_diagnostic
+-    setattr(h17, "parse_ft_csv", parse_ft_csv_diagnostic)
+     return parse_ft_csv_diagnostic
+-
+-
+-bind_runtime_parser()
+diff --git a/backend/app_entry.py b/backend/app_entry.py
+index 9662cdb..2222222 100644
+--- a/backend/app_entry.py
++++ b/backend/app_entry.py
+@@ -129,7 +129,9 @@ from backend import dashboard_auth as _dashboard_auth  # noqa: F401,E402
+ # are requested automatically without disabling API caching.
+ from backend import frontend_asset_version as _frontend_asset_version  # noqa: F401,E402
+ 
+-# Install production FT schema support, then bind the existing diagnostics wrapper last.
++# Install the production FT parser first. Then import the diagnostics owner and bind
++# the wrapper exactly once after every startup module has finished replacing runtime
++# parser symbols.
+ from backend import mea_tariff_hotfix19_ft_parser as _mea_tariff_hotfix19_ft_parser  # noqa: F401,E402
+ from backend import mea_tariff_hotfix19_ft_debug as _mea_tariff_hotfix19_ft_debug  # noqa: F401,E402
+ _mea_tariff_hotfix19_ft_debug.bind_runtime_parser()
+diff --git a/tests/test_hotfix_pack_19_ft_load_order.py b/tests/test_hotfix_pack_19_ft_load_order.py
+index e770e82..3333333 100644
+--- a/tests/test_hotfix_pack_19_ft_load_order.py
++++ b/tests/test_hotfix_pack_19_ft_load_order.py
+@@ -1,27 +1,29 @@
+-from backend import mea_tariff_hotfix17 as h17
++import importlib
++
++from backend import mea_tariff_hotfix14 as h14
+ from backend import mea_tariff_provider as mea
+-from backend.app_entry import app
+ from backend import mea_tariff_hotfix19_ft_debug as ft_debug
+ from backend import mea_tariff_hotfix19_ft_parser as ft_parser
+ 
+ 
+ def test_app_entry_imports_and_public_binding_api_exists():
+-    assert app is not None
++    app_entry = importlib.import_module("backend.app_entry")
++
++    assert app_entry.app is not None
+     assert callable(ft_debug.bind_runtime_parser)
+     assert mea.parse_ft_csv is ft_debug.parse_ft_csv_diagnostic
+-    assert h17.parse_ft_csv is ft_debug.parse_ft_csv_diagnostic
+ 
+ 
+ def test_ft_binding_is_idempotent_and_preserves_production_delegate():
++    original_delegate = ft_debug._wrapped_ft_parser
+     assert ft_debug._wrapped_ft_parser is ft_parser.parse_ft_with_distinct_status
+     first = ft_debug.bind_runtime_parser()
+     second = ft_debug.bind_runtime_parser()
+     assert first is ft_debug.parse_ft_csv_diagnostic
+     assert second is ft_debug.parse_ft_csv_diagnostic
+     assert mea.parse_ft_csv is ft_debug.parse_ft_csv_diagnostic
+-    assert h17.parse_ft_csv is ft_debug.parse_ft_csv_diagnostic
+-    assert ft_debug._wrapped_ft_parser is ft_parser.parse_ft_with_distinct_status
++    assert ft_debug._wrapped_ft_parser is original_delegate
+ 
+ 
+ def test_ft_diagnostic_wrapper_remains_active_over_production_parser():
+@@ -30,5 +32,17 @@ def test_ft_diagnostic_wrapper_remains_active_over_production_parser():
+         "year,month,type,type_name,ft_rate\n"
+         "2026,7,1,ประเภทที่ 1 บ้านอยู่อาศัย,0.3972\n"
+     ).encode("utf-8")
++
++    h14._SAFE_DEBUG.clear()
+     result = mea.parse_ft_csv(body, "https://opendata.mea.or.th/ft.csv")
++
+     assert result["ft_rate"] == 0.3972
++    assert ft_debug._wrapped_ft_parser is ft_parser.parse_ft_with_distinct_status
++    assert h14._SAFE_DEBUG["ft_csv_header"] == "year,month,type,type_name,ft_rate"
++    assert h14._SAFE_DEBUG["ft_csv_column_names"] == [
++        "year", "month", "type", "type_name", "ft_rate"
++    ]
++    assert h14._SAFE_DEBUG["ft_csv_row_count"] == 1
++    assert "ft_candidate_rows" in h14._SAFE_DEBUG
++    assert "ft_rejected_rows" in h14._SAFE_DEBUG
++    assert "ft_selected_row" in h14._SAFE_DEBUG
