@@ -245,9 +245,54 @@ function renderLighting() {
   renderSonoffGrid();
   DashboardModules.renderZones($('tuyaList'), post, toast);
 }
-async function sonoff(deviceId, channel, action) { try { await post('/api/sonoff',{deviceid:deviceId,channel,action}); toast(`CH${channel} ${action.toUpperCase()}`); await loadSonoff(); renderSonoffGrid(); } catch (error) { toast(error.message); } }
-async function sonoffDevice(deviceId, action) { try { await post('/api/sonoff/device',{deviceid:deviceId,action}); toast(`Device ${action.toUpperCase()}`); await loadSonoff(); renderSonoffGrid(); } catch (error) { toast(error.message); } }
-async function sonoffAll(action) { try { await post('/api/sonoff/all',{action}); toast(`All Sonoff ${action.toUpperCase()}`); await loadSonoff(); renderSonoffGrid(); } catch (error) { toast(error.message); } }
+function applySonoffResponse(payload, affectedDeviceId = null) {
+  if (!payload || !Array.isArray(payload.devices)) return false;
+  let devices = payload.devices;
+  if (affectedDeviceId && payload.device) {
+    devices = [...(S.sonoff.devices || [])];
+    const index = devices.findIndex(device => String(device.deviceid) === String(affectedDeviceId));
+    if (index < 0) return false;
+    devices[index] = {...devices[index], ...payload.device};
+  }
+  S.sonoff = {...S.sonoff, ...payload, devices};
+  S.sonoffAvailable = true;
+  S.sonoffLastSyncTs = Math.floor(Date.now()/1000);
+  S.sonoffError = null;
+  return true;
+}
+function restoreSonoffGang(deviceId, channel) {
+  const device = (S.sonoff.devices || []).find(item => String(item.deviceid) === String(deviceId));
+  const state = device?.channel_states?.[String(channel)] || 'off';
+  const input = document.querySelector(`[data-sonoff="${CSS.escape(String(deviceId))}"][data-channel="${Number(channel)}"]`);
+  if (input) { input.checked = state === 'on'; input.dataset.next = state === 'on' ? 'off' : 'on'; }
+}
+async function sonoff(deviceId, channel, action) {
+  try {
+    const response = await post('/api/sonoff',{deviceid:deviceId,channel,action});
+    if (!applySonoffResponse(response, deviceId)) throw new Error('Sonoff response missing updated device state');
+    renderSonoffGrid();
+    toast(response.state_confirmed === false ? `CH${channel} ${action.toUpperCase()} · confirmation pending` : `CH${channel} ${action.toUpperCase()}`);
+  } catch (error) {
+    restoreSonoffGang(deviceId, channel);
+    toast(error.message);
+  }
+}
+async function sonoffDevice(deviceId, action) {
+  try {
+    const response = await post('/api/sonoff/device',{deviceid:deviceId,action});
+    applySonoffResponse(response);
+    renderSonoffGrid();
+    toast(`Device ${action.toUpperCase()}`);
+  } catch (error) { toast(error.message); }
+}
+async function sonoffAll(action) {
+  try {
+    const response = await post('/api/sonoff/all',{action});
+    applySonoffResponse(response);
+    renderSonoffGrid();
+    toast(`All Sonoff ${action.toUpperCase()}`);
+  } catch (error) { toast(error.message); }
+}
 
 function renderClimate() {
   const history = S.history;

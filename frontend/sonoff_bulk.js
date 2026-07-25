@@ -9,9 +9,6 @@
       sonoffSetResponse(response);
       renderSonoff();
     }
-    const fresh = await getJson('/api/sonoff');
-    sonoffSetResponse(fresh);
-    renderSonoff();
   }
 
   async function sonoffBulkAll(action, btn) {

@@ -14,6 +14,7 @@ try:
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import HTMLResponse
     from fastapi.routing import APIRouter
+    from starlette.concurrency import run_in_threadpool
 except Exception:  # pragma: no cover
     inspect = None
     json = None
@@ -26,6 +27,7 @@ except Exception:  # pragma: no cover
     Request = None
     HTMLResponse = None
     APIRouter = None
+    run_in_threadpool = None
 
 ARRIVAL_DEVICEID = "1002354e11"
 ARRIVAL_CHANNEL = 1
@@ -78,6 +80,9 @@ def _sonoff_payload(data):
     }
     if "results" in data:
         payload["results"] = data.get("results", [])
+    for key in ("device", "deviceid", "channel", "action", "state_confirmed", "confirmation"):
+        if key in data:
+            payload[key] = data.get(key)
     return payload
 
 
@@ -87,7 +92,7 @@ def _sonoff_get_handler():
 
 async def _sonoff_post_handler(request: Request):
     body = await request.json()
-    result = set_state(body.get("deviceid", ""), body.get("action", ""), int(body.get("channel") or 1))
+    result = await run_in_threadpool(set_state, body.get("deviceid", ""), body.get("action", ""), int(body.get("channel") or 1))
     if not result.get("ok"):
         raise HTTPException(status_code=502, detail=result.get("error", "sonoff command failed"))
     data = {
@@ -97,9 +102,15 @@ async def _sonoff_post_handler(request: Request):
         "last_error": result.get("last_error"),
         "devices": result.get("devices", []),
     }
-    payload = _sonoff_payload(data)
-    payload.update({"deviceid": result.get("deviceid"), "channel": result.get("channel", 1), "action": result.get("action")})
-    return payload
+    data.update({
+        "device": result.get("device"),
+        "deviceid": result.get("deviceid"),
+        "channel": result.get("channel", 1),
+        "action": result.get("action"),
+        "state_confirmed": result.get("state_confirmed"),
+        "confirmation": result.get("confirmation"),
+    })
+    return _sonoff_payload(data)
 
 
 async def _sonoff_device_handler(request: Request):
