@@ -4,8 +4,10 @@ import unittest
 from unittest.mock import patch
 
 import bcrypt
+from fastapi.testclient import TestClient
 
 from backend import dashboard_auth as auth
+from backend.app_entry import app
 
 
 class DashboardAuthTests(unittest.TestCase):
@@ -64,6 +66,12 @@ class DashboardAuthTests(unittest.TestCase):
     def test_missing_configuration_never_allows_access(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertFalse(auth.configured())
+
+    def test_provider_debug_requires_authentication(self):
+        with patch.dict(os.environ, self._env(), clear=True):
+            response = TestClient(app).get("/api/tariff/provider/debug")
+            self.assertEqual(response.status_code, 401)
+            self.assertEqual(response.json(), {"detail": "authentication required"})
 
 
 if __name__ == "__main__":

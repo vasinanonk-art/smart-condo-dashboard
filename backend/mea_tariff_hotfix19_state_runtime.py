@@ -199,8 +199,10 @@ def provider_debug_canonical(request: Request) -> Dict[str, Any]:
     return payload
 
 
-# Remove duplicate GET registrations for the canonical read endpoints, then register
-# exactly one owner for each. The POST check route is replaced in place.
+# Remove duplicate GET registrations for the canonical status and candidate endpoints,
+# then register exactly one owner for each. The provider-debug route remains owned by
+# debug_runtime.get_provider_debug, which projects this module's canonical state.
+# The POST check route is replaced in place.
 for route in list(h14.app.router.routes):
     path = getattr(route, "path", None)
     methods = set(getattr(route, "methods", set()) or set())
@@ -211,7 +213,6 @@ for route in list(h14.app.router.routes):
     elif path in {
         "/api/tariff/status",
         "/api/tariff/candidate",
-        "/api/tariff/provider/debug",
     } and "GET" in methods:
         h14.app.router.routes.remove(route)
 
@@ -227,17 +228,8 @@ h14.app.add_api_route(
     methods=["GET"],
     name="tariff_candidate_hotfix19_canonical",
 )
-h14.app.add_api_route(
-    "/api/tariff/provider/debug",
-    provider_debug_canonical,
-    methods=["GET"],
-    name="provider_debug_hotfix19_canonical",
-)
-
 # Internal aliases point to the canonical wrappers, but the wrappers themselves only
 # call the saved originals above and therefore cannot recurse through these names.
 runtime.tariff_status_071 = tariff_status_canonical
 runtime.tariff_candidate_071 = tariff_candidate_canonical
-debug_runtime.serialize_provider_debug = provider_debug_canonical
-h14.provider_debug = provider_debug_canonical
 sync._TARIFF_CANONICAL_RUN_STATE = "maintenance.tariff_run"

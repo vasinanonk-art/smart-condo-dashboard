@@ -8,6 +8,8 @@ from __future__ import annotations
 import copy
 from typing import Any, Dict
 
+from fastapi import Request
+
 from backend import automatic_tariff_sync as sync
 from backend import mea_tariff_hotfix14 as h14
 from backend import mea_tariff_hotfix17 as h17
@@ -40,6 +42,18 @@ def runtime_route_map() -> Dict[str, Any]:
         + "."
         + getattr(selected, "__name__", "unknown")
     )
+    check_endpoint = next(
+        (
+            getattr(route, "endpoint", None)
+            for route in h14.app.router.routes
+            if getattr(route, "path", None) == "/api/tariff/check"
+            and "POST" in set(getattr(route, "methods", set()) or set())
+        ),
+        None,
+    )
+    check_module = getattr(check_endpoint, "__module__", "unknown")
+    check_function = getattr(check_endpoint, "__name__", "unknown")
+    check_name = f"{check_module}.{check_function}"
     return {
         "debug_route": {
             "file": "backend/mea_tariff_hotfix19_debug_runtime.py",
@@ -48,8 +62,8 @@ def runtime_route_map() -> Dict[str, Any]:
             "registration": "app.add_api_route('/api/tariff/provider/debug', get_provider_debug, methods=['GET'])",
         },
         "check_route": {
-            "file": "backend/mea_tariff_hotfix18.py",
-            "function": "tariff_check_hotfix18",
+            "file": check_module.replace(".", "/") + ".py",
+            "function": check_function,
             "apirouter": "backend.app.app.router",
             "registration": "existing /api/tariff/check route endpoint replaced at import time",
         },
@@ -57,6 +71,7 @@ def runtime_route_map() -> Dict[str, Any]:
         "selector": selector_name,
         "call_chain": [
             "POST /api/tariff/check",
+            check_name,
             "backend.mea_tariff_hotfix18.tariff_check_hotfix18",
             "backend.mea_tariff_hotfix16_runtime.tariff_check_hotfix16",
             "backend.mea_tariff_runtime.tariff_check_071",
@@ -69,12 +84,14 @@ def runtime_route_map() -> Dict[str, Any]:
 
 def serialize_provider_debug() -> Dict[str, Any]:
     snapshot = _debug_object_snapshot("backend.mea_tariff_hotfix19_debug_runtime.serialize_provider_debug")
+    route_map = runtime_route_map()
     return {
         "provider": "mea",
         "official_source_only": True,
         **copy.deepcopy(h14._SAFE_DEBUG),
         **selector_runtime.selector_identity(),
-        "runtime_route_map": runtime_route_map(),
+        "runtime_route_map": route_map,
+        "runtime_call_chain": route_map["call_chain"],
         "debug_object_identity": snapshot["object_id"],
         "debug_module": snapshot["module"],
         "debug_key_count": snapshot["key_count"],
@@ -84,8 +101,13 @@ def serialize_provider_debug() -> Dict[str, Any]:
     }
 
 
-def get_provider_debug() -> Dict[str, Any]:
-    return serialize_provider_debug()
+def get_provider_debug(request: Request) -> Dict[str, Any]:
+    # Imported lazily because state_runtime imports this module while installing the
+    # canonical tariff state wrappers. The public route remains owned here while its
+    # response is projected from the same canonical run as status and candidate.
+    from backend import mea_tariff_hotfix19_state_runtime as state_runtime
+
+    return state_runtime.provider_debug_canonical(request)
 
 
 # Remove every existing GET registration for this path, then register one owner.
