@@ -128,7 +128,10 @@ def _write_canonical_run(result: Mapping[str, Any]) -> Dict[str, Any]:
 def tariff_check_canonical() -> Dict[str, Any]:
     result = _original_check()
     run = _write_canonical_run(result)
-    return {**result, "run_id": run["run_id"], "checked_at": run["checked_at"]}
+    payload = {**result, "run_id": run["run_id"], "checked_at": run["checked_at"]}
+    from backend import mea_tariff_hotfix20_status as hotfix20
+
+    return hotfix20.project_status(payload)
 
 
 def tariff_status_canonical() -> Dict[str, Any]:
@@ -142,7 +145,9 @@ def tariff_status_canonical() -> Dict[str, Any]:
             "last_error": run.get("error"),
             "diagnostics": copy.deepcopy(run.get("diagnostics") or {}),
         })
-    return payload
+    from backend import mea_tariff_hotfix20_status as hotfix20
+
+    return hotfix20.project_status(payload)
 
 
 def tariff_candidate_canonical() -> Dict[str, Any]:
@@ -155,7 +160,9 @@ def tariff_candidate_canonical() -> Dict[str, Any]:
             "status": run.get("status"),
             "diagnostics": copy.deepcopy(run.get("diagnostics") or {}),
         })
-    return payload
+    from backend import mea_tariff_hotfix20_status as hotfix20
+
+    return hotfix20.project_status(payload)
 
 
 def provider_debug_canonical(request: Request) -> Dict[str, Any]:

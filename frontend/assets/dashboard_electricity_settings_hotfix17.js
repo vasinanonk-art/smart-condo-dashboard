@@ -194,14 +194,15 @@
     if(!state.mounted)return;
     const s=state.tariffStatus||{}, active=s.active_tariff||s.current_tariff||{}, ft=s.active_ft||{};
     const badge=document.getElementById('tariffProviderBadge');
-    if(badge){badge.textContent=s.provider_available===false?'Degraded':'Available';badge.className=`badge ${s.provider_available===false?'bad':'ok'}`;}
+    const waiting=s.dataset_status==='official_dataset_outdated';
+    if(badge){badge.textContent=waiting?'Waiting for Official Update':s.provider_available===false?'Degraded':'Available';badge.className=`badge ${s.provider_available===false&&!waiting?'bad':'ok'}`;}
     const summary=document.getElementById('tariffStatusSummary');
     if(summary) summary.innerHTML=[
       ['Provider',s.provider||s.current_provider||'mea'],['Active tariff',active.tariff_name||'Not configured'],['Active Ft',ft.rate??active.ft_rate??'Not available'],
       ['Effective date',active.effective_date||'Not available'],['Last successful check',when(s.last_success||s.last_check_ts)],['Next check',when(s.next_check||s.next_scheduled_check_ts)],
-      ['Parser confidence',s.parser_confidence||'Not available'],['Candidate status',s.candidate_status||s.status||'None']
+      ['Parser confidence',s.parser_confidence||'Not available'],['Candidate status',waiting?'Waiting for official dataset update':s.candidate_status||s.status||'None']
     ].map(([label,value])=>`<div><span>${safe(label)}</span><strong>${safe(value)}</strong></div>`).join('');
-    const warnings=[]; if(s.last_error)warnings.push(`Last error: ${s.last_error}. Previous successful data remains visible.`); if(s.candidate_status==='future')warnings.push('Candidate effective date is in the future.');
+    const warnings=[]; if(waiting)warnings.push('Official MEA has not yet published a newer dataset. The dashboard is operating normally and is waiting for the next official MEA dataset.'); else if(s.last_error)warnings.push(`Last error: ${s.last_error}. Previous successful data remains visible.`); if(s.candidate_status==='future')warnings.push('Candidate effective date is in the future.');
     const warningHost=document.getElementById('tariffWarnings'); if(warningHost)warningHost.innerHTML=warnings.map(x=>`<div class="mea-warning">${safe(x)}</div>`).join('')||'<div class="stable-warning-placeholder" aria-hidden="true"></div>';
     const available=Boolean(state.candidate?.available), canApply=Boolean(state.candidate?.apply_allowed), future=s.candidate_status==='future';
     for(const [id,disabled] of [['reviewTariffCandidate',!available],['applyTariffCandidate',!canApply],['approveFutureTariff',!future],['rejectTariffCandidate',!available]]){const button=document.getElementById(id);if(button)button.disabled=disabled;}

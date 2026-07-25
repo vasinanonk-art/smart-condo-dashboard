@@ -6,6 +6,8 @@
   const state = {status:null,candidate:null,csrf:null};
   const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
   const when = ts => ts ? new Date(Number(ts) * 1000).toLocaleString() : 'Not available';
+  const periodDate = value => value ? new Date(`${value}T00:00:00`).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : 'Not available';
+  const candidateText = value => value === 'official_dataset_outdated' ? 'Waiting for official dataset update' : value || 'None';
 
   async function csrf() {
     if (state.csrf) return state.csrf;
@@ -40,6 +42,7 @@
 
   function warnings(status,candidate) {
     const rows=[];
+    if (status.dataset_status === 'official_dataset_outdated') return [];
     if (!status.provider_available) rows.push('Official MEA source is unavailable. The active tariff remains unchanged.');
     if (candidate?.parser_confidence && candidate.parser_confidence !== 'high') rows.push('Parser confidence is not high. Explicit confirmation is required.');
     if (status.last_error === 'ft_period_expired') rows.push('The published Ft period is expired.');
@@ -52,8 +55,12 @@
     const s=state.status||{}, c=state.candidate?.candidate||{}, active=s.active_tariff||{}, ft=s.active_ft||{};
     const canApply=state.candidate?.apply_allowed;
     const future=s.candidate_status==='future';
+    const waiting=s.dataset_status==='official_dataset_outdated';
+    const health=waiting?`<div class="mea-health"><div><span>System Health</span><strong>Healthy</strong></div><div><span>Official Dataset</span><strong>Waiting for Official Update</strong></div></div>`:`<span class="badge ${s.provider_available?'ok':'bad'}">${s.provider_available?'Available':'Degraded'}</span>`;
+    const outdated=waiting?`<div class="mea-dataset-banner"><strong>Official MEA has not yet published a newer dataset.</strong><div>Latest official FT: <b>${safe(s.latest_official_ft_rate ?? 'Not available')}</b></div><div>Latest official period: <b>${safe(periodDate(s.latest_official_effective_from))} – ${safe(periodDate(s.latest_official_effective_to))}</b></div><p>The dashboard is operating normally.</p><p>Waiting for the next official MEA dataset.</p></div>`:'';
     return `<section class="card mea-sync-card" id="meaOfficialSync">
-      <div class="card-head"><div><h2>Official MEA Tariff Sync</h2><small>Official MEA sources only · MEA Residential Type 1.2</small></div><span class="badge ${s.provider_available?'ok':'bad'}">${s.provider_available?'Available':'Degraded'}</span></div>
+      <div class="card-head"><div><h2>Official MEA Tariff Sync</h2><small>Official MEA sources only · MEA Residential Type 1.2</small></div>${health}</div>
+      ${outdated}
       ${warnings(s,c)}
       <div class="mea-status-grid">
         <div><span>Provider</span><strong>${safe(s.provider||'mea')}</strong></div>
@@ -64,7 +71,7 @@
         <div><span>Last successful check</span><strong>${safe(when(s.last_success))}</strong></div>
         <div><span>Next check</span><strong>${safe(when(s.next_check))}</strong></div>
         <div><span>Parser confidence</span><strong>${safe(s.parser_confidence||'Not available')}</strong></div>
-        <div><span>Candidate status</span><strong>${safe(s.candidate_status||'None')}</strong></div>
+        <div><span>Candidate status</span><strong>${safe(candidateText(s.candidate_status))}</strong></div>
         <div><span>Auto apply</span><strong>${safe(s.auto_apply_mode||'never')}</strong></div>
       </div>
       <div class="mea-actions">

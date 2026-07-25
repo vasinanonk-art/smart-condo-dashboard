@@ -131,3 +131,5 @@ from backend import frontend_asset_version as _frontend_asset_version  # noqa: F
 from backend import mea_tariff_hotfix19_ft_parser as _mea_tariff_hotfix19_ft_parser  # noqa: F401,E402
 from backend import mea_tariff_hotfix19_ft_debug as _mea_tariff_hotfix19_ft_debug  # noqa: F401,E402
 _mea_tariff_hotfix19_ft_debug.bind_runtime_parser()
+# HOTFIX PACK 20 presents expired official data as an upstream publication delay.
+from backend import mea_tariff_hotfix20_status as _mea_tariff_hotfix20_status  # noqa: F401,E402
