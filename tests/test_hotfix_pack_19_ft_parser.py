@@ -41,10 +41,35 @@ def test_production_schema_selects_latest_non_future_period():
     assert result["effective_from"] == "2026-07-01"
 
 
+def test_production_schema_accepts_historical_negative_ft_and_selects_latest():
+    result = ft_parser.parse_ft_with_distinct_status(
+        _csv([
+            "2021,1,1,Residential,-0.1532",
+            "2021,12,1,Residential,-0.1532",
+            "2026,7,1,Residential,0.3972",
+        ]),
+        SOURCE_URL,
+        NOW,
+    )
+    assert result["ft_rate"] == 0.3972
+    assert result["effective_from"] == "2026-07-01"
+    assert result["effective_to"] == "2026-07-31"
+
+
 def test_production_schema_rejects_malformed_ft_rate():
     with pytest.raises(ValueError, match="invalid_ft_rate"):
         ft_parser.parse_ft_with_distinct_status(
             _csv(["2026,7,1,Residential,not-a-number"]),
+            SOURCE_URL,
+            NOW,
+        )
+
+
+@pytest.mark.parametrize("rate", ["NaN", "Infinity", "-Infinity"])
+def test_production_schema_rejects_non_finite_ft_rate(rate):
+    with pytest.raises(ValueError, match="invalid_ft_rate"):
+        ft_parser.parse_ft_with_distinct_status(
+            _csv([f"2026,7,1,Residential,{rate}"]),
             SOURCE_URL,
             NOW,
         )

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 from calendar import monthrange
 from datetime import datetime
 from typing import Any, Dict, Mapping, Optional
@@ -68,7 +69,7 @@ def _parse_production_schema(rows: list[Dict[str, str]], source_url: str, now: d
             rate = mea._number(rate_text)
         except Exception as exc:
             raise ValueError("invalid_ft_rate") from exc
-        if rate < 0:
+        if not math.isfinite(rate):
             raise ValueError("invalid_ft_rate")
 
         period = (year, month)
