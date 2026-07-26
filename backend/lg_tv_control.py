@@ -37,7 +37,7 @@ class TvCommand(BaseModel):
     value: Any = None
 
 
-def capabilities() -> Dict[str, Any]:
+def capabilities(*, enumerate_live: bool = True) -> Dict[str, Any]:
     supported = sorted(DIRECT_COMMANDS | {"power_status"})
     if _valid_mac(TV_MAC):
         supported.append("power_on")
@@ -46,7 +46,10 @@ def capabilities() -> Dict[str, Any]:
         "unsupported": [] if "power_on" in supported else ["power_on"],
         "power_on": {"supported": "power_on" in supported, "reason": None if "power_on" in supported else "mac_not_configured"},
     }
-    result.update(_enumerated_options())
+    result.update(_enumerated_options() if enumerate_live else {
+        "inputs": [], "applications": [], "enumeration_available": False,
+        "enumeration_reason": "not_requested",
+    })
     return result
 
 

@@ -65,6 +65,8 @@ from backend import dashboard_settings_hotfix09 as _dashboard_settings_hotfix09 
 from backend import dashboard_polish_hotfix10 as _dashboard_polish_hotfix10  # noqa: F401,E402
 # SMART CONTROL 02A owns the final safe notification lifecycle.
 from backend import notification_center as _notification_center  # noqa: F401,E402
+# SMART CONTROL 02B exposes one safe, device-centric household projection.
+from backend import household_device_registry as _household_device_registry  # noqa: F401,E402
 
 # EPIC 07 reuses the existing daily maintenance thread for safe tariff checks.
 from backend import automatic_tariff_sync as _automatic_tariff_sync  # noqa: F401,E402
