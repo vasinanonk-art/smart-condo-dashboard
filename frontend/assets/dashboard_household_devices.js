@@ -7,7 +7,7 @@
   const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
   const status = device => device.online === true ? 'Online' : device.online === false ? 'Offline' : 'Unknown';
   const quality = device => ({confirmed:'Confirmed', assumed:'Assumed', unknown:'Unknown'})[device.state_quality] || 'Unknown';
-  const disabledButton = (label, reason) => `<button type="button" class="btn ghost" disabled title="${safe(reason)}">${safe(label)}</button>`;
+  const disabledButton = (label, reason) => `<button type="button" class="household-control-button" disabled title="${safe(reason)}">${safe(label)}</button>`;
 
   async function load() {
     if (state.loading) return;
@@ -26,8 +26,8 @@
   }
 
   function card(device, controls) {
-    return `<article class="card household-device-card">
-      <div class="household-device-head"><div><h3>${safe(device.display_name)}</h3><small>${safe(device.room === 'bed_room' ? 'Bed Room' : 'Living Room')}</small></div><span class="status-pill">${safe(status(device))}</span></div>
+    return `<article class="household-device-card">
+      <div class="household-device-head"><div><h3 class="household-device-title">${safe(device.display_name)}</h3><small class="household-device-room">${safe(device.room === 'bed_room' ? 'Bed Room' : 'Living Room')}</small></div><span class="household-status">${safe(status(device))}</span></div>
       <div class="household-device-state">State quality: ${safe(quality(device))}${device.state_quality === 'assumed' ? ' · IR has no feedback' : ''}</div>
       ${device.unavailable_reason ? `<div class="household-device-reason">${safe(device.unavailable_reason)}</div>` : ''}
       <div class="household-controls">${controls}</div>
@@ -42,7 +42,7 @@
     if (!host) {
       host = document.createElement('div');
       host.id = 'soundbarHouseholdCard';
-      host.className = 'span-12';
+      host.className = 'household-grid household-entertainment-grid';
       grid.appendChild(host);
     }
     const device = state.devices.find(item => item.id === 'living-room-samsung-soundbar');
@@ -54,6 +54,7 @@
   function renderClimate() {
     const host = document.getElementById('climateControls');
     if (!host) return;
+    host.className = 'household-grid';
     const devices = state.devices.filter(item => ['living-room-air-conditioner','living-room-fan','bed-room-air-conditioner'].includes(item.id));
     host.innerHTML = devices.map(device => {
       const reason = device.unavailable_reason || 'Controls are unavailable.';
@@ -67,22 +68,24 @@
   function renderCameras() {
     const host = document.getElementById('cameraControls');
     if (!host) return;
+    host.className = 'household-grid';
     const devices = state.devices.filter(item => item.category === 'camera');
-    host.innerHTML = `<div class="household-camera-grid">${devices.map(device => {
+    host.innerHTML = devices.map(device => {
       const capabilities = device.capabilities || {};
       const reason = device.unavailable_reason || 'Capability unavailable';
       const controls = [
-        capabilities.snapshot ? `<button type="button" class="btn ghost" data-household-camera="${safe(device.id)}" data-camera-action="snapshot">Snapshot</button>` : disabledButton('Snapshot', reason),
-        capabilities.live_stream ? `<button type="button" class="btn ghost" disabled title="Authenticated stream metadata is not available in this view.">Live stream</button>` : disabledButton('Live stream', reason),
-        capabilities.ptz_move ? `<button type="button" class="btn ghost" data-household-camera="${safe(device.id)}" data-camera-action="move">PTZ</button>` : disabledButton('PTZ', reason),
-        capabilities.zoom ? `<button type="button" class="btn ghost" data-household-camera="${safe(device.id)}" data-camera-action="zoom">Zoom</button>` : disabledButton('Zoom', reason),
+        capabilities.snapshot ? `<button type="button" class="household-control-button" data-household-camera="${safe(device.id)}" data-camera-action="snapshot">Snapshot</button>` : disabledButton('Snapshot', reason),
+        capabilities.live_stream ? `<button type="button" class="household-control-button" disabled title="Authenticated stream metadata is not available in this view.">Live stream</button>` : disabledButton('Live stream', reason),
+        capabilities.ptz_move ? `<button type="button" class="household-control-button" data-household-camera="${safe(device.id)}" data-camera-action="move">PTZ</button>` : disabledButton('PTZ', reason),
+        capabilities.zoom ? `<button type="button" class="household-control-button" data-household-camera="${safe(device.id)}" data-camera-action="zoom">Zoom</button>` : disabledButton('Zoom', reason),
       ].join('');
-      return `<article class="household-camera-card">
-      <h3>${safe(device.display_name)}</h3><div class="household-device-state">Status: ${safe(status(device))}</div>
+      return `<article class="household-device-card household-camera-card">
+      <div class="household-device-head"><h3 class="household-device-title">${safe(device.display_name)}</h3><span class="household-status">${safe(status(device))}</span></div>
+      <div class="household-device-state">State quality: ${safe(quality(device))}</div>
       ${device.unavailable_reason ? `<div class="household-device-reason">${safe(device.unavailable_reason)}</div>` : ''}
       <div class="household-controls">${controls}</div>
     </article>`;
-    }).join('')}</div>`;
+    }).join('');
     host.querySelectorAll('[data-household-camera]').forEach(button => button.addEventListener('click', async () => {
       const identifier = encodeURIComponent(button.dataset.householdCamera);
       if (button.dataset.cameraAction === 'snapshot') {
