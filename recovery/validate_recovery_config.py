@@ -10,8 +10,12 @@ import stat
 import sys
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from backend.camera_inventory_schema import CameraConfigError, validate_camera_config
 
 PLACEHOLDER = re.compile(r"<[^<>]+>")
 REGIONS = {"as", "eu", "us", "cn"}
@@ -75,46 +79,15 @@ def validate_cameras(
     warnings: list[str],
 ) -> None:
     payload = load_object(path, errors)
-    cameras = payload.get("cameras")
-    if not isinstance(cameras, list):
-        errors.append(f"{path}: cameras must be an array")
+    if not payload:
         return
-    if len(cameras) != 3:
+    try:
+        validated = validate_camera_config(payload, placeholder_mode=allow_placeholders)
+    except CameraConfigError as exc:
+        errors.append(f"{path}: camera schema invalid ({exc})")
+        return
+    if len(validated["cameras"]) != 3:
         errors.append(f"{path}: exactly three camera entries are required")
-    seen_ids: set[str] = set()
-    for index, camera in enumerate(cameras):
-        location = f"{path}:cameras[{index}]"
-        if not isinstance(camera, dict):
-            errors.append(f"{location}: must be an object")
-            continue
-        camera_id = required_text(camera, "id", location, errors, allow_placeholders)
-        required_text(camera, "name", location, errors, allow_placeholders)
-        host = required_text(camera, "ip", location, errors, allow_placeholders)
-        rtsp_url = required_text(camera, "rtsp_url", location, errors, allow_placeholders)
-        required_text(camera, "username", location, errors, allow_placeholders)
-        required_text(camera, "password", location, errors, allow_placeholders)
-        if camera_id in seen_ids:
-            errors.append(f"{location}.id: duplicate camera id")
-        seen_ids.add(camera_id)
-        port = camera.get("rtsp_port")
-        if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
-            errors.append(f"{location}.rtsp_port: integer from 1 through 65535 required")
-        ports = camera.get("ports")
-        if not isinstance(ports, list) or not ports:
-            errors.append(f"{location}.ports: non-empty array required")
-        elif any(not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 65535 for value in ports):
-            errors.append(f"{location}.ports: every port must be an integer from 1 through 65535")
-        if not isinstance(camera.get("enabled"), bool):
-            errors.append(f"{location}.enabled: boolean required")
-        if not allow_placeholders and host and not is_placeholder(host):
-            if any(character.isspace() for character in host) or "://" in host:
-                errors.append(f"{location}.ip: host or IP required, not a URL")
-        if not allow_placeholders and rtsp_url and not is_placeholder(rtsp_url):
-            parsed = urlsplit(rtsp_url)
-            if parsed.scheme.lower() != "rtsp" or not parsed.hostname:
-                errors.append(f"{location}.rtsp_url: valid rtsp:// URL required")
-            if not parsed.username or parsed.password is None:
-                errors.append(f"{location}.rtsp_url: embedded username and password required")
     validate_permissions(path, warnings)
 
 
@@ -194,7 +167,8 @@ def main() -> int:
         default=TEMPLATE_ROOT / "ewelink.local.json.example",
     )
     parser.add_argument(
-        "--allow-placeholders",
+        "--allow-placeholders", "--placeholder-mode",
+        dest="allow_placeholders",
         action="store_true",
         help="validate template structure before secret placeholders are filled",
     )

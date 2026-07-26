@@ -1,46 +1,62 @@
 {
+  "schema_version": 1,
   "cameras": [
     {
-      "id": "camera-1",
-      "name": "<CAMERA_1_NAME>",
-      "ip": "<CAMERA_1_IP_OR_HOST>",
-      "brand": "<CAMERA_1_BRAND_OPTIONAL>",
-      "rtsp_url": "rtsp://<CAMERA_1_USERNAME>:<CAMERA_1_PASSWORD>@<CAMERA_1_IP_OR_HOST>:554/<CAMERA_1_RTSP_PATH>",
-      "username": "<CAMERA_1_USERNAME>",
-      "password": "<CAMERA_1_PASSWORD>",
-      "rtsp_port": 554,
-      "ports": [
-        554
-      ],
-      "enabled": true
+      "id": "tapo-c220",
+      "display_name": "Tapo C220",
+      "room": "unknown",
+      "vendor": "TP-Link Tapo",
+      "model": "C220",
+      "host": "<TAPO_C220_HOST>",
+      "enabled": false,
+      "provider": "auto",
+      "rtsp_port": null,
+      "onvif_port": null,
+      "stream_path": null,
+      "credentials": {
+        "username_env": "CAMERA_TAPO_C220_USERNAME",
+        "password_env": "CAMERA_TAPO_C220_PASSWORD"
+      },
+      "declared_capabilities": [],
+      "verification_status": "unverified"
     },
     {
-      "id": "camera-2",
-      "name": "<CAMERA_2_NAME>",
-      "ip": "<CAMERA_2_IP_OR_HOST>",
-      "brand": "<CAMERA_2_BRAND_OPTIONAL>",
-      "rtsp_url": "rtsp://<CAMERA_2_USERNAME>:<CAMERA_2_PASSWORD>@<CAMERA_2_IP_OR_HOST>:554/<CAMERA_2_RTSP_PATH>",
-      "username": "<CAMERA_2_USERNAME>",
-      "password": "<CAMERA_2_PASSWORD>",
-      "rtsp_port": 554,
-      "ports": [
-        554
-      ],
-      "enabled": true
+      "id": "xiaomi-camera-1",
+      "display_name": "Xiaomi Camera 1",
+      "room": "unknown",
+      "vendor": "Xiaomi",
+      "model": null,
+      "host": "<XIAOMI_CAMERA_1_HOST>",
+      "enabled": false,
+      "provider": "auto",
+      "rtsp_port": null,
+      "onvif_port": null,
+      "stream_path": null,
+      "credentials": {
+        "username_env": "CAMERA_XIAOMI_1_USERNAME",
+        "password_env": "CAMERA_XIAOMI_1_PASSWORD"
+      },
+      "declared_capabilities": [],
+      "verification_status": "unverified"
     },
     {
-      "id": "camera-3",
-      "name": "<CAMERA_3_NAME>",
-      "ip": "<CAMERA_3_IP_OR_HOST>",
-      "brand": "<CAMERA_3_BRAND_OPTIONAL>",
-      "rtsp_url": "rtsp://<CAMERA_3_USERNAME>:<CAMERA_3_PASSWORD>@<CAMERA_3_IP_OR_HOST>:554/<CAMERA_3_RTSP_PATH>",
-      "username": "<CAMERA_3_USERNAME>",
-      "password": "<CAMERA_3_PASSWORD>",
-      "rtsp_port": 554,
-      "ports": [
-        554
-      ],
-      "enabled": true
+      "id": "xiaomi-camera-2",
+      "display_name": "Xiaomi Camera 2",
+      "room": "unknown",
+      "vendor": "Xiaomi",
+      "model": null,
+      "host": "<XIAOMI_CAMERA_2_HOST>",
+      "enabled": false,
+      "provider": "auto",
+      "rtsp_port": null,
+      "onvif_port": null,
+      "stream_path": null,
+      "credentials": {
+        "username_env": "CAMERA_XIAOMI_2_USERNAME",
+        "password_env": "CAMERA_XIAOMI_2_PASSWORD"
+      },
+      "declared_capabilities": [],
+      "verification_status": "unverified"
     }
   ]
 }
