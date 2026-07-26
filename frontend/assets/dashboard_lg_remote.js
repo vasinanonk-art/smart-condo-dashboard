@@ -13,14 +13,14 @@
   ];
   const escape = UI.safe;
 
-  function button(command, label, disabled = false, reason = '') {
+  function button(command, label, disabled = false, reason = '', attributes = '') {
     return UI.actionButton({
       label, disabled, reason,
-      attributes:`data-lg-command="${escape(command)}"`,
+      attributes:`data-lg-command="${escape(command)}"${attributes ? ` ${attributes}` : ''}`,
     });
   }
 
-  function renderOptions(host, title, command, items, available) {
+  function renderOptions(host, title, command, items, available, quickLaunch = false) {
     const section = document.createElement('section');
     section.className = 'household-lg-section';
     if (!available) {
@@ -28,7 +28,10 @@
     } else if (!items.length) {
       section.innerHTML = `<h3>${escape(title)}</h3><p class="household-lg-option-unavailable">No ${escape(title.toLowerCase())} were reported by the TV.</p>`;
     } else {
-      section.innerHTML = `<h3>${escape(title)}</h3><select data-lg-option="${escape(command)}" aria-label="${escape(title)}"><option value="">Select…</option>${items.map(item => `<option value="${escape(item.id)}">${escape(item.label)}</option>`).join('')}</select>`;
+      const quickButtons = quickLaunch
+        ? `<div class="household-action-grid household-lg-button-row">${items.map(item => button(command, item.label, false, '', `data-lg-value="${escape(item.id)}"`)).join('')}</div>`
+        : '';
+      section.innerHTML = `<h3>${escape(title)}</h3>${quickButtons}<select data-lg-option="${escape(command)}" aria-label="${escape(title)}"><option value="">Select…</option>${items.map(item => `<option value="${escape(item.id)}">${escape(item.label)}</option>`).join('')}</select>`;
       section.querySelector('select').addEventListener('change', event => {
         if (event.target.value) window.tv(command, event.target.value);
         event.target.value = '';
@@ -61,8 +64,8 @@
         </div></section>
       </div>`;
     renderOptions(host.querySelector('.household-lg-controls'), 'Inputs', 'set_input', capabilities.inputs || [], capabilities.enumeration_available === true);
-    renderOptions(host.querySelector('.household-lg-controls'), 'Applications', 'launch_app', capabilities.applications || [], capabilities.enumeration_available === true);
-    host.querySelectorAll('[data-lg-command]').forEach(element => element.addEventListener('click', () => window.tv(element.dataset.lgCommand)));
+    renderOptions(host.querySelector('.household-lg-controls'), 'Applications', 'launch_app', capabilities.applications || [], capabilities.enumeration_available === true, true);
+    host.querySelectorAll('[data-lg-command]').forEach(element => element.addEventListener('click', () => window.tv(element.dataset.lgCommand, element.dataset.lgValue)));
     const slider = host.querySelector('[data-lg-volume]');
     slider?.addEventListener('input', () => { slider.nextElementSibling.value = slider.value; });
     host.querySelector('[data-lg-set-volume]')?.addEventListener('click', () => window.tv('set_volume', Number(slider.value)));

@@ -59,3 +59,11 @@ def test_remote_has_supported_commands_without_hardcoded_inputs_or_apps():
         assert command in REMOTE
     for unsupported_assumption in ("hdmi1", "hdmi2", "netflix", "youtube"):
         assert unsupported_assumption not in REMOTE.lower()
+
+
+def test_live_applications_render_as_quick_launch_buttons_and_select_options():
+    assert "quickLaunch = false" in REMOTE
+    assert 'data-lg-value="${escape(item.id)}"' in REMOTE
+    assert "window.tv(element.dataset.lgCommand, element.dataset.lgValue)" in REMOTE
+    assert "'Applications', 'launch_app'" in REMOTE
+    assert "'Inputs', 'set_input'" in REMOTE

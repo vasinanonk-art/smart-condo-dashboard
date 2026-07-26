@@ -115,6 +115,63 @@ def test_dry_run_preserves_all_local_json_generically(tmp_path):
     assert "local configuration preservation verified" in result.stdout
 
 
+def test_runtime_only_deployment_updates_managed_tree_without_touching_venv(tmp_path):
+    source = tmp_path / "source"
+    run_root = tmp_path / "run"
+    persistent = tmp_path / "persistent"
+    fake_bin = tmp_path / "bin"
+    for directory in ("backend", "frontend", "config", "scripts"):
+        (source / directory).mkdir(parents=True, exist_ok=True)
+    (run_root / "config").mkdir(parents=True)
+    (run_root / "backend").mkdir()
+    (run_root / "venv").mkdir()
+    persistent.mkdir()
+    fake_bin.mkdir()
+    shutil.copy2(GUARD, source / "scripts" / GUARD.name)
+    (source / "backend" / "version.txt").write_text("repository-version", encoding="utf-8")
+    (source / "frontend" / "index.html").write_text("<html></html>", encoding="utf-8")
+    for asset in (
+        "dashboard_v3.css", "dashboard_v3_layout.css", "dashboard_upgrade.css",
+        "dashboard_polish.css", "dashboard_upgrade.js", "dashboard_v3.js",
+        "dashboard_command_fixes.js",
+    ):
+        (source / "frontend" / "assets").mkdir(exist_ok=True)
+        (source / "frontend" / "assets" / asset).write_text("", encoding="utf-8")
+    (source / "sonoff_client.py").write_text("# mirror", encoding="utf-8")
+    (run_root / "backend" / "version.txt").write_text("stale-runtime", encoding="utf-8")
+    venv_marker = run_root / "venv" / "preserve-me"
+    venv_marker.write_text("unchanged", encoding="utf-8")
+    local_config = run_root / "config" / "camera room.local.json"
+    local_config.write_text('{"preserve": true}', encoding="utf-8")
+    systemctl_log = tmp_path / "systemctl.log"
+    fake_systemctl = fake_bin / "systemctl"
+    fake_systemctl.write_text(
+        f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{systemctl_log}"\n',
+        encoding="utf-8",
+    )
+    fake_systemctl.chmod(0o755)
+    environment = _install_env(
+        source, run_root, persistent, tmp_path / "install.lock",
+    )
+    environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+
+    result = subprocess.run(
+        ["sh", str(INSTALL), "--runtime-only"],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (run_root / "backend" / "version.txt").read_text() == "repository-version"
+    assert venv_marker.read_text() == "unchanged"
+    assert local_config.read_text() == '{"preserve": true}'
+    assert "virtual environment and dependencies were not modified" in result.stdout
+    assert "restart smart-condo-dashboard" in systemctl_log.read_text()
+
+
 def test_deploy_guard_fails_when_preserved_config_is_missing(tmp_path):
     run_root = tmp_path / "run"
     config = run_root / "config"

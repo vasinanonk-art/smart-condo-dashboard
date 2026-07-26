@@ -8,11 +8,14 @@ INSTALL_LOCK_FILE="${INSTALL_LOCK_FILE:-/run/lock/smart-condo-dashboard-install.
 VENV="$APP_RUN/venv"
 PY="$VENV/bin/python"
 DRY_RUN=0
+RUNTIME_ONLY=0
 
 if [ "${1:-}" = "--dry-run" ]; then
     DRY_RUN=1
+elif [ "${1:-}" = "--runtime-only" ]; then
+    RUNTIME_ONLY=1
 elif [ "$#" -gt 0 ]; then
-    echo "Usage: $0 [--dry-run]" >&2
+    echo "Usage: $0 [--dry-run|--runtime-only]" >&2
     exit 2
 fi
 
@@ -127,6 +130,13 @@ if [ "$SONOFF_WAS_PRESENT" -eq 1 ] && ! runtime_config_present \
     KEEP_LOCAL_CONFIG_BACKUP=1
     echo "ERROR: deployment aborted before service restart because Sonoff configuration was lost." >&2
     exit 1
+fi
+
+if [ "$RUNTIME_ONLY" -eq 1 ]; then
+    echo "Runtime-only deployment: virtual environment and dependencies were not modified."
+    systemctl restart smart-condo-dashboard
+    systemctl status smart-condo-dashboard --no-pager -l || true
+    exit 0
 fi
 
 if [ ! -x "$PY" ]; then

@@ -1,5 +1,7 @@
 import time
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import bcrypt
 from fastapi.responses import JSONResponse
@@ -115,3 +117,94 @@ def test_frontend_consumes_post_state_without_duplicate_refresh():
     assert "/api/lg-tv/command" in command_handler
     assert "state.status = output.state" in command_handler
     assert "/api/lg-tv/status/refresh" not in command_handler
+
+
+def test_navigation_cursor_commands_use_pointer_socket_and_close_it(monkeypatch):
+    calls = []
+
+    class Pointer:
+        def __init__(self):
+            self.sock = SimpleNamespace(settimeout=lambda timeout: calls.append(("timeout", timeout)))
+            self.closed = False
+            self._th = None
+
+        def connect(self):
+            calls.append("connect")
+
+        def close(self):
+            self.closed = True
+            calls.append("close")
+
+    pointers = []
+
+    class InputControl:
+        ws_class = lambda self, path: pointers.append(Pointer()) or pointers[-1]
+
+        def __init__(self, client):
+            self.client = client
+
+        def request(self, *args, **kwargs):
+            return {"payload": {"socketPath": "wss://pointer"}}
+
+    for command_name in ("up", "down", "left", "right", "ok", "back", "home"):
+        setattr(InputControl, command_name, lambda self, name=command_name: calls.append(name))
+
+    monkeypatch.setitem(sys.modules, "pywebostv.controls", SimpleNamespace(InputControl=InputControl))
+    for command in ("up", "down", "left", "right", "ok", "back", "home"):
+        control._pointer_command(object(), command)
+    assert [value for value in calls if value in {"up", "down", "left", "right", "ok", "back", "home"}] == [
+        "up", "down", "left", "right", "ok", "back", "home",
+    ]
+    assert len(pointers) == 7
+    assert all(pointer.closed for pointer in pointers)
+
+
+def test_live_application_and_input_enumeration_populates_capabilities(monkeypatch):
+    client = FakeClient()
+    sources = [SimpleNamespace(data={"id": "hdmi-live", "label": "Game Console"})]
+    applications = [SimpleNamespace(data={"id": "app-live", "title": "Streaming App"})]
+
+    class SourceControl:
+        def __init__(self, opened):
+            assert opened is client
+
+        def list_sources(self, timeout):
+            return sources
+
+    class ApplicationControl:
+        def __init__(self, opened):
+            assert opened is client
+
+        def list_apps(self, timeout):
+            return applications
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pywebostv.controls",
+        SimpleNamespace(SourceControl=SourceControl, ApplicationControl=ApplicationControl),
+    )
+    monkeypatch.setattr(control.pairing, "_current_key", lambda: ("key", "secure"))
+    monkeypatch.setattr(control, "_open_client", lambda key: client)
+    payload = control.capabilities()
+    assert payload["enumeration_available"] is True
+    assert payload["inputs"] == [{"id": control._option_token("input", "hdmi-live"), "label": "Game Console"}]
+    assert payload["applications"] == [{"id": control._option_token("app", "app-live"), "label": "Streaming App"}]
+    assert client.closed is True
+
+
+def test_capability_response_keeps_commands_and_live_options(monkeypatch):
+    monkeypatch.setenv("LG_TV_MAC", "58:96:0A:9D:1C:0F")
+    monkeypatch.setattr(
+        control,
+        "_enumerated_options",
+        lambda: {
+            "inputs": [{"id": "input-safe", "label": "Console"}],
+            "applications": [{"id": "app-safe", "label": "Video"}],
+            "enumeration_available": True,
+            "enumeration_reason": None,
+        },
+    )
+    payload = control.lg_tv_capabilities()
+    for command in ("power_on", "up", "down", "left", "right", "ok", "back", "home", "set_input", "launch_app"):
+        assert command in payload["supported"]
+    assert payload["inputs"] and payload["applications"]
