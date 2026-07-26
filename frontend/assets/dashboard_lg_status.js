@@ -105,6 +105,10 @@
       detail('Firmware', device.firmware_version || 'Unavailable'),
       detail('webOS', device.webos_version || 'Unavailable'),
       detail('Status worker', diagnostics.status_worker_active === true ? 'Active' : 'Unavailable'),
+      detail('Wake-on-LAN', diagnostics.wol_configured === true ? 'Configured' : 'Not configured'),
+      detail('Last wake request', diagnostics.last_wol_sent_at ? new Date(Number(diagnostics.last_wol_sent_at) * 1000).toLocaleString() : 'Not sent'),
+      detail('Wake reconnect attempts', diagnostics.reconnect_attempts ?? 0),
+      detail('Last wake result', diagnostics.last_wol_result || 'Not sent'),
     ].join('');
   }
 

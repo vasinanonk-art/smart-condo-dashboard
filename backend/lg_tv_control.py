@@ -8,7 +8,7 @@ import re
 import socket
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from fastapi import Body
 from fastapi.responses import JSONResponse
@@ -22,6 +22,15 @@ app = app_module.app
 COMMAND_TIMEOUT_SEC = min(10.0, max(1.0, float(os.getenv("LG_TV_COMMAND_TIMEOUT_SEC", "5"))))
 TV_MAC = (os.getenv("LG_TV_MAC") or os.getenv("TV_MAC") or "").strip()
 COMMAND_LOCK = threading.Lock()
+WOL_STATE_LOCK = threading.Lock()
+WOL_RECONNECT_ATTEMPTS = min(6, max(1, int(os.getenv("LG_TV_WOL_RECONNECT_ATTEMPTS", "4"))))
+WOL_RECONNECT_TIMEOUT_SEC = min(5.0, max(0.5, float(os.getenv("LG_TV_WOL_RECONNECT_TIMEOUT_SEC", "2"))))
+WOL_BACKOFF_SEC = (0.5, 1.0, 2.0, 4.0, 4.0, 4.0)
+_WOL_RUNTIME: Dict[str, Any] = {
+    "last_wol_sent_at": None,
+    "reconnect_attempts": 0,
+    "last_wol_result": "not_sent",
+}
 
 DIRECT_COMMANDS = {
     "volume_up", "volume_down", "mute", "unmute", "set_volume",
@@ -39,7 +48,7 @@ class TvCommand(BaseModel):
 
 def capabilities(*, enumerate_live: bool = True) -> Dict[str, Any]:
     supported = sorted(DIRECT_COMMANDS | {"power_status"})
-    if _valid_mac(TV_MAC):
+    if _valid_mac(_configured_mac()):
         supported.append("power_on")
     result = {
         "supported": sorted(supported),
@@ -54,7 +63,39 @@ def capabilities(*, enumerate_live: bool = True) -> Dict[str, Any]:
 
 
 def _valid_mac(value: str) -> bool:
-    return bool(re.fullmatch(r"(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}", value))
+    if not isinstance(value, str) or not re.fullmatch(r"(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}", value):
+        return False
+    raw = bytes.fromhex(re.sub(r"[:-]", "", value))
+    return raw not in {b"\x00" * 6, b"\xff" * 6} and not bool(raw[0] & 1)
+
+
+def _configured_mac() -> str:
+    # LG_TV_MAC belongs in the protected service environment. TV_MAC remains a
+    # backwards-compatible process value for existing installations and tests.
+    return (os.getenv("LG_TV_MAC") or os.getenv("TV_MAC") or TV_MAC or "").strip()
+
+
+def _magic_packet(mac: str) -> bytes:
+    if not _valid_mac(mac):
+        raise ValueError("mac_not_configured")
+    raw = bytes.fromhex(re.sub(r"[:-]", "", mac))
+    return b"\xff" * 6 + raw * 16
+
+
+def _set_wol_runtime(**updates: Any) -> None:
+    with WOL_STATE_LOCK:
+        _WOL_RUNTIME.update(updates)
+
+
+def wol_diagnostics() -> Dict[str, Any]:
+    with WOL_STATE_LOCK:
+        runtime = copy.deepcopy(_WOL_RUNTIME)
+    return {
+        "wol_configured": _valid_mac(_configured_mac()),
+        "last_wol_sent_at": runtime["last_wol_sent_at"],
+        "reconnect_attempts": runtime["reconnect_attempts"],
+        "last_wol_result": runtime["last_wol_result"],
+    }
 
 
 def _close_client(client: Any) -> None:
@@ -70,15 +111,15 @@ def _close_client(client: Any) -> None:
             pass
 
 
-def _open_client(key: str) -> Any:
+def _open_client(key: str, *, timeout: float = COMMAND_TIMEOUT_SEC) -> Any:
     from pywebostv.connection import WebOSClient
 
     client = WebOSClient(status.TV_IP, secure=True)
     try:
-        client.sock.settimeout(COMMAND_TIMEOUT_SEC)
+        client.sock.settimeout(timeout)
         client.connect()
         registered = False
-        for value in client.register({"client_key": key}, timeout=COMMAND_TIMEOUT_SEC):
+        for value in client.register({"client_key": key}, timeout=timeout):
             if value == WebOSClient.REGISTERED:
                 registered = True
                 break
@@ -93,10 +134,7 @@ def _open_client(key: str) -> Any:
 
 
 def _wake() -> None:
-    if not _valid_mac(TV_MAC):
-        raise ValueError("mac_not_configured")
-    raw = bytes.fromhex(re.sub(r"[:-]", "", TV_MAC))
-    packet = b"\xff" * 6 + raw * 16
+    packet = _magic_packet(_configured_mac())
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.settimeout(COMMAND_TIMEOUT_SEC)
@@ -104,6 +142,41 @@ def _wake() -> None:
         sock.sendto(packet, ("255.255.255.255", 9))
     finally:
         sock.close()
+
+
+def _reconnect_after_wol(key: str | None) -> tuple[Dict[str, Any], bool, int]:
+    if not key:
+        return status._public_status(), False, 0
+    for attempt in range(1, WOL_RECONNECT_ATTEMPTS + 1):
+        delay = WOL_BACKOFF_SEC[min(attempt - 1, len(WOL_BACKOFF_SEC) - 1)]
+        if delay:
+            time.sleep(delay)
+        _set_wol_runtime(reconnect_attempts=attempt)
+        client = None
+        try:
+            client = _open_client(key, timeout=WOL_RECONNECT_TIMEOUT_SEC)
+            now = int(time.time())
+            with status.STATE_LOCK:
+                status._CACHE.update({
+                    "online": True,
+                    "power_state": "on",
+                    "connection_state": "connected",
+                    "paired": True,
+                    "pairing_required": False,
+                    "last_update_ts": now,
+                    "last_success_ts": now,
+                    "last_error": None,
+                    "consecutive_failures": 0,
+                    "stale": False,
+                })
+            status._persist()
+            return status._public_status(), True, attempt
+        except Exception:
+            continue
+        finally:
+            if client is not None:
+                _close_client(client)
+    return status._public_status(), False, WOL_RECONNECT_ATTEMPTS
 
 
 def _data(item: Any) -> Dict[str, Any]:
@@ -253,6 +326,27 @@ def _refresh(key: str) -> tuple[Dict[str, Any], bool]:
         return status._public_status(), False
 
 
+def _install_wol_diagnostics() -> None:
+    diagnostics_route = next(
+        (
+            route for route in app.routes
+            if getattr(route, "path", None) == "/api/lg-tv/status/diagnostics"
+            and "GET" in set(getattr(route, "methods", set()) or set())
+        ),
+        None,
+    )
+    if diagnostics_route is None:
+        return
+    original: Callable[[], Dict[str, Any]] = diagnostics_route.endpoint
+
+    def diagnostics_with_wol() -> Dict[str, Any]:
+        return {**original(), **wol_diagnostics()}
+
+    diagnostics_route.endpoint = diagnostics_with_wol
+    if getattr(diagnostics_route, "dependant", None) is not None:
+        diagnostics_route.dependant.call = diagnostics_with_wol
+
+
 @app.get("/api/lg-tv/capabilities")
 def lg_tv_capabilities() -> Dict[str, Any]:
     return capabilities()
@@ -262,15 +356,57 @@ def lg_tv_capabilities() -> Dict[str, Any]:
 def lg_tv_command(payload: TvCommand = Body(...)):
     command, value = _normalize(payload.command, payload.value)
     if command == "power_on":
-        if not _valid_mac(TV_MAC):
+        if not _valid_mac(_configured_mac()):
             return JSONResponse({"detail": "unsupported_capability", "capability": "power_on", "reason": "mac_not_configured"}, status_code=422)
         if not COMMAND_LOCK.acquire(blocking=False):
             return JSONResponse({"detail": "command_busy"}, status_code=409)
         try:
-            _wake()
+            key, _ = pairing._current_key()
+            if status._reachable(3001, timeout=COMMAND_TIMEOUT_SEC) or status._reachable(3000, timeout=COMMAND_TIMEOUT_SEC):
+                state, refreshed = _refresh(key) if key else (status._public_status(), False)
+                _set_wol_runtime(reconnect_attempts=0, last_wol_result="already_online")
+                return {
+                    "ok": True,
+                    "command": command,
+                    "wol_sent": False,
+                    "reconnect_attempts": 0,
+                    "state_refreshed": refreshed,
+                    "state": state,
+                }
+            try:
+                _wake()
+            except (TimeoutError, socket.timeout):
+                _set_wol_runtime(reconnect_attempts=0, last_wol_result="send_timeout")
+                return JSONResponse({"detail": "wol_timeout"}, status_code=504)
+            except OSError:
+                _set_wol_runtime(reconnect_attempts=0, last_wol_result="send_failed")
+                return JSONResponse({"detail": "wol_failed"}, status_code=502)
+            sent_at = int(time.time())
+            _set_wol_runtime(
+                last_wol_sent_at=sent_at,
+                reconnect_attempts=0,
+                last_wol_result="reconnect_pending",
+            )
             with status.STATE_LOCK:
-                status._CACHE.update({"power_state": "starting", "connection_state": "connecting", "last_command": command, "last_command_success": True})
-            return {"ok": True, "command": command, "state_refreshed": False, "state": status._public_status()}
+                status._CACHE.update({
+                    "power_state": "starting",
+                    "connection_state": "connecting",
+                    "last_command": command,
+                    "last_command_success": True,
+                    "last_command_completed_ts": sent_at,
+                })
+            status._RUNTIME["wake_grace_until"] = time.time() + status.WAKE_GRACE_SEC
+            state, reconnected, attempts = _reconnect_after_wol(key)
+            result = "reconnected" if reconnected else "sent_reconnect_pending"
+            _set_wol_runtime(reconnect_attempts=attempts, last_wol_result=result)
+            return {
+                "ok": True,
+                "command": command,
+                "wol_sent": True,
+                "reconnect_attempts": attempts,
+                "state_refreshed": reconnected,
+                "state": state,
+            }
         finally:
             COMMAND_LOCK.release()
     if command not in DIRECT_COMMANDS:
@@ -313,3 +449,6 @@ def lg_tv_command(payload: TvCommand = Body(...)):
         if client is not None:
             _close_client(client)
         COMMAND_LOCK.release()
+
+
+_install_wol_diagnostics()
