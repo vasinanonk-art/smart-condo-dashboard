@@ -27,7 +27,24 @@ if ! flock -n 9; then
 fi
 echo "Deployment lock acquired."
 
-. "$APP_SRC/scripts/runtime_config_guard.sh"
+SOURCE_SNAPSHOT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/smart-condo-dashboard-source.XXXXXX")
+if git -C "$APP_SRC" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    SOURCE_ARCHIVE="$SOURCE_SNAPSHOT_TMP/source.tar"
+    if ! git -C "$APP_SRC" archive --format=tar --output="$SOURCE_ARCHIVE" HEAD ||
+       ! tar -xf "$SOURCE_ARCHIVE" -C "$SOURCE_SNAPSHOT_TMP"; then
+        rm -rf "$SOURCE_SNAPSHOT_TMP"
+        echo "ERROR: unable to create isolated deployment snapshot from Git HEAD." >&2
+        exit 1
+    fi
+    rm "$SOURCE_ARCHIVE"
+    echo "Deployment source: isolated snapshot of Git HEAD."
+else
+    cp -R "$APP_SRC"/. "$SOURCE_SNAPSHOT_TMP"/
+    echo "Deployment source: isolated source snapshot."
+fi
+DEPLOY_SRC="$SOURCE_SNAPSHOT_TMP"
+
+. "$DEPLOY_SRC/scripts/runtime_config_guard.sh"
 
 LOCAL_CONFIG_TMP=$(mktemp -d "${TMPDIR:-/tmp}/smart-condo-dashboard-local-config.XXXXXX")
 LOCAL_CONFIG_MANIFEST="$LOCAL_CONFIG_TMP/manifest"
@@ -49,6 +66,7 @@ deployment_cleanup() {
     else
         echo "Preserved configuration backup retained at: $LOCAL_CONFIG_TMP" >&2
     fi
+    rm -rf "$SOURCE_SNAPSHOT_TMP"
     flock -u 9
     exit "$cleanup_status"
 }
@@ -89,17 +107,17 @@ DEPLOY_STARTED=1
 [ ! -d "$APP_RUN/scripts" ] || rm -r "$APP_RUN/scripts"
 [ ! -f "$APP_RUN/sonoff_client.py" ] || rm "$APP_RUN/sonoff_client.py"
 
-cp -R "$APP_SRC/backend" "$APP_RUN/backend"
-cp -R "$APP_SRC/frontend" "$APP_RUN/frontend"
-cp -R "$APP_SRC/config" "$APP_RUN/config"
-cp -R "$APP_SRC/scripts" "$APP_RUN/scripts"
-cp "$APP_SRC/sonoff_client.py" "$APP_RUN/sonoff_client.py"
+cp -R "$DEPLOY_SRC/backend" "$APP_RUN/backend"
+cp -R "$DEPLOY_SRC/frontend" "$APP_RUN/frontend"
+cp -R "$DEPLOY_SRC/config" "$APP_RUN/config"
+cp -R "$DEPLOY_SRC/scripts" "$APP_RUN/scripts"
+cp "$DEPLOY_SRC/sonoff_client.py" "$APP_RUN/sonoff_client.py"
 
 # Explicitly install the production dashboard shell and authoritative frontend assets.
 install -d "$APP_RUN/frontend/assets"
-install -m 0644 "$APP_SRC/frontend/index.html" "$APP_RUN/frontend/index.html"
+install -m 0644 "$DEPLOY_SRC/frontend/index.html" "$APP_RUN/frontend/index.html"
 for asset in dashboard_v3.css dashboard_v3_layout.css dashboard_upgrade.css dashboard_polish.css dashboard_upgrade.js dashboard_v3.js dashboard_command_fixes.js; do
-    install -m 0644 "$APP_SRC/frontend/assets/$asset" "$APP_RUN/frontend/assets/$asset"
+    install -m 0644 "$DEPLOY_SRC/frontend/assets/$asset" "$APP_RUN/frontend/assets/$asset"
 done
 
 if ! restore_local_configs "$APP_RUN" "$LOCAL_CONFIG_BACKUP" "$LOCAL_CONFIG_MANIFEST"; then
@@ -158,7 +176,7 @@ fi
 "$PY" -m pip install -r "$APP_RUN/backend/requirements.txt"
 "$PY" -c "from pywebostv.connection import WebOSClient; assert WebOSClient.PROMPTED == 1 and WebOSClient.REGISTERED == 2"
 
-install -m 0644 "$APP_SRC/systemd/smart-condo-dashboard.service" /etc/systemd/system/smart-condo-dashboard.service
+install -m 0644 "$DEPLOY_SRC/systemd/smart-condo-dashboard.service" /etc/systemd/system/smart-condo-dashboard.service
 
 systemctl daemon-reload
 systemctl enable smart-condo-dashboard

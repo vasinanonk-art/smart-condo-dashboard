@@ -129,6 +129,7 @@ def test_runtime_only_deployment_updates_managed_tree_without_touching_venv(tmp_
     fake_bin.mkdir()
     shutil.copy2(GUARD, source / "scripts" / GUARD.name)
     (source / "backend" / "version.txt").write_text("repository-version", encoding="utf-8")
+    (source / "config" / "defaults.json").write_text("{}", encoding="utf-8")
     (source / "frontend" / "index.html").write_text("<html></html>", encoding="utf-8")
     for asset in (
         "dashboard_v3.css", "dashboard_v3_layout.css", "dashboard_upgrade.css",
@@ -138,6 +139,15 @@ def test_runtime_only_deployment_updates_managed_tree_without_touching_venv(tmp_
         (source / "frontend" / "assets").mkdir(exist_ok=True)
         (source / "frontend" / "assets" / asset).write_text("", encoding="utf-8")
     (source / "sonoff_client.py").write_text("# mirror", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.email", "deployment-test@example.invalid"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.name", "Deployment Test"], cwd=source, check=True)
+    subprocess.run(["git", "add", "."], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-qm", "source snapshot"], cwd=source, check=True)
+    (source / "backend" / "version.txt").write_text("dirty-working-tree", encoding="utf-8")
+    source_status_before = subprocess.check_output(
+        ["git", "status", "--short"], cwd=source, text=True,
+    )
     (run_root / "backend" / "version.txt").write_text("stale-runtime", encoding="utf-8")
     venv_marker = run_root / "venv" / "preserve-me"
     venv_marker.write_text("unchanged", encoding="utf-8")
@@ -168,7 +178,11 @@ def test_runtime_only_deployment_updates_managed_tree_without_touching_venv(tmp_
     assert (run_root / "backend" / "version.txt").read_text() == "repository-version"
     assert venv_marker.read_text() == "unchanged"
     assert local_config.read_text() == '{"preserve": true}'
+    assert subprocess.check_output(
+        ["git", "status", "--short"], cwd=source, text=True,
+    ) == source_status_before
     assert "virtual environment and dependencies were not modified" in result.stdout
+    assert "isolated snapshot of Git HEAD" in result.stdout
     assert "restart smart-condo-dashboard" in systemctl_log.read_text()
 
 
