@@ -16,7 +16,7 @@ def test_real_entertainment_and_climate_devices_are_visible():
         assert identifier in SOURCE
     for label in ("Power", "Volume +", "Source", "Temperature", "Oscillation", "Timer"):
         assert label in SOURCE
-    assert "window.renderLgTvCompact?.()" in SOURCE
+    assert "renderLgTvCompact" not in SOURCE
 
 
 def test_unsupported_controls_are_disabled_with_reason():

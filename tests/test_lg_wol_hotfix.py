@@ -190,3 +190,13 @@ def test_frontend_keeps_power_on_visible_with_exact_disabled_reason():
     reason = "Wake-on-LAN is not configured. Add the TV MAC address to enable Power On."
     assert "button('power_on', 'Power On'" in source
     assert reason in source
+
+
+def test_household_renderer_cannot_overwrite_live_wol_capabilities():
+    assets = Path(control.app_module.FRONTEND_DIR) / "assets"
+    household = (assets / "dashboard_household_devices.js").read_text(encoding="utf-8")
+    status = (assets / "dashboard_lg_status.js").read_text(encoding="utf-8")
+    assert "renderLgCompactRemote" not in household
+    assert "renderLgTvCompact" not in household
+    assert status.count("window.renderLgCompactRemote?.(state.capabilities || {})") == 1
+    assert "request('/api/lg-tv/capabilities')" in status

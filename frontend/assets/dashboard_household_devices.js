@@ -63,7 +63,6 @@
   }
 
   function renderEntertainment() {
-    window.renderLgTvCompact?.();
     const grid = document.querySelector('[data-page="entertainment"] .grid');
     if (!grid) return;
     let host = document.getElementById('soundbarHouseholdCard');

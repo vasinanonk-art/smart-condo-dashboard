@@ -55,7 +55,8 @@ def test_responsive_grid_without_fixed_width():
     assert "width:300px" not in CSS.replace(" ", "")
 
 
-def test_remote_is_restored_after_legacy_page_render():
+def test_lg_status_is_the_only_remote_render_owner():
     household = (ROOT / "frontend/assets/dashboard_household_devices.js").read_text()
-    assert "window.renderLgTvCompact?.()" in household
+    assert "renderLgTvCompact" not in household
+    assert "renderLgCompactRemote" not in household
     assert "window.renderLgCompactRemote?.(state.capabilities || {})" in UI
