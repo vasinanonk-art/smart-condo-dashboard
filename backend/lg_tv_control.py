@@ -26,6 +26,8 @@ WOL_STATE_LOCK = threading.Lock()
 WOL_RECONNECT_ATTEMPTS = min(6, max(1, int(os.getenv("LG_TV_WOL_RECONNECT_ATTEMPTS", "4"))))
 WOL_RECONNECT_TIMEOUT_SEC = min(5.0, max(0.5, float(os.getenv("LG_TV_WOL_RECONNECT_TIMEOUT_SEC", "2"))))
 WOL_BACKOFF_SEC = (0.5, 1.0, 2.0, 4.0, 4.0, 4.0)
+WOL_BROADCAST_ADDRESS = "192.168.1.255"
+WOL_INTERFACES = ("wlx6c4cbcdb7033", "wlan0")
 _WOL_RUNTIME: Dict[str, Any] = {
     "last_wol_sent_at": None,
     "reconnect_attempts": 0,
@@ -135,13 +137,23 @@ def _open_client(key: str, *, timeout: float = COMMAND_TIMEOUT_SEC) -> Any:
 
 def _wake() -> None:
     packet = _magic_packet(_configured_mac())
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.settimeout(COMMAND_TIMEOUT_SEC)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        sock.sendto(packet, ("255.255.255.255", 9))
-    finally:
-        sock.close()
+    errors: list[OSError] = []
+    sent = 0
+    bind_to_device = getattr(socket, "SO_BINDTODEVICE", 25)
+    for interface in WOL_INTERFACES:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.settimeout(COMMAND_TIMEOUT_SEC)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.setsockopt(socket.SOL_SOCKET, bind_to_device, interface.encode("ascii") + b"\0")
+            sock.sendto(packet, (WOL_BROADCAST_ADDRESS, 9))
+            sent += 1
+        except OSError as exc:
+            errors.append(exc)
+        finally:
+            sock.close()
+    if not sent:
+        raise errors[-1] if errors else OSError("wol_send_failed")
 
 
 def _reconnect_after_wol(key: str | None) -> tuple[Dict[str, Any], bool, int]:

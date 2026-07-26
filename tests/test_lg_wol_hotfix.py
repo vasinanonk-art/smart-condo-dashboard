@@ -39,31 +39,88 @@ def test_magic_packet_has_standard_header_and_sixteen_mac_repetitions():
     assert len(packet) == 102
 
 
-def test_wake_sends_once_to_lan_broadcast_with_bounded_socket(monkeypatch):
+def test_wake_binds_and_sends_to_lan_broadcast_on_both_interfaces(monkeypatch):
     sent = []
 
     class FakeSocket:
+        def __init__(self, number):
+            self.number = number
+
         def settimeout(self, value):
-            sent.append(("timeout", value))
+            sent.append(("timeout", self.number, value))
 
         def setsockopt(self, *values):
-            sent.append(("broadcast", values))
+            sent.append(("option", self.number, values))
 
         def sendto(self, packet, address):
-            sent.append(("send", packet, address))
+            sent.append(("send", self.number, packet, address))
 
         def close(self):
-            sent.append(("close",))
+            sent.append(("close", self.number))
 
     monkeypatch.setenv("LG_TV_MAC", "58:96:0A:9D:1C:0F")
-    monkeypatch.setattr(control.socket, "socket", lambda *args: FakeSocket())
+    sockets = []
+
+    def create_socket(*args):
+        sock = FakeSocket(len(sockets))
+        sockets.append(sock)
+        return sock
+
+    monkeypatch.setattr(control.socket, "socket", create_socket)
     control._wake()
     sends = [entry for entry in sent if entry[0] == "send"]
-    assert len(sends) == 1
-    assert sends[0][2] == ("255.255.255.255", 9)
-    assert len(sends[0][1]) == 102
-    assert ("timeout", control.COMMAND_TIMEOUT_SEC) in sent
-    assert sent[-1] == ("close",)
+    assert len(sends) == 2
+    assert all(entry[3] == ("192.168.1.255", 9) for entry in sends)
+    assert all(len(entry[2]) == 102 for entry in sends)
+    bind_to_device = getattr(control.socket, "SO_BINDTODEVICE", 25)
+    bindings = [
+        entry[2][2]
+        for entry in sent
+        if entry[0] == "option" and entry[2][1] == bind_to_device
+    ]
+    assert bindings == [b"wlx6c4cbcdb7033\0", b"wlan0\0"]
+    assert [entry for entry in sent if entry[0] == "timeout"] == [
+        ("timeout", 0, control.COMMAND_TIMEOUT_SEC),
+        ("timeout", 1, control.COMMAND_TIMEOUT_SEC),
+    ]
+    assert [entry for entry in sent if entry[0] == "close"] == [("close", 0), ("close", 1)]
+
+
+def test_wake_still_attempts_second_interface_if_first_fails(monkeypatch):
+    attempts = []
+
+    class FakeSocket:
+        def __init__(self, number):
+            self.number = number
+
+        def settimeout(self, value):
+            pass
+
+        def setsockopt(self, level, option, value):
+            if option == getattr(control.socket, "SO_BINDTODEVICE", 25):
+                attempts.append(value)
+                if self.number == 0:
+                    raise OSError("interface unavailable")
+
+        def sendto(self, packet, address):
+            attempts.append(address)
+
+        def close(self):
+            pass
+
+    sockets = []
+    monkeypatch.setenv("LG_TV_MAC", "58:96:0A:9D:1C:0F")
+    monkeypatch.setattr(
+        control.socket,
+        "socket",
+        lambda *args: sockets.append(FakeSocket(len(sockets))) or sockets[-1],
+    )
+    control._wake()
+    assert attempts == [
+        b"wlx6c4cbcdb7033\0",
+        b"wlan0\0",
+        ("192.168.1.255", 9),
+    ]
 
 
 def test_power_on_is_unavailable_without_valid_external_setting(monkeypatch):
