@@ -58,7 +58,7 @@ def test_lg_remote_keeps_honest_power_and_live_options():
     assert "capabilities.inputs" in LG_REMOTE
     assert "capabilities.applications" in LG_REMOTE
     assert "enumeration_available === true" in LG_REMOTE
-    for assumption in ("hdmi1", "hdmi2", "netflix", "youtube"):
+    for assumption in ("hdmi1", "hdmi2", "com.webos.app", "youtube.leanback"):
         assert assumption not in LG_REMOTE.lower()
 
 

@@ -57,13 +57,32 @@ def test_remote_has_supported_commands_without_hardcoded_inputs_or_apps():
     assert INDEX.index("dashboard_lg_remote.js") < INDEX.index("dashboard_lg_status.js")
     for command in ("power_on", "power_off", "volume_up", "set_input", "launch_app"):
         assert command in REMOTE
-    for unsupported_assumption in ("hdmi1", "hdmi2", "netflix", "youtube"):
+    for unsupported_assumption in ("hdmi1", "hdmi2", "com.webos.app", "youtube.leanback"):
         assert unsupported_assumption not in REMOTE.lower()
 
 
-def test_live_applications_render_as_quick_launch_buttons_and_select_options():
-    assert "quickLaunch = false" in REMOTE
+def test_live_applications_render_at_most_six_common_installed_buttons():
+    assert "const commonApplications" in REMOTE
+    assert ".slice(0, 6)" in REMOTE
+    assert "items.find(item => pattern.test" in REMOTE
     assert 'data-lg-value="${escape(item.id)}"' in REMOTE
     assert "window.tv(element.dataset.lgCommand, element.dataset.lgValue)" in REMOTE
-    assert "'Applications', 'launch_app'" in REMOTE
-    assert "'Inputs', 'set_input'" in REMOTE
+    assert "renderApplications(" in REMOTE
+    assert 'data-lg-option="launch_app"' not in REMOTE
+
+
+def test_inputs_are_separate_filtered_and_switch_immediately():
+    assert "const allowedInputs" in REMOTE
+    for label in ("HDMI", "Live TV", "AV"):
+        assert label in REMOTE
+    assert 'data-lg-option="set_input"' in REMOTE
+    assert "window.tv('set_input', event.target.value)" in REMOTE
+
+
+def test_navigation_is_a_dpad_and_media_controls_are_complete():
+    css = (ROOT / "frontend/assets/dashboard_lg_remote.css").read_text()
+    assert "`household-lg-nav-${name}`" in REMOTE
+    for command in ("up", "left", "ok", "right", "down", "back", "home"):
+        assert f".household-lg-nav-{command}" in css
+    for command in ("play", "pause", "stop", "rewind", "fast_forward"):
+        assert command in REMOTE

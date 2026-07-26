@@ -37,7 +37,8 @@ _WOL_RUNTIME: Dict[str, Any] = {
 DIRECT_COMMANDS = {
     "volume_up", "volume_down", "mute", "unmute", "set_volume",
     "set_input", "launch_app", "up", "down", "left", "right", "ok",
-    "back", "home", "play", "pause", "stop", "power_off",
+    "back", "home", "play", "pause", "stop", "rewind", "fast_forward",
+    "power_off",
 }
 ENUMERATION_LOCK = threading.Lock()
 ENUMERATION_CACHE: Dict[str, Dict[str, str]] = {"input": {}, "app": {}}
@@ -279,6 +280,9 @@ def _execute(client: Any, command: str, value: Any) -> None:
     if command in {"up", "down", "left", "right", "ok", "back", "home"}:
         _pointer_command(client, command)
         return
+    if command in {"rewind", "fast_forward"}:
+        _pointer_command(client, "fastforward" if command == "fast_forward" else command)
+        return
     if command in {"volume_up", "volume_down", "play", "pause", "stop"}:
         getattr(MediaControl(client), command)(timeout=COMMAND_TIMEOUT_SEC)
         return
@@ -374,7 +378,12 @@ def lg_tv_command(payload: TvCommand = Body(...)):
             return JSONResponse({"detail": "command_busy"}, status_code=409)
         try:
             key, _ = pairing._current_key()
-            if status._reachable(3001, timeout=COMMAND_TIMEOUT_SEC) or status._reachable(3000, timeout=COMMAND_TIMEOUT_SEC):
+            current = status._public_status()
+            if (
+                current.get("online") is True
+                and current.get("connection_state") == "connected"
+                and not current.get("stale")
+            ):
                 state, refreshed = _refresh(key) if key else (status._public_status(), False)
                 _set_wol_runtime(reconnect_attempts=0, last_wol_result="already_online")
                 return {

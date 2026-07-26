@@ -44,7 +44,8 @@ def test_live_only_input_and_application_enumeration():
     assert "capabilities.inputs" in REMOTE
     assert "capabilities.applications" in REMOTE
     assert "enumeration_available" in REMOTE
-    assert "Live ${escape(title.toLowerCase())} enumeration is unavailable." in REMOTE
+    assert "Live input enumeration is unavailable." in REMOTE
+    assert "Live application enumeration is unavailable." in REMOTE
 
 
 def test_responsive_grid_without_fixed_width():

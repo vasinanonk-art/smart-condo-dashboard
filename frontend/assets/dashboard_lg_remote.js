@@ -6,36 +6,57 @@
   const UI = window.HouseholdUI;
   const commands = [
     ['power_on', 'Power On'], ['power_off', 'Power Off'],
-    ['up', 'Up'], ['left', 'Left'], ['ok', 'OK'], ['right', 'Right'], ['down', 'Down'],
+    ['up', '▲'], ['left', '◀'], ['ok', 'OK'], ['right', '▶'], ['down', '▼'],
     ['back', 'Back'], ['home', 'Home'],
     ['volume_up', 'Volume +'], ['volume_down', 'Volume -'], ['mute', 'Mute'], ['unmute', 'Unmute'],
-    ['play', 'Play'], ['pause', 'Pause'], ['stop', 'Stop']
+    ['play', 'Play'], ['pause', 'Pause'], ['stop', 'Stop'],
+    ['rewind', 'Rewind'], ['fast_forward', 'Fast Forward']
   ];
+  const commonApplications = [
+    /netflix/i, /youtube/i, /disney/i, /prime video|amazon prime/i,
+    /apple tv/i, /plex/i,
+  ];
+  const allowedInputs = /^(HDMI\s*[1-4]|Live TV|AV)$/i;
   const escape = UI.safe;
 
-  function button(command, label, disabled = false, reason = '', attributes = '') {
+  function button(command, label, disabled = false, reason = '', attributes = '', className = '') {
     return UI.actionButton({
-      label, disabled, reason,
+      label, disabled, reason, className,
       attributes:`data-lg-command="${escape(command)}"${attributes ? ` ${attributes}` : ''}`,
     });
   }
 
-  function renderOptions(host, title, command, items, available, quickLaunch = false) {
+  function renderInputs(host, items, available) {
+    const inputs = items.filter(item => allowedInputs.test(String(item.label || '').trim()));
     const section = document.createElement('section');
     section.className = 'household-lg-section';
     if (!available) {
-      section.innerHTML = `<h3>${escape(title)}</h3><p class="household-lg-option-unavailable">Live ${escape(title.toLowerCase())} enumeration is unavailable.</p>`;
-    } else if (!items.length) {
-      section.innerHTML = `<h3>${escape(title)}</h3><p class="household-lg-option-unavailable">No ${escape(title.toLowerCase())} were reported by the TV.</p>`;
+      section.innerHTML = '<h3>Inputs</h3><p class="household-lg-option-unavailable">Live input enumeration is unavailable.</p>';
+    } else if (!inputs.length) {
+      section.innerHTML = '<h3>Inputs</h3><p class="household-lg-option-unavailable">No supported inputs were reported by the TV.</p>';
     } else {
-      const quickButtons = quickLaunch
-        ? `<div class="household-action-grid household-lg-button-row">${items.map(item => button(command, item.label, false, '', `data-lg-value="${escape(item.id)}"`)).join('')}</div>`
-        : '';
-      section.innerHTML = `<h3>${escape(title)}</h3>${quickButtons}<select data-lg-option="${escape(command)}" aria-label="${escape(title)}"><option value="">Select…</option>${items.map(item => `<option value="${escape(item.id)}">${escape(item.label)}</option>`).join('')}</select>`;
+      section.innerHTML = `<h3>Inputs</h3><select data-lg-option="set_input" aria-label="Inputs"><option value="">Select…</option>${inputs.map(item => `<option value="${escape(item.id)}">${escape(item.label)}</option>`).join('')}</select>`;
       section.querySelector('select').addEventListener('change', event => {
-        if (event.target.value) window.tv(command, event.target.value);
+        if (event.target.value) window.tv('set_input', event.target.value);
         event.target.value = '';
       });
+    }
+    host.appendChild(section);
+  }
+
+  function renderApplications(host, items, available) {
+    const applications = commonApplications
+      .map(pattern => items.find(item => pattern.test(String(item.label || ''))))
+      .filter((item, index, values) => item && values.indexOf(item) === index)
+      .slice(0, 6);
+    const section = document.createElement('section');
+    section.className = 'household-lg-section';
+    if (!available) {
+      section.innerHTML = '<h3>Applications</h3><p class="household-lg-option-unavailable">Live application enumeration is unavailable.</p>';
+    } else if (!applications.length) {
+      section.innerHTML = '<h3>Applications</h3><p class="household-lg-option-unavailable">No common applications were reported by the TV.</p>';
+    } else {
+      section.innerHTML = `<h3>Applications</h3><div class="household-action-grid household-lg-button-row">${applications.map(item => button('launch_app', item.label, false, '', `data-lg-value="${escape(item.id)}"`)).join('')}</div>`;
     }
     host.appendChild(section);
   }
@@ -52,7 +73,7 @@
           ${button('power_off', 'Power Off', !supported.has('power_off'), 'Power Off is unavailable.')}
         </div>${supported.has('power_on') ? '' : UI.warningBox(wolReason, 'lg-power-on-reason')}</section>
         <section class="household-lg-section"><h3>Navigation</h3><div class="household-action-grid household-lg-navigation">
-          ${['up','left','ok','right','down','back','home'].map(name => button(name, commands.find(item => item[0] === name)[1], !supported.has(name))).join('')}
+          ${['up','left','ok','right','down','back','home'].map(name => button(name, commands.find(item => item[0] === name)[1], !supported.has(name), '', '', `household-lg-nav-${name}`)).join('')}
         </div></section>
         <section class="household-lg-section"><h3>Volume</h3><div class="household-action-grid household-lg-button-row">
           ${['volume_up','volume_down','mute','unmute'].map(name => button(name, commands.find(item => item[0] === name)[1], !supported.has(name))).join('')}
@@ -60,11 +81,11 @@
           ${UI.actionButton({label:'Set', disabled:!supported.has('set_volume'), reason:supported.has('set_volume') ? '' : 'Set volume is unavailable.', attributes:'data-lg-set-volume'})}
         </div></section>
         <section class="household-lg-section"><h3>Playback</h3><div class="household-action-grid household-lg-button-row">
-          ${['play','pause','stop'].map(name => button(name, commands.find(item => item[0] === name)[1], !supported.has(name))).join('')}
+          ${['play','pause','stop','rewind','fast_forward'].map(name => button(name, commands.find(item => item[0] === name)[1], !supported.has(name))).join('')}
         </div></section>
       </div>`;
-    renderOptions(host.querySelector('.household-lg-controls'), 'Inputs', 'set_input', capabilities.inputs || [], capabilities.enumeration_available === true);
-    renderOptions(host.querySelector('.household-lg-controls'), 'Applications', 'launch_app', capabilities.applications || [], capabilities.enumeration_available === true, true);
+    renderInputs(host.querySelector('.household-lg-controls'), capabilities.inputs || [], capabilities.enumeration_available === true);
+    renderApplications(host.querySelector('.household-lg-controls'), capabilities.applications || [], capabilities.enumeration_available === true);
     host.querySelectorAll('[data-lg-command]').forEach(element => element.addEventListener('click', () => window.tv(element.dataset.lgCommand, element.dataset.lgValue)));
     const slider = host.querySelector('[data-lg-volume]');
     slider?.addEventListener('input', () => { slider.nextElementSibling.value = slider.value; });

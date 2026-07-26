@@ -172,7 +172,11 @@ def test_successful_wol_reconnect_closes_temporary_webos_client(monkeypatch):
 
 def test_power_on_sends_one_packet_then_returns_reconnected_state(monkeypatch):
     monkeypatch.setenv("LG_TV_MAC", "58:96:0A:9D:1C:0F")
-    monkeypatch.setattr(control.status, "_reachable", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        control.status,
+        "_public_status",
+        lambda: {"online": False, "connection_state": "websocket_error"},
+    )
     monkeypatch.setattr(control.pairing, "_current_key", lambda: ("key", "test"))
     wake_calls = []
     monkeypatch.setattr(control, "_wake", lambda: wake_calls.append("wake"))
@@ -192,7 +196,11 @@ def test_power_on_sends_one_packet_then_returns_reconnected_state(monkeypatch):
 
 def test_power_on_does_not_send_duplicate_wol_when_tv_is_already_online(monkeypatch):
     monkeypatch.setenv("LG_TV_MAC", "58:96:0A:9D:1C:0F")
-    monkeypatch.setattr(control.status, "_reachable", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        control.status,
+        "_public_status",
+        lambda: {"online": True, "connection_state": "connected"},
+    )
     monkeypatch.setattr(control.pairing, "_current_key", lambda: ("key", "test"))
     monkeypatch.setattr(control, "_wake", lambda: (_ for _ in ()).throw(AssertionError("duplicate WOL")))
     monkeypatch.setattr(control, "_refresh", lambda key: ({"online": True}, True))
@@ -200,6 +208,47 @@ def test_power_on_does_not_send_duplicate_wol_when_tv_is_already_online(monkeypa
     assert result["wol_sent"] is False
     assert result["state_refreshed"] is True
     assert control.wol_diagnostics()["last_wol_result"] == "already_online"
+
+
+def test_reachable_port_does_not_suppress_wol_when_websocket_state_is_offline(monkeypatch):
+    monkeypatch.setenv("LG_TV_MAC", "58:96:0A:9D:1C:0F")
+    monkeypatch.setattr(control.status, "_reachable", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        control.status,
+        "_public_status",
+        lambda: {"online": False, "connection_state": "websocket_error"},
+    )
+    monkeypatch.setattr(control.pairing, "_current_key", lambda: ("key", "test"))
+    wakes = []
+    monkeypatch.setattr(control, "_wake", lambda: wakes.append("wake"))
+    monkeypatch.setattr(
+        control,
+        "_reconnect_after_wol",
+        lambda key: ({"online": False, "connection_state": "connecting"}, False, 4),
+    )
+    result = control.lg_tv_command(control.TvCommand(command="power_on"))
+    assert result["wol_sent"] is True
+    assert wakes == ["wake"]
+
+
+def test_stale_connected_cache_does_not_suppress_wol(monkeypatch):
+    monkeypatch.setenv("LG_TV_MAC", "58:96:0A:9D:1C:0F")
+    monkeypatch.setattr(
+        control.status,
+        "_public_status",
+        lambda: {"online": True, "connection_state": "connected", "stale": True},
+    )
+    monkeypatch.setattr(control.pairing, "_current_key", lambda: ("key", "test"))
+    wakes = []
+    monkeypatch.setattr(control, "_wake", lambda: wakes.append("wake"))
+    monkeypatch.setattr(
+        control,
+        "_reconnect_after_wol",
+        lambda key: ({"online": False, "connection_state": "connecting"}, False, 4),
+    )
+    result = control.lg_tv_command(control.TvCommand(command="power_on"))
+    assert result["wol_sent"] is True
+    assert wakes == ["wake"]
 
 
 def test_concurrent_power_on_is_rejected_before_duplicate_packet(monkeypatch):

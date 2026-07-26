@@ -159,6 +159,28 @@ def test_navigation_cursor_commands_use_pointer_socket_and_close_it(monkeypatch)
     assert all(pointer.closed for pointer in pointers)
 
 
+def test_rewind_and_fast_forward_use_supported_pointer_key_names(monkeypatch):
+    pointer_calls = []
+    monkeypatch.setitem(
+        sys.modules,
+        "pywebostv.controls",
+        SimpleNamespace(
+            ApplicationControl=object,
+            MediaControl=object,
+            SourceControl=object,
+            SystemControl=object,
+        ),
+    )
+    monkeypatch.setattr(
+        control,
+        "_pointer_command",
+        lambda client, command: pointer_calls.append(command),
+    )
+    control._execute(object(), "rewind", None)
+    control._execute(object(), "fast_forward", None)
+    assert pointer_calls == ["rewind", "fastforward"]
+
+
 def test_live_application_and_input_enumeration_populates_capabilities(monkeypatch):
     client = FakeClient()
     sources = [SimpleNamespace(data={"id": "hdmi-live", "label": "Game Console"})]
@@ -205,6 +227,9 @@ def test_capability_response_keeps_commands_and_live_options(monkeypatch):
         },
     )
     payload = control.lg_tv_capabilities()
-    for command in ("power_on", "up", "down", "left", "right", "ok", "back", "home", "set_input", "launch_app"):
+    for command in (
+        "power_on", "up", "down", "left", "right", "ok", "back", "home",
+        "play", "pause", "stop", "rewind", "fast_forward", "set_input", "launch_app",
+    ):
         assert command in payload["supported"]
     assert payload["inputs"] and payload["applications"]
