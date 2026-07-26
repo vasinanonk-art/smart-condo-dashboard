@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SMART CONTROL 03 viewport harness</title>
+  <link rel="stylesheet" href="../../frontend/assets/dashboard_v3.css">
+  <link rel="stylesheet" href="../../frontend/assets/dashboard_household_design_system.css">
+  <link rel="stylesheet" href="../../frontend/assets/dashboard_household_devices.css">
+  <link rel="stylesheet" href="../../frontend/assets/dashboard_lg_remote.css">
+  <link rel="stylesheet" href="../../frontend/assets/dashboard_lg_status.css">
+  <link rel="stylesheet" href="../../frontend/assets/dashboard_notifications.css">
+  <style>
+    body{padding:20px}.harness-shell{display:grid;gap:20px;max-width:1500px;margin:0 auto}.harness-topbar{display:flex;justify-content:flex-end}.harness-section{display:grid;gap:12px}.harness-section>h2{margin:0}.harness-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px}
+  </style>
+</head>
+<body>
+  <main class="harness-shell">
+    <header class="topbar harness-topbar"><div class="status-row"></div></header>
+    <section class="page active harness-section" data-page="entertainment">
+      <h2>Entertainment</h2>
+      <div class="grid harness-grid"><article class="card span-12"><div id="tvButtons"></div></article></div>
+    </section>
+    <section class="harness-section">
+      <h2>Climate</h2>
+      <div class="card"><div id="climateControls"></div></div>
+    </section>
+    <section class="harness-section">
+      <h2>Cameras</h2>
+      <div class="card"><div id="cameraControls"></div></div>
+    </section>
+  </main>
+  <script>
+    window.currentPage=()=> 'entertainment';
+    window.renderPage=()=>{};
+    window.safeText=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    const devices=[
+      {id:'living-room-samsung-soundbar',room:'living_room',display_name:'Samsung Soundbar',category:'soundbar',online:null,health:'degraded',capabilities:{},state:{},state_quality:'unknown',unavailable_reason:'Tapo H110 detected; command mapping is not configured.'},
+      {id:'living-room-air-conditioner',room:'living_room',display_name:'Living Room Air Conditioner',category:'climate',online:null,health:'degraded',capabilities:{},state:{},state_quality:'assumed',unavailable_reason:'Tapo H110 detected; command mapping is not configured.'},
+      {id:'living-room-fan',room:'living_room',display_name:'Fan',category:'fan',online:null,health:'degraded',capabilities:{},state:{},state_quality:'unknown',unavailable_reason:'Tapo H110 detected; command mapping is not configured.'},
+      {id:'bed-room-air-conditioner',room:'bed_room',display_name:'Bed Room Air Conditioner',category:'climate',online:null,health:'unavailable',capabilities:{},state:{},state_quality:'unknown',unavailable_reason:'T3 IR device detected; control path is not verified.'},
+      {id:'camera-1',room:'living_room',display_name:'Tapo C220',category:'camera',online:null,health:'unavailable',capabilities:{},state:{},state_quality:'unknown',unavailable_reason:'Configuration unavailable'},
+      {id:'camera-2',room:'living_room',display_name:'Xiaomi Camera 1',category:'camera',online:null,health:'unavailable',capabilities:{},state:{},state_quality:'unknown',unavailable_reason:'Configuration unavailable'},
+      {id:'camera-3',room:'living_room',display_name:'Xiaomi Camera 2',category:'camera',online:null,health:'unavailable',capabilities:{},state:{},state_quality:'unknown',unavailable_reason:'Configuration unavailable'}
+    ];
+    const payloads={
+      '/api/devices':{devices},
+      '/api/lg-tv/status':{online:true,connection_state:'connected',last_success_ts:1,current_app:{name:'YouTube'},current_input:{name:'App / webOS'},audio:{volume:18,muted:false},last_update_ts:1,device:{software_version:'1.2.3',firmware_version:'4.5.6',webos_version:'8.0'}},
+      '/api/lg-tv/capabilities':{supported:['power_off','volume_up','volume_down','mute','unmute','set_volume','up','down','left','right','ok','back','home','play','pause','stop'],power_on:{supported:false},inputs:[{id:'input-safe',label:'Live TV'}],applications:[{id:'app-safe',label:'YouTube'}],enumeration_available:true},
+      '/api/notifications':{notifications:[{id:'camera-config',type:'warning',title:'Camera configuration missing',message:'Camera controls are unavailable.',source:'Cameras',created_ts:1,read:false}],unread_count:1}
+    };
+    window.fetch=async(url)=>({ok:true,json:async()=>payloads[new URL(url,location.href).pathname]||{ok:true}});
+  </script>
+  <script src="../../frontend/assets/dashboard_household_design_system.js"></script>
+  <script src="../../frontend/assets/dashboard_lg_remote.js"></script>
+  <script src="../../frontend/assets/dashboard_lg_status.js"></script>
+  <script src="../../frontend/assets/dashboard_notifications.js"></script>
+  <script src="../../frontend/assets/dashboard_household_devices.js"></script>
+</body>
+</html>

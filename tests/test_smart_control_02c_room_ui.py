@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 SOURCE = (ROOT / "frontend/assets/dashboard_household_devices.js").read_text()
+DESIGN = (ROOT / "frontend/assets/dashboard_household_design_system.js").read_text()
 
 
 def test_real_entertainment_and_climate_devices_are_visible():
@@ -19,7 +20,8 @@ def test_real_entertainment_and_climate_devices_are_visible():
 
 
 def test_unsupported_controls_are_disabled_with_reason():
-    assert 'disabled title="${safe(reason)}"' in SOURCE
+    assert "UI.actionButton({label, disabled:true, reason})" in SOURCE
+    assert "title=\"${safe(reason)}\"" in DESIGN
     assert "device.unavailable_reason" in SOURCE
     assert "No IR provider" not in SOURCE
 
@@ -31,7 +33,7 @@ def test_three_camera_placeholders_remain_visible_without_false_offline():
     assert all(item["online"] is None for item in devices)
     assert all(item["unavailable_reason"] == "Configuration unavailable" for item in devices)
     assert all(not any(item["capabilities"].values()) for item in devices)
-    assert "device.unavailable_reason ?" in SOURCE
+    assert "warning:userReason(device)" in SOURCE
 
 
 def test_room_ui_uses_registry_without_provider_or_secret_fields():
@@ -41,6 +43,7 @@ def test_room_ui_uses_registry_without_provider_or_secret_fields():
 
 
 def test_state_quality_is_labeled_honestly():
-    assert "State quality:" in SOURCE
-    assert "IR has no feedback" in SOURCE
-    assert "Confirmed" in SOURCE and "Assumed" in SOURCE and "Unknown" in SOURCE
+    assert "IR has no device feedback" in SOURCE
+    assert "confirmed:'Confirmed'" in DESIGN
+    assert "assumed:'Assumed'" in DESIGN
+    assert "unknown:'Unknown'" in DESIGN

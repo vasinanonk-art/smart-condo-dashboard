@@ -11,7 +11,7 @@
   const POLL_MS = 60000;
   const state = {
     settings:null, tariffStatus:null, candidate:null, legacyTariffStatus:null, syncStatus:null,
-    maintenance:null, notifications:[], csrf:null, initialLoading:true, refreshing:false,
+    maintenance:null, csrf:null, initialLoading:true, refreshing:false,
     settingsDirty:false, saving:false, tariffCheckInProgress:false, activeSection:'electricity',
     pollTimer:null, requestSequence:0, appliedSequence:0, ignoredStaleResponses:0,
     lastRefreshStarted:null, lastRefreshCompleted:null, lastError:null, mounted:false,
@@ -61,7 +61,7 @@
       const endpoints=[
         '/api/tariff/status','/api/tariff/candidate','/api/settings',
         '/api/electricity/tariff/status','/api/electricity/tariff/sync-status',
-        '/api/maintenance/status','/api/notifications'
+        '/api/maintenance/status'
       ];
       const results=await Promise.allSettled(endpoints.map(url=>request(url,'GET',undefined,controller.signal)));
       if(sequence < state.appliedSequence){ state.ignoredStaleResponses += 1; return; }
@@ -69,13 +69,12 @@
       const previousSuccess={
         tariffStatus:state.tariffStatus,candidate:state.candidate,settings:state.settings,
         legacyTariffStatus:state.legacyTariffStatus,syncStatus:state.syncStatus,
-        maintenance:state.maintenance,notifications:state.notifications,
+        maintenance:state.maintenance,
       };
-      const keys=['tariffStatus','candidate','settings','legacyTariffStatus','syncStatus','maintenance','notifications'];
+      const keys=['tariffStatus','candidate','settings','legacyTariffStatus','syncStatus','maintenance'];
       results.forEach((result,index)=>{
         if(result.status==='fulfilled'){
-          if(keys[index]==='notifications') state.notifications=result.value.notifications||[];
-          else if(keys[index]==='settings'){
+          if(keys[index]==='settings'){
             state.settings=result.value.settings||result.value;
           } else state[keys[index]]=result.value;
         }

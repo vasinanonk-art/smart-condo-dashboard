@@ -1,1 +1,3 @@
-.lg-tv-details[open] .lg-detail-actions{margin-top:8px}.lg-remote-key:disabled{opacity:.48;cursor:not-allowed}
+.household-lg-remote {
+  min-width: 0;
+}

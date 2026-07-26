@@ -71,11 +71,12 @@ def test_compact_lg_frontend_has_live_only_options_and_no_duplicate_get():
     assert "/api/lg-tv/status/refresh" not in command_handler
 
 
-def test_notification_panel_escapes_values_and_only_loads_when_open():
+def test_notification_panel_escapes_values_and_has_one_initial_unread_load():
     source = (Path(__file__).parents[1] / "frontend/assets/dashboard_notifications.js").read_text()
     assert "${safe(item.title)}" in source
     assert "${safe(item.message)}" in source
-    assert "if (!panel.hidden) await load()" in source
+    assert "load({renderPanel:false})" in source
+    assert "if (!state.loaded) await load()" in source
     assert "setInterval" not in source
 
 

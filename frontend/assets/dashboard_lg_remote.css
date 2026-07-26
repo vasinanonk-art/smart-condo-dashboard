@@ -1,1 +1,127 @@
-.lg-tv-compact-card{display:grid;gap:14px}.lg-compact-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.lg-compact-summary>div{padding:10px;border:1px solid var(--border);border-radius:12px}.lg-compact-summary h2,.lg-compact-summary strong{display:block;margin:0}.lg-compact-summary span{display:block;font-size:11px;opacity:.7;margin-bottom:5px}.lg-compact-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.lg-compact-section{padding:12px;border:1px solid var(--border);border-radius:12px}.lg-compact-section h3{margin:0 0 9px;font-size:13px}.lg-button-row{display:flex;flex-wrap:wrap;gap:7px}.lg-navigation{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.lg-navigation [data-lg-command="up"]{grid-column:2}.lg-navigation [data-lg-command="left"]{grid-column:1}.lg-navigation [data-lg-command="down"]{grid-column:2}.lg-navigation [data-lg-command="back"]{grid-column:1}.lg-volume-set{display:flex;align-items:center;gap:7px;font-size:11px}.lg-disabled-reason,.lg-option-unavailable{display:block;margin-top:8px;color:var(--muted);font-size:11px}.lg-compact-section select{width:100%;padding:9px;border:1px solid var(--border);border-radius:9px;background:var(--surface-soft);color:inherit}.lg-tv-details{padding:10px;border-top:1px solid var(--border)}.lg-tv-details summary{cursor:pointer;font-weight:700}.lg-tv-details p{color:var(--muted);font-size:12px}.lg-command-toast{position:fixed;right:18px;bottom:18px;z-index:150;padding:10px 13px;border-radius:10px;background:#173426;color:#d9ffea;box-shadow:0 12px 36px rgba(0,0,0,.35)}.lg-command-toast.error{background:#452128;color:#ffdce2}@media(max-width:760px){.lg-compact-summary,.lg-compact-controls{grid-template-columns:1fr 1fr}}@media(max-width:520px){.lg-compact-summary,.lg-compact-controls{grid-template-columns:1fr}}
+.household-lg-card {
+  grid-column: 1 / -1;
+}
+
+.household-lg-quality-owner {
+  min-height: 28px;
+}
+
+.household-lg-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.household-lg-summary-item {
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.household-lg-summary-item span,
+.household-lg-summary-item strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.household-lg-summary-item span {
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.household-lg-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.household-lg-section {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.household-lg-section h3 {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.household-lg-button-row {
+  margin-top: 0;
+}
+
+.household-lg-navigation {
+  grid-template-columns: repeat(3, minmax(80px, 1fr));
+  margin-top: 0;
+}
+
+.household-lg-navigation [data-lg-command="up"] {
+  grid-column: 2;
+}
+
+.household-lg-navigation [data-lg-command="left"] {
+  grid-column: 1;
+}
+
+.household-lg-navigation [data-lg-command="down"] {
+  grid-column: 2;
+}
+
+.household-lg-navigation [data-lg-command="back"] {
+  grid-column: 1;
+}
+
+.household-lg-volume-set {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: auto minmax(100px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.household-lg-volume-set input {
+  width: 100%;
+}
+
+.household-lg-option-unavailable {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.household-lg-section select {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #101720;
+  color: var(--text);
+}
+
+.household-lg-section select:focus-visible,
+.household-lg-volume-set input:focus-visible {
+  outline: 3px solid rgba(78, 161, 255, .8);
+  outline-offset: 3px;
+}
+
+@media (max-width: 760px) {
+  .household-lg-summary,
+  .household-lg-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 390px) {
+  .household-lg-navigation {
+    grid-template-columns: repeat(3, minmax(64px, 1fr));
+  }
+}

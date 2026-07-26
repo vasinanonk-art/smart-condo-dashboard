@@ -33,11 +33,11 @@ def test_only_one_timer_owns_status_refresh():
 
 
 def test_compact_summary_has_no_always_visible_diagnostics():
-    for field in ("lgTvStatus", "lgTvSource", "lgTvVolume", "lgTvUpdated"):
+    for field in ("lgTvStatusBadge", "lgTvSource", "lgTvVolume", "lgTvUpdated"):
         assert field in UI
     for technical in ("lgTvFirmware", "lgTvWebos", "lgTvDeviceName", "TV IP", "key source"):
         assert technical not in UI
-    assert "<details" in UI and "TV Details / Pairing" in UI
+    assert "UI.deviceDetails" in UI and "summary:'TV Details'" in UI
 
 
 def test_live_only_input_and_application_enumeration():
@@ -48,10 +48,10 @@ def test_live_only_input_and_application_enumeration():
 
 
 def test_responsive_grid_without_fixed_width():
-    assert "display:grid" in CSS
-    assert "grid-template-columns" in CSS
-    assert "@media(max-width:760px)" in CSS
-    assert "@media(max-width:520px)" in CSS
+    assert "display: grid" in CSS
+    assert "grid-template-columns:" in CSS
+    assert "@media (max-width: 760px)" in CSS
+    assert "@media (max-width: 390px)" in CSS
     assert "width:300px" not in CSS.replace(" ", "")
 
 

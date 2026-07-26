@@ -11,119 +11,6 @@
   grid-column: 1 / -1;
 }
 
-.household-device-card {
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  width: 100%;
-  min-width: 320px;
-  height: auto;
-  min-height: 0;
-  padding: 18px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: linear-gradient(180deg, var(--card), #111720);
-  box-shadow: var(--shadow);
-}
-
-.household-device-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: start;
-  min-width: 0;
-}
-
-.household-device-title {
-  min-width: 0;
-  margin: 0;
-  color: var(--text);
-  font-size: 16px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-.household-device-room {
-  display: block;
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.household-status {
-  align-self: start;
-  padding: 5px 9px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 800;
-  line-height: 1.2;
-  white-space: nowrap;
-}
-
-.household-device-state {
-  min-width: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.household-device-reason {
-  width: 100%;
-  height: auto;
-  min-height: 0;
-  padding: 12px 14px;
-  overflow-wrap: anywhere;
-  border: 1px solid rgba(242, 184, 75, .5);
-  border-radius: 11px;
-  background: rgba(242, 184, 75, .11);
-  color: #f2d58f;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.household-controls {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(120px, 1fr));
-  gap: 10px;
-  width: 100%;
-  min-width: 0;
-  margin-top: auto;
-}
-
-.household-control-button {
-  display: grid;
-  min-width: 0;
-  min-height: 44px;
-  height: 100%;
-  padding: 10px 12px;
-  place-items: center;
-  overflow-wrap: anywhere;
-  border: 1px solid #334158;
-  border-radius: 11px;
-  background: #101720;
-  color: var(--text);
-  font-weight: 800;
-  line-height: 1.25;
-}
-
-.household-control-button:hover:not(:disabled) {
-  filter: brightness(1.15);
-}
-
-.household-control-button:disabled {
-  opacity: .5;
-  cursor: not-allowed;
-}
-
-.household-camera-card {
-  min-height: 0;
-}
-
 @media (max-width: 1100px) {
   .household-grid {
     grid-template-columns: repeat(2, minmax(320px, 1fr));
@@ -134,8 +21,10 @@
   .household-grid {
     grid-template-columns: minmax(320px, 1fr);
   }
+}
 
-  .household-device-card {
-    padding: 16px;
+@media (max-width: 520px) {
+  .household-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

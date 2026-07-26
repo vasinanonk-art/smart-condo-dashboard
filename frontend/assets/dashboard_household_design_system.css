@@ -1,0 +1,252 @@
+.household-device-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  min-width: 320px;
+  height: auto;
+  min-height: 0;
+  padding: 18px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(180deg, var(--card), #111720);
+  box-shadow: var(--shadow);
+}
+
+.household-device-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+}
+
+.household-device-identity {
+  min-width: 0;
+}
+
+.household-device-title {
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.household-device-room {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.household-badge {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 28px;
+  padding: 5px 9px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.household-status-online {
+  border-color: rgba(67, 209, 125, .45);
+  color: var(--green);
+}
+
+.household-status-offline {
+  border-color: rgba(255, 99, 117, .45);
+  color: var(--red);
+}
+
+.household-status-unknown,
+.household-quality-unknown {
+  color: var(--muted);
+}
+
+.household-quality-confirmed {
+  color: var(--green);
+}
+
+.household-quality-assumed {
+  color: var(--yellow);
+}
+
+.household-device-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.household-device-state {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.household-warning-box {
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  padding: 12px 14px;
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(242, 184, 75, .5);
+  border-radius: 11px;
+  background: rgba(242, 184, 75, .11);
+  color: #f2d58f;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.household-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  margin-top: auto;
+}
+
+.household-action-button {
+  display: grid;
+  min-width: 0;
+  min-height: 44px;
+  height: 100%;
+  padding: 10px 12px;
+  place-items: center;
+  overflow-wrap: anywhere;
+  border: 1px solid #334158;
+  border-radius: 11px;
+  background: #101720;
+  color: var(--text);
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.household-action-button:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+
+.household-action-button:focus-visible,
+.household-device-details summary:focus-visible {
+  outline: 3px solid rgba(78, 161, 255, .8);
+  outline-offset: 3px;
+}
+
+.household-action-button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.household-device-details {
+  width: 100%;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.household-device-details summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.household-device-details-content {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.household-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.household-detail-item {
+  min-width: 0;
+  padding: 10px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.household-detail-item span,
+.household-detail-item strong {
+  display: block;
+}
+
+.household-detail-item span {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.household-detail-item strong {
+  margin-top: 4px;
+  color: var(--text);
+}
+
+.household-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 150;
+  max-width: min(420px, calc(100vw - 30px));
+  padding: 11px 14px;
+  border-radius: 11px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, .35);
+}
+
+.household-toast[hidden] {
+  display: none;
+}
+
+.household-toast-success {
+  background: #173426;
+  color: #d9ffea;
+}
+
+.household-toast-error {
+  background: #452128;
+  color: #ffdce2;
+}
+
+@media (max-width: 520px) {
+  .household-device-card {
+    min-width: 0;
+    padding: 15px;
+  }
+
+  .household-device-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .household-action-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .household-toast {
+    right: 15px;
+    bottom: 78px;
+    left: 15px;
+  }
+}

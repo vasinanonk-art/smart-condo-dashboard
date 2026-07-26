@@ -3,11 +3,17 @@
   if (window.__householdDevicesInstalled) return;
   window.__householdDevicesInstalled = true;
 
+  const UI = window.HouseholdUI;
   const state = {devices:[], loading:false};
-  const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
-  const status = device => device.online === true ? 'Online' : device.online === false ? 'Offline' : 'Unknown';
-  const quality = device => ({confirmed:'Confirmed', assumed:'Assumed', unknown:'Unknown'})[device.state_quality] || 'Unknown';
-  const disabledButton = (label, reason) => `<button type="button" class="household-control-button" disabled title="${safe(reason)}">${safe(label)}</button>`;
+  const safe = UI.safe;
+  const status = device => device.online === true ? 'online' : device.online === false ? 'offline' : 'unknown';
+  const disabledButton = (label, reason) => UI.actionButton({label, disabled:true, reason});
+  const userReason = device => {
+    if (!device.unavailable_reason) return '';
+    if (device.category === 'camera') return 'Configuration unavailable.';
+    if (device.id === 'bed-room-air-conditioner') return 'Control path is not verified.';
+    return 'Controls are not configured yet.';
+  };
 
   async function load() {
     if (state.loading) return;
@@ -26,12 +32,21 @@
   }
 
   function card(device, controls) {
-    return `<article class="household-device-card">
-      <div class="household-device-head"><div><h3 class="household-device-title">${safe(device.display_name)}</h3><small class="household-device-room">${safe(device.room === 'bed_room' ? 'Bed Room' : 'Living Room')}</small></div><span class="household-status">${safe(status(device))}</span></div>
-      <div class="household-device-state">State quality: ${safe(quality(device))}${device.state_quality === 'assumed' ? ' · IR has no feedback' : ''}</div>
-      ${device.unavailable_reason ? `<div class="household-device-reason">${safe(device.unavailable_reason)}</div>` : ''}
-      <div class="household-controls">${controls}</div>
-    </article>`;
+    const stateText = device.state_quality === 'assumed' ? 'IR has no device feedback.' : '';
+    const details = UI.deviceDetails({
+      content: `<div class="household-detail-grid">
+        <div class="household-detail-item"><span>Category</span><strong>${safe(device.category)}</strong></div>
+        <div class="household-detail-item"><span>Health</span><strong>${safe(device.health)}</strong></div>
+        ${device.unavailable_reason ? `<div class="household-detail-item"><span>Technical status</span><strong>${safe(device.unavailable_reason)}</strong></div>` : ''}
+      </div>`,
+    });
+    return UI.deviceCard({
+      id:device.id, title:device.display_name,
+      room:device.room === 'bed_room' ? 'Bed Room' : 'Living Room',
+      status:status(device), quality:device.state_quality,
+      state:stateText, warning:userReason(device),
+      actions:controls, details,
+    });
   }
 
   function renderEntertainment() {
@@ -47,7 +62,7 @@
     }
     const device = state.devices.find(item => item.id === 'living-room-samsung-soundbar');
     if (!device) return;
-    const reason = device.unavailable_reason || 'Controls are unavailable.';
+    const reason = userReason(device) || 'Controls are unavailable.';
     host.innerHTML = card(device, ['Power','Volume +','Volume -','Mute','Source'].map(label => disabledButton(label, reason)).join(''));
   }
 
@@ -57,7 +72,7 @@
     host.className = 'household-grid';
     const devices = state.devices.filter(item => ['living-room-air-conditioner','living-room-fan','bed-room-air-conditioner'].includes(item.id));
     host.innerHTML = devices.map(device => {
-      const reason = device.unavailable_reason || 'Controls are unavailable.';
+      const reason = userReason(device) || 'Controls are unavailable.';
       const labels = device.category === 'fan'
         ? ['Power','Speed','Oscillation','Timer']
         : ['Power','Mode','Temperature','Fan speed','Swing'];
@@ -72,19 +87,21 @@
     const devices = state.devices.filter(item => item.category === 'camera');
     host.innerHTML = devices.map(device => {
       const capabilities = device.capabilities || {};
-      const reason = device.unavailable_reason || 'Capability unavailable';
+      const reason = userReason(device) || 'Capability unavailable';
       const controls = [
-        capabilities.snapshot ? `<button type="button" class="household-control-button" data-household-camera="${safe(device.id)}" data-camera-action="snapshot">Snapshot</button>` : disabledButton('Snapshot', reason),
-        capabilities.live_stream ? `<button type="button" class="household-control-button" disabled title="Authenticated stream metadata is not available in this view.">Live stream</button>` : disabledButton('Live stream', reason),
-        capabilities.ptz_move ? `<button type="button" class="household-control-button" data-household-camera="${safe(device.id)}" data-camera-action="move">PTZ</button>` : disabledButton('PTZ', reason),
-        capabilities.zoom ? `<button type="button" class="household-control-button" data-household-camera="${safe(device.id)}" data-camera-action="zoom">Zoom</button>` : disabledButton('Zoom', reason),
+        capabilities.snapshot ? UI.actionButton({label:'Snapshot', attributes:`data-household-camera="${safe(device.id)}" data-camera-action="snapshot"`}) : disabledButton('Snapshot', reason),
+        disabledButton('Live stream', capabilities.live_stream ? 'Authenticated stream metadata is not available in this view.' : reason),
+        capabilities.ptz_move ? UI.actionButton({label:'PTZ', attributes:`data-household-camera="${safe(device.id)}" data-camera-action="move"`}) : disabledButton('PTZ', reason),
+        capabilities.zoom ? UI.actionButton({label:'Zoom', attributes:`data-household-camera="${safe(device.id)}" data-camera-action="zoom"`}) : disabledButton('Zoom', reason),
       ].join('');
-      return `<article class="household-device-card household-camera-card">
-      <div class="household-device-head"><h3 class="household-device-title">${safe(device.display_name)}</h3><span class="household-status">${safe(status(device))}</span></div>
-      <div class="household-device-state">State quality: ${safe(quality(device))}</div>
-      ${device.unavailable_reason ? `<div class="household-device-reason">${safe(device.unavailable_reason)}</div>` : ''}
-      <div class="household-controls">${controls}</div>
-    </article>`;
+      return UI.deviceCard({
+        id:device.id, title:device.display_name, room:'Camera',
+        status:status(device), quality:device.state_quality,
+        warning:userReason(device), actions:controls,
+        details:UI.deviceDetails({
+          content:`<div class="household-detail-item"><span>Capabilities</span><strong>${Object.values(capabilities).some(Boolean) ? 'Capability-driven controls available' : 'Configuration required'}</strong></div>`,
+        }),
+      });
     }).join('');
     host.querySelectorAll('[data-household-camera]').forEach(button => button.addEventListener('click', async () => {
       const identifier = encodeURIComponent(button.dataset.householdCamera);
@@ -102,7 +119,7 @@
         });
         if (!response.ok) throw new Error('Camera command failed');
       } catch (error) {
-        console.warn(error.message);
+        UI.toast(error.message, 'error');
       } finally {
         button.disabled = false;
       }

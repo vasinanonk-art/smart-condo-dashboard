@@ -1,1 +1,143 @@
-.notification-panel{display:flex;flex-direction:column;gap:10px}.notification-panel[hidden]{display:none}.notification-toolbar{display:flex;flex-wrap:wrap;gap:6px}.notification-list{display:grid;gap:8px}.notification-item.unread{border-left:3px solid var(--accent)}.notification-item.info{border-color:rgba(80,180,255,.35)}.notification-item.error{border-color:rgba(255,90,100,.45)}.notification-item.success{border-color:rgba(60,210,130,.4)}.notification-source{display:block;margin-top:5px;color:var(--muted);font-size:10px}.notification-actions{display:flex;flex-wrap:wrap;gap:5px;align-content:flex-start}
+.household-notification-trigger {
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #101720;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.household-notification-trigger:focus-visible,
+.household-notification-action:focus-visible {
+  outline: 3px solid rgba(78, 161, 255, .8);
+  outline-offset: 3px;
+}
+
+.household-notification-count {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 5px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--red);
+  color: #fff;
+  font-size: 10px;
+}
+
+.household-notification-count[hidden],
+.household-notification-panel[hidden] {
+  display: none;
+}
+
+.household-notification-panel {
+  position: fixed;
+  z-index: 160;
+  top: 72px;
+  right: 18px;
+  display: flex;
+  width: min(440px, calc(100vw - 28px));
+  max-height: min(72vh, 680px);
+  padding: 14px;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #0d1723;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, .45);
+}
+
+.household-notification-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.household-notification-toolbar,
+.household-notification-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(110px, 1fr));
+  gap: 6px;
+}
+
+.household-notification-list {
+  display: grid;
+  gap: 8px;
+}
+
+.household-notification-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(242, 184, 75, .3);
+  border-radius: 12px;
+  background: rgba(242, 184, 75, .06);
+}
+
+.household-notification-unread {
+  border-left: 3px solid var(--accent);
+}
+
+.household-notification-info {
+  border-color: rgba(80, 180, 255, .35);
+}
+
+.household-notification-error {
+  border-color: rgba(255, 90, 100, .45);
+}
+
+.household-notification-success {
+  border-color: rgba(60, 210, 130, .4);
+}
+
+.household-notification-copy {
+  min-width: 0;
+}
+
+.household-notification-copy strong,
+.household-notification-copy p,
+.household-notification-copy small {
+  overflow-wrap: anywhere;
+}
+
+.household-notification-copy p {
+  margin: 5px 0;
+  color: #c4cfdb;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.household-notification-copy small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.household-notification-action {
+  min-height: 38px;
+  padding: 7px 9px;
+  font-size: 11px;
+}
+
+.household-notification-empty {
+  padding: 18px;
+  color: var(--muted);
+  text-align: center;
+}
+
+@media (max-width: 520px) {
+  .household-notification-panel {
+    top: 12px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-height: calc(100vh - 92px);
+  }
+
+  .household-notification-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
