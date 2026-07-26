@@ -5,7 +5,8 @@
 
   const COMMAND_GROUPS = [
     ['Power', [['Power On','power_on','primary'],['Power Off','power_off','danger']]],
-    ['Volume', [['Volume +','volume_up'],['Volume −','volume_down'],['Mute','mute'],['Unmute','unmute']]],
+    ['Volume', [['Volume +','volume_up'],['Volume −','volume_down'],['Mute','mute'],['Unmute','unmute'],['Set Volume','set_volume']]],
+    ['Playback', [['Play','play'],['Pause','pause'],['Stop','stop']]],
     ['Inputs', [['HDMI 1','hdmi1'],['HDMI 2','hdmi2'],['HDMI 3','hdmi3'],['HDMI 4','hdmi4']]],
     ['Apps', [['Netflix','netflix'],['YouTube','youtube'],['Disney+','disney'],['Prime Video','prime'],['Apple TV','appletv'],['Live TV','livetv'],['Browser','browser'],['Viu','viu'],['HBO Max','hbo']]],
   ];
@@ -24,7 +25,13 @@
       event.preventDefault();
       event.stopPropagation();
       const command = button.dataset.lgCommand;
-      if (command && typeof window.tv === 'function') window.tv(command);
+      let value;
+      if (command === 'set_volume') {
+        const entered = window.prompt('Set volume (0–100)');
+        if (entered === null) return;
+        value = Number(entered);
+      }
+      if (command && typeof window.tv === 'function') window.tv(command, value);
     };
   }
 

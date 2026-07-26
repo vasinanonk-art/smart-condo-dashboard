@@ -32,13 +32,14 @@ def test_only_one_timer_owns_status_and_pairing_refresh():
     assert "pollTimer" in UI
     assert "pairTimer" not in UI
     assert "setInterval" not in UI
-    assert UI.count("setTimeout(() => refreshAll(true)") == 1
-    assert "['connecting', 'prompted']" in UI
+    assert UI.count("setTimeout(()=>refreshAll(true)") == 1
+    assert "['connecting','prompted'].includes" in UI
 
 
 def test_exactly_one_set_of_primary_status_cards():
     for card in ("status", "app", "input", "volume", "mute", "updated"):
-        assert UI.count(f'data-lg-card="{card}"') == 1
+        markup = UI[UI.index("page.innerHTML = `"):UI.index("entertainment.insertBefore")]
+        assert markup.count(f'data-lg-card="{card}"') == 1
     assert UI.count('class="lg-tv-pairing-panel"') == 1
 
 
@@ -58,8 +59,8 @@ def test_full_telemetry_fields_are_rendered():
 def test_friendly_app_mapping_and_unknown_id_fallback():
     for label in ("Home", "Netflix", "YouTube", "Prime Video", "Disney+", "Browser", "HDMI"):
         assert label in UI
-    assert "return mappings.find" in UI
-    assert "|| id" in UI
+    assert "mappings.find" in UI
+    assert "return id" in UI
 
 
 def test_diagnostics_contract_and_duplicate_detection():

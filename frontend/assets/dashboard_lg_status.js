@@ -187,8 +187,7 @@
   window.dashboardLgTvDiagnostics=diagnostics;
   window.mountLgTvPage=mountLgTvPage;
 
-  const originalTv=window.tv;
-  if(typeof originalTv==='function')window.tv=function consolidatedLgCommand(command){const button=document.querySelector(`[data-lg-command="${CSS.escape(command)}"]`);state.commandInProgress=command;if(button)button.disabled=true;try{const output=originalTv(command);Promise.resolve(output).then(()=>{showMessage('lgTvMessage',`${command} sent successfully.`);setTimeout(()=>request('/api/lg-tv/status/refresh','POST',{}).catch(()=>{}),command==='power_on'?3000:900);}).catch(()=>showMessage('lgTvMessage',`${command} failed.`,true)).finally(()=>{if(button)button.disabled=false;state.commandInProgress=null;});return output;}catch(error){if(button)button.disabled=false;state.commandInProgress=null;showMessage('lgTvMessage',`${command} failed.`,true);throw error;}};
+  window.tv=async function consolidatedLgCommand(command,value){const button=document.querySelector(`[data-lg-command="${CSS.escape(command)}"]`);state.commandInProgress=command;if(button)button.disabled=true;try{const output=await request('/api/lg-tv/command','POST',{command,value});if(output.state){state.status=output.state;renderStatus();}showMessage('lgTvMessage',`${command} sent successfully.${output.state_refreshed===false?' State confirmation pending.':''}`);return output;}catch(error){showMessage('lgTvMessage',`${command}: ${error.message||'failed'}`,true);throw error;}finally{if(button)button.disabled=false;state.commandInProgress=null;}};
 
   document.addEventListener('visibilitychange',()=>{if(document.hidden){if(state.pollTimer)clearTimeout(state.pollTimer);state.pollTimer=null;}else if(window.currentPage?.()==='entertainment')refreshAll(true);});
   window.addEventListener('beforeunload',()=>{if(state.pollTimer)clearTimeout(state.pollTimer);state.pollTimer=null;});

@@ -100,7 +100,7 @@ def test_pairing_flow_is_preserved_in_consolidated_ui():
     for label in ('Repair Pairing', 'Test Connection', 'Save & Reconnect', 'Cancel Pairing'):
         assert label in UI
     assert 'Approve the connection request on the LG TV' in UI
-    assert "['connecting', 'prompted']" in UI
+    assert "['connecting','prompted'].includes" in UI
 
 
 def test_regression_forbidden_integrations_untouched():

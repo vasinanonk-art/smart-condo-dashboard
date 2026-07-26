@@ -11,23 +11,24 @@ def test_live_status_values_and_stable_mount():
     for item in ('lgTvStatus','lgTvApp','lgTvInput','lgTvVolume','lgTvMute','lgTvUpdated'):
         assert item in UI
     assert 'function mountLgTvPage()' in UI
-    assert 'if (state.mounted)' in UI
+    assert "document.getElementById('lgTvPage')" in UI
+    assert 'state.mounted = true' in UI
     assert 'outerHTML' not in UI
     assert 'MutationObserver' not in UI
 
 
 def test_background_polling_keeps_values_and_is_single():
-    assert 'state.pollTimer = setTimeout' in UI
+    assert 'state.pollTimer=setTimeout' in UI
     assert 'setInterval' not in UI
     assert "document.addEventListener('visibilitychange'" in UI
     assert "window.addEventListener('beforeunload'" in UI
-    assert 'state.status = status' in UI
+    assert 'state.status=status' in UI
     assert "innerHTML = ''" not in UI
 
 
 def test_stale_response_and_diagnostics():
-    assert 'sequence < state.appliedSequence' in UI
-    assert 'state.ignoredStale += 1' in UI
+    assert 'sequence<state.appliedSequence' in UI
+    assert 'state.ignoredStale+=1' in UI
     assert 'window.dashboardLgDiagnostics' in UI
     for field in ('active_mounts','active_pollers','legacy_renderer_detected','duplicate_cards','css_version','last_refresh','status_age'):
         assert field in UI
@@ -44,9 +45,11 @@ def test_pairing_polish_and_actions():
 
 def test_manual_refresh_and_individual_command_disable():
     assert '/api/lg-tv/status/refresh' in UI
-    assert 'button.disabled = true' in UI
-    assert 'if (button) button.disabled = true' in UI
-    assert "setTimeout(() => request('/api/lg-tv/status/refresh'" in UI
+    assert 'button.disabled=true' in UI
+    assert 'if(button)button.disabled=true' in UI
+    command_handler = UI[UI.index('window.tv=async'):]
+    assert "/api/lg-tv/command" in command_handler
+    assert "/api/lg-tv/status/refresh" not in command_handler
 
 
 def test_relative_time_and_null_audio_rendering():

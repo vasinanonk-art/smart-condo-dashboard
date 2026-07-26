@@ -34,6 +34,8 @@ from backend import lg_tv_pairing_hotfix as _lg_tv_pairing_hotfix  # noqa: F401,
 # EPIC 09 owns one bounded LG telemetry worker and safe status/pairing recovery APIs.
 from backend import lg_tv_status as _lg_tv_status  # noqa: F401,E402
 from backend import lg_tv_status_runtime as _lg_tv_status_runtime  # noqa: F401,E402
+# SMART CONTROL 01A adds bounded, capability-aware webOS commands.
+from backend import lg_tv_control as _lg_tv_control  # noqa: F401,E402
 
 # Register the read-only electricity provider and status endpoint.
 from backend import electricity_provider as _electricity_provider  # noqa: F401,E402

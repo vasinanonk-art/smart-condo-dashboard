@@ -133,18 +133,24 @@ def _input_name(value: Any) -> tuple[Optional[str], Optional[str]]:
     return raw, raw
 
 
-def _call(control: Any, names: tuple[str, ...], default: Any = None) -> Any:
+def _call(control: Any, names: tuple[str, ...], default: Any = None, timeout: Optional[float] = None) -> Any:
     for name in names:
         method = getattr(control, name, None)
         if callable(method):
             try:
-                return method()
+                return method(timeout=timeout) if timeout is not None else method()
+            except TypeError:
+                if timeout is not None:
+                    try:
+                        return method()
+                    except Exception:
+                        continue
             except Exception:
                 continue
     return default
 
 
-def _collect_live(key: str) -> Dict[str, Any]:
+def _collect_live(key: str, timeout: float = 8.0) -> Dict[str, Any]:
     from pywebostv.connection import WebOSClient
     from pywebostv.controls import ApplicationControl, MediaControl, SourceControl, SystemControl
 
@@ -152,9 +158,10 @@ def _collect_live(key: str) -> Dict[str, Any]:
     client = None
     try:
         client = WebOSClient(TV_IP, secure=True)
+        client.sock.settimeout(timeout)
         client.connect()
         registered = False
-        for value in client.register(store):
+        for value in client.register(store, timeout=timeout):
             if value == WebOSClient.REGISTERED:
                 registered = True
                 break
@@ -168,9 +175,9 @@ def _collect_live(key: str) -> Dict[str, Any]:
         source = SourceControl(client)
         system = SystemControl(client)
 
-        current = _call(app_control, ("get_current", "get_current_app"), {}) or {}
+        current = _call(app_control, ("get_current", "get_current_app"), {}, timeout) or {}
         app_id = str(current.get("appId") or current.get("id") or current.get("app_id") or "").strip() if isinstance(current, Mapping) else str(current or "").strip()
-        source_value = _call(source, ("get_current", "get_source", "get_current_source"), {})
+        source_value = _call(source, ("get_current", "get_source", "get_current_source"), {}, timeout)
         input_id, input_name = _input_name(source_value)
         app_name = _friendly_app(app_id)
         if app_name and not app_name.startswith("HDMI") and app_name not in {"Live TV", "External Input"}:
@@ -178,7 +185,7 @@ def _collect_live(key: str) -> Dict[str, Any]:
         elif app_name and app_name.startswith("HDMI"):
             input_id, input_name = app_id, app_name
 
-        volume_raw = _call(media, ("get_volume",), {}) or {}
+        volume_raw = _call(media, ("get_volume",), {}, timeout) or {}
         volume = None
         muted = None
         sound_output = None
@@ -190,7 +197,7 @@ def _collect_live(key: str) -> Dict[str, Any]:
             muted = bool(raw_mute) if raw_mute is not None else None
             sound_output = volume_raw.get("soundOutput") or volume_raw.get("sound_output")
 
-        info = _call(system, ("info", "get_info", "get_system_info"), {}) or {}
+        info = _call(system, ("info", "get_info", "get_system_info"), {}, timeout) or {}
         if not isinstance(info, Mapping): info = {}
         now = int(time.time())
         return {

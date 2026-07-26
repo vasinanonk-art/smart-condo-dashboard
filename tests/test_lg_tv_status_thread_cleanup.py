@@ -36,6 +36,7 @@ def _install_fake_webos(
             self.closed = False
             self._stop = threading.Event()
             self._th = None
+            self.sock = types.SimpleNamespace(settimeout=lambda timeout: None)
             clients.append(self)
 
         def connect(self):
@@ -49,8 +50,8 @@ def _install_fake_webos(
                 )
                 self._th.start()
 
-        def register(self, store):
-            del store
+        def register(self, store, timeout=None):
+            del store, timeout
             if register_error:
                 raise register_error
             yield self.REGISTERED
