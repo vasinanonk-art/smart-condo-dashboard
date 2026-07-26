@@ -38,6 +38,8 @@ from backend import lg_tv_status_runtime as _lg_tv_status_runtime  # noqa: F401,
 from backend import lg_tv_control as _lg_tv_control  # noqa: F401,E402
 # SMART CONTROL 01B adds capability-aware camera providers and bounded controls.
 from backend import camera_control as _camera_control  # noqa: F401,E402
+# SMART CONTROL 01C exposes provider-based climate control without assuming IR support.
+from backend import climate_control as _climate_control  # noqa: F401,E402
 
 # Register the read-only electricity provider and status endpoint.
 from backend import electricity_provider as _electricity_provider  # noqa: F401,E402

@@ -1,7 +1,7 @@
 const S = {
   range: '24h', history: [], sensor: {}, presence: {}, air: {},
   sonoff: {devices: []}, sonoffAvailable: false, sonoffLastSyncTs: null, sonoffError: null,
-  lights: [], scenes: {}, health: {}, system: {}, cameras: [], tv: {lastValid: null}
+  lights: [], scenes: {}, health: {}, system: {}, cameras: [], climateDevices: [], tv: {lastValid: null}
 };
 const SERIES = {
   overview: [
@@ -310,6 +310,8 @@ function renderClimate() {
   $('climateRanges').innerHTML = rangeButtons(); bindRangeButtons($('climateRanges'));
   $('airCards').innerHTML = metricHTML('Living Room PM2.5',fmt(S.air.living_room?.value),'µg/m³',airSub(S.air.living_room)) + metricHTML('Bedroom PM2.5',fmt(S.air.bedroom?.value),'µg/m³',airSub(S.air.bedroom));
   $('airStats').innerHTML = statsHTML('Living Room',stat(history,'pm25_living_room'),'µg/m³') + statsHTML('Bedroom',stat(history,'pm25_bedroom'),'µg/m³');
+  const climateHost=$('climateControls');if(climateHost)climateHost.innerHTML=(S.climateDevices||[]).map(device=>`<article class="card span-6"><strong>${safeText(device.name)}</strong><div class="device-meta">${safeText(device.provider)} · ${device.controllable?'Control available':safeText(device.unsupported_reason||'Unsupported')}</div><div class="device-meta">State: ${safeText(device.status?.state_confidence||'unknown')}${device.status?.state_confidence==='assumed'?' (last command, not device feedback)':''}</div>${device.controllable?`<div class="controls"><button class="btn primary" data-climate-id="${safeText(device.id)}" data-climate-power="true">Power On</button><button class="btn danger" data-climate-id="${safeText(device.id)}" data-climate-power="false">Power Off</button></div>`:'<div class="device-meta">No command provider is available.</div>'}</article>`).join('')||'<span class="device-meta">No climate control provider detected.</span>';
+  climateHost?.querySelectorAll('[data-climate-id]').forEach(button=>button.onclick=async()=>{button.disabled=true;try{const result=await post(`/api/climate/${encodeURIComponent(button.dataset.climateId)}/command`,{power:button.dataset.climatePower==='true'});toast(`Climate command sent · ${result.state_confidence} state`);}catch(error){toast(error.message);}finally{button.disabled=false;}});
   drawChart('airChart', history, SERIES.air); ensureChartToolbar('airChart');
 }
 function airSub(room) { if (!S.air.configured) return 'Not configured'; if (!room || room.value === null) return 'Unavailable'; const filter = room.filter_life ? ` · Filter ${room.filter_life.value}` : ''; return `${room.stale?'Stale':'Live'} · ${when(room.updated_ts)}${filter}`; }
@@ -358,6 +360,7 @@ function renderSystem() {
 async function loadHistory() { try { const payload = await get(`/api/condo/history?range=${S.range}`); S.history = payload.history || []; S.sensor = payload.current || S.sensor; } catch (error) { console.warn('History refresh failed:', error.message); } }
 async function loadStatus() { try { const payload = await get('/api/condo/status'); S.sensor = payload.sensor || S.sensor; S.presence = payload.presence || S.presence; } catch (error) { console.warn('Condo status refresh failed:', error.message); } }
 async function loadAir() { try { S.air = await get('/api/air-quality'); } catch (error) { console.warn('Air-quality refresh failed:', error.message); } }
+async function loadClimateDevices() { try { const payload=await get('/api/climate/devices');S.climateDevices=payload.devices||[]; } catch(error) { console.warn('Climate control refresh failed:',error.message); } }
 async function loadSonoff() { try { const payload = await get('/api/sonoff'); S.sonoff = payload; S.sonoffAvailable = true; S.sonoffLastSyncTs = Math.floor(Date.now()/1000); S.sonoffError = null; } catch (error) { S.sonoffAvailable = false; S.sonoffError = error.message; console.warn('Sonoff refresh failed:', error.message); } }
 async function loadLights() { try { const payload = await get('/api/lights/status-live'); S.lights = payload.devices || S.lights; } catch (error) { console.warn('Lighting refresh failed:', error.message); } }
 async function loadScenes() { try { const payload = await get('/api/scenes'); S.scenes = payload.scenes || S.scenes; } catch (error) { console.warn('Scenes refresh failed:', error.message); } }
@@ -371,7 +374,7 @@ function renderBadges() {
 }
 async function refresh() {
   await Promise.allSettled([
-    loadStatus(), loadHistory(), loadAir(), loadSonoff(), loadLights(), loadScenes(), loadHealth(), loadSystem(), loadCameras(),
+    loadStatus(), loadHistory(), loadAir(), loadClimateDevices(), loadSonoff(), loadLights(), loadScenes(), loadHealth(), loadSystem(), loadCameras(),
     DashboardModules.loadZones(get), DashboardModules.loadAutomations(get)
   ]);
   renderBadges();
