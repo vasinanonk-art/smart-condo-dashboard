@@ -3,7 +3,7 @@
   if (window.__dashboardPolish10Installed) return;
   window.__dashboardPolish10Installed = true;
 
-  const state = {status:null,maintenance:null,notifications:[],billing:null};
+  const state = {status:null,maintenance:null,billing:null};
   const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
   const timeLabel = ts => ts ? new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Bangkok',year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(Number(ts)*1000)) : 'Not available';
   const relative = ts => { if (!ts) return ''; const seconds=Math.max(0,Math.floor(Date.now()/1000-Number(ts))); if(seconds<60)return 'just now'; if(seconds<3600)return `${Math.floor(seconds/60)} min ago`; if(seconds<86400)return `${Math.floor(seconds/3600)} hr ago`; return `${Math.floor(seconds/86400)} d ago`; };
@@ -16,13 +16,11 @@
     const results = await Promise.allSettled([
       window.get('/api/settings/electricity/status'),
       window.get('/api/maintenance/status'),
-      window.get('/api/notifications'),
       window.get('/api/electricity/billing-cycle?range=current_billing_cycle')
     ]);
     if(results[0].status==='fulfilled')state.status=results[0].value;
     if(results[1].status==='fulfilled')state.maintenance=results[1].value;
-    if(results[2].status==='fulfilled')state.notifications=results[2].value.notifications||[];
-    if(results[3].status==='fulfilled')state.billing=results[3].value;
+    if(results[2].status==='fulfilled')state.billing=results[2].value;
     renderAll();
   }
 
@@ -42,16 +40,7 @@
     const row=document.querySelector('.topbar .status-row');if(!row)return;
     let host=document.getElementById('dashboardCompactBadges');if(!host){host=document.createElement('div');host.id='dashboardCompactBadges';host.className='compact-status-badges';row.insertBefore(host,row.firstChild);}
     const s=state.status||{},m=state.maintenance||{};
-    host.innerHTML=`<span>PJ-1103 <b>${safe(m.history_last_ts?'Healthy':'Unknown')}</b></span><span>History <b>${safe(percent(s.coverage_percent))}</b></span><span>Tariff <b>${safe(s.tariff_source||'Manual')}</b></span><span>Maintenance <b>${safe(m.last_failed_run&&(!m.last_successful_run||m.last_failed_run>m.last_successful_run)?'Warning':'OK')}</b></span><span>Notifications <b>${safe(s.current_notification_count??state.notifications.length)}</b></span>`;
-  }
-
-  function renderNotifications(){
-    const panel=document.getElementById('notificationPanel');if(!panel)return;
-    const groups={};[...state.notifications].sort((a,b)=>Number(b.created_ts||0)-Number(a.created_ts||0)).forEach(item=>(groups[category(item)]??=[]).push(item));
-    panel.innerHTML=`<div class="notification-head"><strong>Notifications</strong><div><button class="btn ghost" data-dismiss-all>Dismiss All</button><button class="btn ghost" data-close-notifications>Close</button></div></div>${Object.entries(groups).map(([name,items])=>`<section class="notification-group"><h4>${safe(name)}</h4>${items.map(item=>`<article class="notification-item ${safe(item.severity||'warning')}"><div><strong>${safe(item.title||'Notification')}</strong><p>${safe(item.detail||'')}</p><time>${safe(relative(item.created_ts))}</time></div><button class="btn ghost" data-dismiss-notification="${safe(item.id)}">Dismiss</button></article>`).join('')}</section>`).join('')||'<div class="notification-empty">No active notifications.</div>'}`;
-    panel.querySelector('[data-close-notifications]')?.addEventListener('click',()=>panel.hidden=true);
-    panel.querySelector('[data-dismiss-all]')?.addEventListener('click',async()=>{await fetch('/api/notifications/dismiss-all',{method:'POST'});state.notifications=[];renderNotifications();renderHeader();});
-    panel.querySelectorAll('[data-dismiss-notification]').forEach(button=>button.onclick=async()=>{await fetch(`/api/notifications/${encodeURIComponent(button.dataset.dismissNotification)}/dismiss`,{method:'POST'});state.notifications=state.notifications.filter(item=>item.id!==button.dataset.dismissNotification);renderNotifications();renderHeader();});
+    host.innerHTML=`<span>PJ-1103 <b>${safe(m.history_last_ts?'Healthy':'Unknown')}</b></span><span>History <b>${safe(percent(s.coverage_percent))}</b></span><span>Tariff <b>${safe(s.tariff_source||'Manual')}</b></span><span>Maintenance <b>${safe(m.last_failed_run&&(!m.last_successful_run||m.last_failed_run>m.last_successful_run)?'Warning':'OK')}</b></span>`;
   }
 
   function renderSettings(){
@@ -81,10 +70,9 @@
     host.querySelectorAll('[data-history-action]').forEach(button=>button.onclick=async()=>{const action=button.dataset.historyAction;let url='/api/electricity/history/analyze',options={method:'POST'};if(action==='import'){if(!confirm('Import analyzed electricity history? A backup will be created.'))return;url='/api/electricity/history/import';options={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})};}if(action==='maintenance')url='/api/maintenance/run';const response=await fetch(url,options);const payload=await response.json();document.getElementById('historyActionResult').textContent=payload.ok===false?(payload.error||'Action failed'):'Completed';await load();});
   }
 
-  function renderAll(){ensureHistoryPage();renderHeader();renderNotifications();renderSettings();renderElectricity();renderHistory();normalizeTimezoneLabels();document.querySelectorAll('[data-nav]').forEach(button=>button.onclick=()=>window.nav(button.dataset.nav));}
+  function renderAll(){ensureHistoryPage();renderHeader();renderSettings();renderElectricity();renderHistory();normalizeTimezoneLabels();document.querySelectorAll('[data-nav]').forEach(button=>button.onclick=()=>window.nav(button.dataset.nav));}
 
   const originalRenderPage=window.renderPage;
   window.renderPage=function polishedRender(page=window.currentPage()){originalRenderPage(page);setTimeout(renderAll,0);};
-  document.addEventListener('click',event=>{if(event.target.closest('#notificationButton'))setTimeout(renderNotifications,0);});
   ensureHistoryPage();load();
 })();

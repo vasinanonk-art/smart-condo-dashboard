@@ -63,6 +63,8 @@ from backend import dashboard_tariff_sync as _dashboard_tariff_sync  # noqa: F40
 from backend import dashboard_settings_runtime as _dashboard_settings_runtime  # noqa: F401,E402
 from backend import dashboard_settings_hotfix09 as _dashboard_settings_hotfix09  # noqa: F401,E402
 from backend import dashboard_polish_hotfix10 as _dashboard_polish_hotfix10  # noqa: F401,E402
+# SMART CONTROL 02A owns the final safe notification lifecycle.
+from backend import notification_center as _notification_center  # noqa: F401,E402
 
 # EPIC 07 reuses the existing daily maintenance thread for safe tariff checks.
 from backend import automatic_tariff_sync as _automatic_tariff_sync  # noqa: F401,E402

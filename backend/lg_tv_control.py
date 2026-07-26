@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import os
 import re
 import socket
@@ -27,12 +28,8 @@ DIRECT_COMMANDS = {
     "set_input", "launch_app", "up", "down", "left", "right", "ok",
     "back", "home", "play", "pause", "stop", "power_off",
 }
-LEGACY_INPUTS = {f"hdmi{number}": f"hdmi{number}" for number in range(1, 5)}
-LEGACY_APPS = {
-    "netflix": "netflix", "youtube": "youtube", "disney": "disney",
-    "prime": "amazon", "appletv": "apple", "livetv": "livetv",
-    "browser": "browser", "viu": "viu", "hbo": "hbo",
-}
+ENUMERATION_LOCK = threading.Lock()
+ENUMERATION_CACHE: Dict[str, Dict[str, str]] = {"input": {}, "app": {}}
 
 
 class TvCommand(BaseModel):
@@ -44,11 +41,13 @@ def capabilities() -> Dict[str, Any]:
     supported = sorted(DIRECT_COMMANDS | {"power_status"})
     if _valid_mac(TV_MAC):
         supported.append("power_on")
-    return {
+    result = {
         "supported": sorted(supported),
         "unsupported": [] if "power_on" in supported else ["power_on"],
         "power_on": {"supported": "power_on" in supported, "reason": None if "power_on" in supported else "mac_not_configured"},
     }
+    result.update(_enumerated_options())
+    return result
 
 
 def _valid_mac(value: str) -> bool:
@@ -120,6 +119,47 @@ def _find_item(items: list[Any], requested: str, keys: tuple[str, ...], token: O
     return None
 
 
+def _option_token(kind: str, identifier: str) -> str:
+    digest = hashlib.sha256(f"{kind}:{identifier}".encode("utf-8")).hexdigest()[:16]
+    return f"{kind}-{digest}"
+
+
+def _safe_options(kind: str, items: list[Any], keys: tuple[str, ...]) -> list[Dict[str, str]]:
+    options: list[Dict[str, str]] = []
+    mapping: Dict[str, str] = {}
+    for item in items:
+        data = _data(item)
+        identifier = str(data.get(keys[0]) or "").strip()
+        label = str(data.get("label") or data.get("title") or data.get("name") or "").strip()
+        if not identifier or not label:
+            continue
+        token = _option_token(kind, identifier)
+        mapping[token] = identifier
+        options.append({"id": token, "label": label[:100]})
+    with ENUMERATION_LOCK:
+        ENUMERATION_CACHE[kind] = mapping
+    return options
+
+
+def _enumerated_options() -> Dict[str, Any]:
+    key, _ = pairing._current_key()
+    if not key:
+        return {"inputs": [], "applications": [], "enumeration_available": False, "enumeration_reason": "pairing_required"}
+    client = None
+    try:
+        from pywebostv.controls import ApplicationControl, SourceControl
+
+        client = _open_client(key)
+        inputs = _safe_options("input", SourceControl(client).list_sources(timeout=COMMAND_TIMEOUT_SEC), ("id",))
+        applications = _safe_options("app", ApplicationControl(client).list_apps(timeout=COMMAND_TIMEOUT_SEC), ("id",))
+        return {"inputs": inputs, "applications": applications, "enumeration_available": True, "enumeration_reason": None}
+    except Exception:
+        return {"inputs": [], "applications": [], "enumeration_available": False, "enumeration_reason": "live_enumeration_unavailable"}
+    finally:
+        if client is not None:
+            _close_client(client)
+
+
 def _pointer_command(client: Any, command: str) -> None:
     from pywebostv.controls import InputControl
 
@@ -167,6 +207,10 @@ def _execute(client: Any, command: str, value: Any) -> None:
         return
     if command == "set_input":
         requested = str(value or "").strip()
+        with ENUMERATION_LOCK:
+            requested = ENUMERATION_CACHE["input"].get(requested, "")
+        if not requested:
+            raise LookupError("input_not_supported")
         sources = SourceControl(client).list_sources(timeout=COMMAND_TIMEOUT_SEC)
         selected = _find_item(sources, requested, ("id", "inputId", "label", "name"))
         if selected is None:
@@ -175,6 +219,10 @@ def _execute(client: Any, command: str, value: Any) -> None:
         return
     if command == "launch_app":
         requested = str(value or "").strip()
+        with ENUMERATION_LOCK:
+            requested = ENUMERATION_CACHE["app"].get(requested, "")
+        if not requested:
+            raise LookupError("application_not_supported")
         apps = ApplicationControl(client).list_apps(timeout=COMMAND_TIMEOUT_SEC)
         selected = _find_item(apps, requested, ("id", "title", "name"), requested.lower())
         if selected is None:
@@ -188,10 +236,6 @@ def _normalize(command: str, value: Any) -> tuple[str, Any]:
     command = command.strip().lower()
     if command == "home_key":
         return "home", value
-    if command in LEGACY_INPUTS:
-        return "set_input", LEGACY_INPUTS[command]
-    if command in LEGACY_APPS:
-        return "launch_app", LEGACY_APPS[command]
     return command, value
 
 

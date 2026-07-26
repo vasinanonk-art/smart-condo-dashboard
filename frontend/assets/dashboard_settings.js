@@ -3,7 +3,7 @@
   if (window.__dashboardSettingsInstalled) return;
   window.__dashboardSettingsInstalled = true;
 
-  const state = {settings:null,maintenance:null,importStatus:null,notifications:[],activeSection:'electricity'};
+  const state = {settings:null,maintenance:null,importStatus:null,activeSection:'electricity'};
   const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
   const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 
@@ -23,21 +23,6 @@
       section.innerHTML = '<div id="settingsPage" class="settings-page"><div class="card"><div class="empty">Settings are loading.</div></div></div>';
       document.querySelector('.main')?.appendChild(section);
     }
-    const statusRow = document.querySelector('.topbar .status-row');
-    if (statusRow && !document.getElementById('notificationButton')) {
-      const button = document.createElement('button');
-      button.id = 'notificationButton';
-      button.className = 'btn ghost notification-button';
-      button.type = 'button';
-      button.innerHTML = 'Notifications <span id="notificationCount" class="notification-count" hidden>0</span>';
-      statusRow.insertBefore(button, statusRow.firstChild);
-      const panel = document.createElement('div');
-      panel.id = 'notificationPanel';
-      panel.className = 'notification-panel';
-      panel.hidden = true;
-      document.body.appendChild(panel);
-      button.onclick = () => { panel.hidden = !panel.hidden; if (!panel.hidden) renderNotifications(); };
-    }
   }
 
   async function jsonRequest(url, method, body) {
@@ -51,35 +36,11 @@
     const results = await Promise.allSettled([
       window.get('/api/settings'),
       window.get('/api/maintenance/status'),
-      window.get('/api/electricity/history/import/status'),
-      window.get('/api/notifications')
+      window.get('/api/electricity/history/import/status')
     ]);
     if (results[0].status === 'fulfilled') state.settings = results[0].value;
     if (results[1].status === 'fulfilled') state.maintenance = results[1].value;
     if (results[2].status === 'fulfilled') state.importStatus = results[2].value;
-    if (results[3].status === 'fulfilled') state.notifications = results[3].value.notifications || [];
-    updateNotificationCount();
-  }
-
-  function updateNotificationCount() {
-    const count = document.getElementById('notificationCount');
-    if (!count) return;
-    const value = state.notifications.length;
-    count.textContent = String(value);
-    count.hidden = value === 0;
-  }
-
-  function renderNotifications() {
-    const panel = document.getElementById('notificationPanel');
-    if (!panel) return;
-    panel.innerHTML = `<div class="notification-head"><strong>Notifications</strong><button class="btn ghost" type="button" data-close-notifications>Close</button></div>${state.notifications.length ? state.notifications.map(item => `<article class="notification-item ${safe(item.severity || 'warning')}"><div><strong>${safe(item.title || 'Dashboard notification')}</strong><p>${safe(item.detail || '')}</p><time>${item.created_ts ? new Date(Number(item.created_ts) * 1000).toLocaleString() : ''}</time></div><button class="btn ghost" type="button" data-dismiss-notification="${safe(item.id)}">Dismiss</button></article>`).join('') : '<div class="notification-empty">No active notifications.</div>'}`;
-    panel.querySelector('[data-close-notifications]')?.addEventListener('click', () => { panel.hidden = true; });
-    panel.querySelectorAll('[data-dismiss-notification]').forEach(button => button.onclick = async () => {
-      await jsonRequest(`/api/notifications/${encodeURIComponent(button.dataset.dismissNotification)}/dismiss`, 'POST', {});
-      state.notifications = state.notifications.filter(item => item.id !== button.dataset.dismissNotification);
-      updateNotificationCount();
-      renderNotifications();
-    });
   }
 
   function tierRow(item = {}, index = 0) {

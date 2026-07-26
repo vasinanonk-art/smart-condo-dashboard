@@ -111,7 +111,7 @@ def test_power_on_is_reported_unsupported_without_mac(monkeypatch):
 
 def test_frontend_consumes_post_state_without_duplicate_refresh():
     source = (Path(control.app_module.FRONTEND_DIR) / "assets" / "dashboard_lg_status.js").read_text(encoding="utf-8")
-    command_handler = source[source.index("window.tv=async"):]
+    command_handler = source[source.index("window.tv = async"):]
     assert "/api/lg-tv/command" in command_handler
-    assert "state.status=output.state" in command_handler
+    assert "state.status = output.state" in command_handler
     assert "/api/lg-tv/status/refresh" not in command_handler

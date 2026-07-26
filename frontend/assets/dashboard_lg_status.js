@@ -1,198 +1,124 @@
 (() => {
   'use strict';
-  if (window.__dashboardLgUiConsolidated) return;
-  window.__dashboardLgUiConsolidated = true;
-  window.__dashboardLgStatusInstalled = true;
-  window.__dashboardLgPairingInstalled = true;
+  if (window.__lgTvStatusInstalled) return;
+  window.__lgTvStatusInstalled = true;
 
-  const CSS_VERSION = 'lg-ui-10.1-production';
-  const state = {
-    mounted: false, mounts: 0, pollTimer: null, pollMs: 30000,
-    status: null, pairing: null, job: {state: 'idle'}, csrf: null,
-    sequence: 0, appliedSequence: 0, ignoredStale: 0,
-    lastRefresh: null, lastError: null, commandInProgress: null,
-  };
+  const state = {status:null, capabilities:null, timer:null, busy:false};
   const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
-  const shown = (input, fallback = '—') => input === null || input === undefined || input === '' ? fallback : String(input);
-  const relative = ts => {
-    if (!ts) return '—';
-    const age = Math.max(0, Math.floor(Date.now() / 1000 - Number(ts)));
-    if (age < 5) return 'Just now';
-    if (age < 60) return `${age} sec ago`;
-    if (age < 3600) return `${Math.floor(age / 60)} min ago`;
-    return new Date(Number(ts) * 1000).toLocaleString();
+  const request = async (url, method='GET', body) => {
+    const options = {method, headers:{}};
+    if (body !== undefined) {
+      options.headers['Content-Type'] = 'application/json';
+      options.body = JSON.stringify(body);
+    }
+    const response = await fetch(url, options);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.detail || 'request_failed');
+    return payload;
   };
-  const exactTime = ts => ts ? new Date(Number(ts) * 1000).toLocaleString() : '';
 
-  function legacyNodes() {
-    return [...document.querySelectorAll(
-      '#lgPairingCard,#lgPairingCardV9,#lgLiveShell,.tv-status-card,[data-tv-command],.tv-command-grid'
-    )].filter(node => !node.closest('#lgTvPage'));
+  function mount() {
+    const page = document.querySelector('[data-page="entertainment"] .grid');
+    const original = document.getElementById('tvButtons')?.closest('.card');
+    if (!page || !original) return false;
+    original.className = 'card span-12 lg-tv-compact-card';
+    original.innerHTML = `
+      <div class="lg-compact-summary">
+        <div><h2>LG TV</h2><strong id="lgTvStatus">Checking…</strong></div>
+        <div><span>Input / App</span><strong id="lgTvSource">—</strong></div>
+        <div><span>Volume</span><strong id="lgTvVolume">—</strong></div>
+        <div><span>Last update</span><strong id="lgTvUpdated">—</strong></div>
+      </div>
+      <div id="tvButtons" class="lg-remote-panel"></div>
+      <details class="lg-tv-details"><summary>TV Details / Pairing</summary>
+        <p id="lgPairingSummary">Pairing details are available to authenticated dashboard users.</p>
+        <div class="lg-detail-actions">
+          <button type="button" class="btn ghost" data-lg-refresh>Refresh status</button>
+          <button type="button" class="btn ghost" data-lg-pair-test>Test pairing</button>
+          <button type="button" class="btn ghost" data-lg-pair-request>Repair</button>
+          <button type="button" class="btn ghost" data-lg-pair-save>Save key</button>
+          <button type="button" class="btn ghost" data-lg-pair-cancel>Cancel</button>
+          <button type="button" class="btn ghost" data-lg-pair-forget>Forget key</button>
+        </div>
+      </details>
+      <div id="lgCommandToast" class="lg-command-toast" role="status" aria-live="polite" hidden></div>`;
+    return true;
   }
 
-  function cleanupLegacyLgMarkup() {
-    document.querySelectorAll('#lgPairingCard,#lgPairingCardV9,#lgLiveShell').forEach(node => node.remove());
-    const remote = document.getElementById('tvButtons');
-    if (remote && (remote.querySelector('.tv-status-card,[data-tv-command],.tv-command-grid') || !remote.querySelector('.lg-remote-sections'))) {
-      remote.dataset.lgRemoteRendered = '0';
-      if (typeof window.renderLgRemoteControls === 'function') window.renderLgRemoteControls();
+  function render() {
+    const value = state.status || {};
+    const online = value.online === true || value.connection_state === 'connected';
+    document.getElementById('lgTvStatus').textContent = online ? 'Online' : 'Offline';
+    document.getElementById('lgTvSource').textContent = value.input || value.current_input || value.app_name || value.current_app || 'Unavailable';
+    const audio = value.audio || {};
+    const volumeValue = audio.volume ?? value.volume;
+    const muted = audio.muted ?? audio.mute ?? value.muted ?? value.mute;
+    const volume = volumeValue == null ? 'Unavailable' : `${volumeValue}${muted ? ' · Muted' : ''}`;
+    document.getElementById('lgTvVolume').textContent = volume;
+    const updated = value.updated_at || value.last_update_ts || value.last_seen_ts;
+    document.getElementById('lgTvUpdated').textContent = updated ? new Date(Number(updated) * 1000).toLocaleString() : 'Unavailable';
+    window.renderLgCompactRemote?.(state.capabilities || {});
+  }
+
+  function toast(message, error=false) {
+    const host = document.getElementById('lgCommandToast');
+    if (!host) return;
+    host.textContent = message;
+    host.className = `lg-command-toast${error ? ' error' : ''}`;
+    host.hidden = false;
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => { host.hidden = true; }, 3500);
+  }
+
+  async function refresh() {
+    if (state.busy) return;
+    state.busy = true;
+    try {
+      const [status, capabilities] = await Promise.all([request('/api/lg-tv/status'), request('/api/lg-tv/capabilities')]);
+      state.status = status;
+      state.capabilities = capabilities;
+      render();
+    } catch (error) {
+      toast(error.message || 'LG TV status unavailable', true);
+    } finally {
+      state.busy = false;
+      clearTimeout(state.timer);
+      state.timer = setTimeout(refresh, 15000);
     }
   }
 
-  function mountLgTvPage() {
-    const existing = document.getElementById('lgTvPage');
-    if (existing) {
-      state.mounted = true;
-      state.mounts = 1;
-      cleanupLegacyLgMarkup();
-      return existing;
+  window.tv = async function compactLgCommand(command, value) {
+    try {
+      const output = await request('/api/lg-tv/command', 'POST', {command, value});
+      if (output.state) {
+        state.status = output.state;
+        render();
+      }
+      toast(output.state_refreshed === false ? 'Command sent; state confirmation is pending.' : 'Command completed.');
+      return output;
+    } catch (error) {
+      toast(error.message || 'Command failed', true);
+      throw error;
     }
-    const entertainment = document.querySelector('[data-page="entertainment"] .grid');
-    const remoteCard = document.getElementById('tvButtons')?.closest('.card');
-    if (!entertainment || !remoteCard) return null;
+  };
 
-    cleanupLegacyLgMarkup();
-    const page = document.createElement('section');
-    page.id = 'lgTvPage';
-    page.className = 'lg-tv-page span-12';
-    page.innerHTML = `
-      <section class="lg-tv-status-panel" aria-labelledby="lgTvStatusTitle">
-        <div id="lgTvBanner" class="lg-tv-banner neutral" aria-live="polite">
-          <div><h2 id="lgTvStatusTitle">LG TV</h2><p id="lgTvBannerText">Loading live telemetry…</p></div>
-          <button id="lgTvRefresh" class="btn ghost" type="button">Refresh</button>
-        </div>
-        <div class="lg-tv-metrics">
-          <article class="lg-tv-metric" data-lg-card="status"><span>Status</span><strong id="lgTvStatus">Loading…</strong></article>
-          <article class="lg-tv-metric" data-lg-card="app"><span>Current App</span><strong id="lgTvApp">—</strong></article>
-          <article class="lg-tv-metric" data-lg-card="input"><span>Input</span><strong id="lgTvInput">—</strong></article>
-          <article class="lg-tv-metric" data-lg-card="volume"><span>Volume</span><strong id="lgTvVolume">—</strong></article>
-          <article class="lg-tv-metric" data-lg-card="mute"><span>Mute</span><strong id="lgTvMute">—</strong></article>
-          <article class="lg-tv-metric" data-lg-card="updated"><span>Last Update</span><strong id="lgTvUpdated">—</strong></article>
-        </div>
-        <div class="lg-tv-detail-grid">
-          <div><span>Sound Output</span><strong id="lgTvSoundOutput">—</strong></div>
-          <div><span>Device Name</span><strong id="lgTvDeviceName">—</strong></div>
-          <div><span>Model</span><strong id="lgTvModel">—</strong></div>
-          <div><span>Product</span><strong id="lgTvProduct">—</strong></div>
-          <div><span>Software Version</span><strong id="lgTvSoftware">—</strong></div>
-          <div><span>Firmware</span><strong id="lgTvFirmware">—</strong></div>
-          <div><span>webOS Version</span><strong id="lgTvWebos">—</strong></div>
-        </div>
-        <div id="lgTvMeta" class="lg-tv-meta"></div>
-        <div id="lgTvMessage" class="lg-tv-message" aria-live="polite"></div>
-      </section>
-      <section class="lg-tv-pairing-panel" aria-labelledby="lgPairTitle">
-        <div class="card-head"><div><h2 id="lgPairTitle">LG TV Pairing</h2><small>Secure webOS pairing and recovery</small></div><span id="lgPairBadge" class="badge">Checking</span></div>
-        <div class="lg-pair-state" aria-live="polite"><h3 id="lgPairStateTitle">Checking pairing…</h3><p id="lgPairStateHelp"></p></div>
-        <div class="lg-pair-grid">
-          <div><span>TV IP</span><strong id="lgPairIp">192.168.1.33</strong></div><div><span>Service</span><strong id="lgPairService">—</strong></div>
-          <div><span>Connection</span><strong id="lgPairConnection">—</strong></div><div><span>Key Source</span><strong id="lgPairSource">—</strong></div>
-          <div><span>Last Connection</span><strong id="lgPairLastConnection">—</strong></div><div><span>Last Pairing</span><strong id="lgPairLastPairing">—</strong></div>
-          <div><span>Last Error</span><strong id="lgPairError">None</strong></div>
-        </div>
-        <div id="lgPairCountdown" class="lg-pair-countdown"></div>
-        <div class="lg-pair-actions">
-          <button id="lgPairTest" class="btn primary" type="button">Test Connection</button><button id="lgPairRepair" class="btn ghost" type="button">Repair Pairing</button>
-          <button id="lgPairSave" class="btn primary" type="button" disabled aria-describedby="lgPairSaveHelp">Save & Reconnect</button><button id="lgPairCancel" class="btn danger" type="button" hidden>Cancel Pairing</button>
-          <button id="lgPairForget" class="btn danger" type="button">Forget Pairing</button>
-        </div>
-        <small id="lgPairSaveHelp">Available after a new key is registered.</small>
-        <div id="lgPairMessage" class="lg-tv-message" aria-live="polite"></div>
-      </section>`;
-    entertainment.insertBefore(page, remoteCard);
-    remoteCard.classList.add('lg-tv-remote-card');
-    state.mounted = true;
-    state.mounts = 1;
-    bindOnce();
-    cleanupLegacyLgMarkup();
-    return page;
+  if (mount()) {
+    document.querySelector('[data-lg-refresh]')?.addEventListener('click', refresh);
+    const pairingAction = async (selector, path, message) => {
+      document.querySelector(selector)?.addEventListener('click', async () => {
+        try { await request(path, 'POST', {}); toast(message); }
+        catch (error) { toast(error.message || 'Pairing action failed', true); }
+      });
+    };
+    pairingAction('[data-lg-pair-test]', '/api/lg-tv/pairing/test', 'Pairing connection verified.');
+    pairingAction('[data-lg-pair-request]', '/api/lg-tv/pairing/request', 'Approve the pairing request on the TV.');
+    pairingAction('[data-lg-pair-save]', '/api/lg-tv/pairing/save', 'Pairing key saved.');
+    pairingAction('[data-lg-pair-cancel]', '/api/lg-tv/pairing/cancel', 'Pairing cancelled.');
+    document.querySelector('[data-lg-pair-forget]')?.addEventListener('click', async () => {
+      if (!confirm('Forget the saved LG TV pairing key?')) return;
+      try { await request('/api/lg-tv/pairing/forget', 'POST', {}); toast('Pairing key forgotten.'); }
+      catch (error) { toast(error.message || 'Pairing action failed', true); }
+    });
+    refresh();
   }
-
-  function setText(id, next, title) {
-    const element = document.getElementById(id);
-    if (!element) return;
-    const text = String(next);
-    if (element.textContent !== text) element.textContent = text;
-    if (title !== undefined && element.title !== (title || '')) element.title = title || '';
-  }
-
-  function friendlyApp(app) {
-    const id = String(app?.id || '').trim();
-    const name = String(app?.name || '').trim();
-    if (name) return name;
-    if (!id) return '—';
-    const low = id.toLowerCase();
-    const mappings = [['netflix','Netflix'],['youtube','YouTube'],['amazon','Prime Video'],['prime','Prime Video'],['disney','Disney+'],['browser','Browser'],['home','Home']];
-    const mapped = mappings.find(([token]) => low.includes(token));
-    if (mapped) return mapped[1];
-    if (low.includes('hdmi')) { const number = id.replace(/[^0-9]/g, ''); return number ? `HDMI ${number}` : 'HDMI'; }
-    return id;
-  }
-
-  function renderStatus() {
-    cleanupLegacyLgMarkup();
-    const s = state.status || {};
-    let label = 'Offline', banner = 'LG TV is offline', detail = 'Waiting for the TV to become reachable.', tone = 'bad';
-    if (['pairing_required','key_missing'].includes(s.connection_state)) { label='Pairing required'; banner='LG TV requires pairing repair'; detail='Use Repair Pairing, then approve the request on the TV.'; }
-    else if (s.connection_state === 'connecting' || s.power_state === 'starting') { label='Connecting'; banner='LG TV is starting'; detail='Connecting to secure webOS…'; tone='warn'; }
-    else if (s.online) { label='Online'; banner='LG TV online and ready'; detail='Remote control and live telemetry are available.'; tone='ok'; }
-    else if (s.power_state === 'standby' || s.connection_state === 'standby') { label='Standby'; banner='LG TV is in standby'; detail='Status polling continues at a reduced rate.'; tone='neutral'; }
-    const bannerElement = document.getElementById('lgTvBanner'); if (bannerElement) bannerElement.className = `lg-tv-banner ${tone}`;
-    setText('lgTvStatusTitle', banner); setText('lgTvBannerText', detail); setText('lgTvStatus', label);
-    setText('lgTvApp', friendlyApp(s.current_app), s.current_app?.id || ''); setText('lgTvInput', shown(s.current_input?.name, shown(s.current_input?.id)));
-    setText('lgTvVolume', s.audio?.volume == null ? '—' : Math.round(Number(s.audio.volume))); setText('lgTvMute', s.audio?.muted === true ? 'Muted' : s.audio?.muted === false ? 'Unmuted' : '—');
-    setText('lgTvUpdated', relative(s.last_update_ts || s.last_success_ts), exactTime(s.last_update_ts || s.last_success_ts));
-    setText('lgTvSoundOutput', shown(s.audio?.sound_output)); setText('lgTvDeviceName', shown(s.device?.name)); setText('lgTvModel', shown(s.device?.model));
-    setText('lgTvProduct', shown(s.device?.product_name)); setText('lgTvSoftware', shown(s.device?.software_version)); setText('lgTvFirmware', shown(s.device?.firmware_version)); setText('lgTvWebos', shown(s.device?.webos_version));
-    const meta = document.getElementById('lgTvMeta');
-    if (meta) {
-      const command = s.last_command ? `${safe(s.last_command)}: ${s.last_command_success === true ? 'OK' : s.last_command_success === false ? 'Failed' : 'Pending'}` : 'No command result';
-      const values = [s.paired ? 'Paired' : 'Not paired','Secure WebSocket',`Service ${s.service_active ? 'active' : 'inactive'}`,`Data age ${s.data_age_sec ?? '—'} sec`,command];
-      while (meta.children.length < values.length) meta.appendChild(document.createElement('span'));
-      values.forEach((item,index) => { if (meta.children[index].textContent !== item) meta.children[index].textContent = item; });
-    }
-    assertRuntimeInvariants();
-  }
-
-  function renderPairing() {
-    const p=state.pairing||{}, j=state.job||{state:'idle'}, s=state.status||{};
-    const active=['connecting','prompted'].includes(j.state), registered=j.state==='registered';
-    const ready=Boolean((p.paired||s.paired)&&(p.connection_status==='connected'||s.connection_state==='connected'));
-    setText('lgPairBadge',ready?'Paired & Connected':p.pairing_required||s.pairing_required?'Pairing required':'Checking');
-    setText('lgPairStateTitle',ready?'✓ LG TV is paired and ready':active?(j.state==='prompted'?'Approve the connection request on the LG TV':'Connecting to TV…'):registered?'Pairing registered — ready to save':'Pairing required');
-    setText('lgPairStateHelp',ready?'Remote control is available. No action required.':active?'Waiting for approval…':'Click Repair Pairing, then approve the request on the LG TV.');
-    setText('lgPairIp',p.tv_ip||s.tv_ip||'192.168.1.33'); setText('lgPairService',(p.service_active??s.service_active)?'Active':'Inactive'); setText('lgPairConnection',p.connection_status||s.connection_state||'—');
-    setText('lgPairSource',p.key_source||s.key_source||'none'); setText('lgPairLastConnection',relative(p.last_connection_success||s.last_success_ts)); setText('lgPairLastPairing',relative(p.last_pair_success||p.last_pair_attempt)); setText('lgPairError',p.last_error||s.last_error||'None');
-    const save=document.getElementById('lgPairSave'); if(save)save.disabled=!registered; const cancel=document.getElementById('lgPairCancel'); if(cancel)cancel.hidden=!active;
-    setText('lgPairCountdown',active&&j.expires_ts?`Time remaining: ${Math.max(0,Number(j.expires_ts)-Math.floor(Date.now()/1000))} sec`:'');
-    assertRuntimeInvariants();
-  }
-
-  async function csrf(){if(state.csrf)return state.csrf;const response=await fetch('/api/auth/status',{credentials:'same-origin'});const payload=await response.json();state.csrf=payload.csrf_token||null;return state.csrf;}
-  async function request(url,method='GET',body){const headers={'Content-Type':'application/json'};if(!['GET','HEAD'].includes(method))headers['X-CSRF-Token']=await csrf();const response=await fetch(url,{method,credentials:'same-origin',headers,body:body===undefined?undefined:JSON.stringify(body)});const payload=await response.json().catch(()=>({}));if(!response.ok)throw new Error(payload.detail||payload.error||'request_failed');return payload;}
-  function showMessage(id,message,error=false){const element=document.getElementById(id);if(!element)return;element.textContent=message;element.classList.toggle('error',error);}
-  function desiredPollMs(){if(['connecting','prompted'].includes(state.job?.state))return 2000;return state.status?.online?5000:30000;}
-  function schedulePoll(){if(state.pollTimer)clearTimeout(state.pollTimer);state.pollTimer=null;state.pollMs=desiredPollMs();if(document.hidden||window.currentPage?.()!=='entertainment')return;state.pollTimer=setTimeout(()=>refreshAll(true),state.pollMs);}
-  async function refreshAll(background=true){if(!mountLgTvPage())return;const sequence=++state.sequence;try{const [status,pairing,job]=await Promise.all([request('/api/lg-tv/status'),request('/api/lg-tv/pairing/status'),request('/api/lg-tv/pairing/job')]);if(sequence<state.appliedSequence){state.ignoredStale+=1;return;}state.appliedSequence=sequence;state.status=status;state.pairing=pairing;state.job=job;state.lastRefresh=Date.now();state.lastError=null;renderStatus();renderPairing();}catch(error){state.lastError=error.message||'status_failed';if(!background)showMessage('lgTvMessage',state.lastError,true);}finally{schedulePoll();assertRuntimeInvariants();}}
-  async function runAction(button,action,success,messageId='lgPairMessage'){const scroll=window.scrollY;button.disabled=true;try{const result=await action();showMessage(messageId,success||result.result||'Done');await refreshAll(false);return result;}catch(error){showMessage(messageId,error.message||'Operation failed',true);return null;}finally{button.disabled=false;window.scrollTo(0,scroll);}}
-  function bindOnce(){document.getElementById('lgTvRefresh')?.addEventListener('click',event=>runAction(event.currentTarget,()=>request('/api/lg-tv/status/refresh','POST',{}),'Refreshing…','lgTvMessage'));document.getElementById('lgPairTest')?.addEventListener('click',event=>runAction(event.currentTarget,()=>request('/api/lg-tv/pairing/test','POST',{}),'Connection successful. LG TV is ready.'));document.getElementById('lgPairRepair')?.addEventListener('click',event=>runAction(event.currentTarget,()=>request('/api/lg-tv/pairing/request','POST',{}),'Approve the connection request on the LG TV'));document.getElementById('lgPairSave')?.addEventListener('click',event=>runAction(event.currentTarget,()=>request('/api/lg-tv/pairing/save','POST',{}),'Client key saved and service reconnected.'));document.getElementById('lgPairCancel')?.addEventListener('click',event=>runAction(event.currentTarget,()=>request('/api/lg-tv/pairing/cancel','POST',{}),'Pairing cancelled.'));document.getElementById('lgPairForget')?.addEventListener('click',event=>{if(confirm('Forget the saved LG TV pairing key? A timestamped backup will be kept.'))runAction(event.currentTarget,()=>request('/api/lg-tv/pairing/forget','POST',{}),'Pairing forgotten.');});}
-
-  function diagnostics(){
-    const duplicateStatus=Math.max(0,document.querySelectorAll('[data-lg-card="status"]').length-1);
-    const duplicatePairing=Math.max(0,document.querySelectorAll('.lg-tv-pairing-panel').length-1);
-    return {active_mounts:document.querySelectorAll('#lgTvPage').length,active_pollers:state.pollTimer?1:0,legacy_renderer_detected:legacyNodes().length>0,duplicate_cards:duplicateStatus+duplicatePairing,css_version:CSS_VERSION,last_refresh:state.lastRefresh,status_age:state.status?.data_age_sec??null};
-  }
-  function assertRuntimeInvariants(){cleanupLegacyLgMarkup();const d=diagnostics();if(d.active_mounts!==1||d.duplicate_cards!==0||d.legacy_renderer_detected||d.active_pollers>1){state.lastError='lg_ui_invariant_failed';console.error('LG_UI_INVARIANT_FAILED',d);}return d;}
-  window.dashboardLgDiagnostics=diagnostics;
-  window.dashboardLgTvDiagnostics=diagnostics;
-  window.mountLgTvPage=mountLgTvPage;
-
-  window.tv=async function consolidatedLgCommand(command,value){const button=document.querySelector(`[data-lg-command="${CSS.escape(command)}"]`);state.commandInProgress=command;if(button)button.disabled=true;try{const output=await request('/api/lg-tv/command','POST',{command,value});if(output.state){state.status=output.state;renderStatus();}showMessage('lgTvMessage',`${command} sent successfully.${output.state_refreshed===false?' State confirmation pending.':''}`);return output;}catch(error){showMessage('lgTvMessage',`${command}: ${error.message||'failed'}`,true);throw error;}finally{if(button)button.disabled=false;state.commandInProgress=null;}};
-
-  document.addEventListener('visibilitychange',()=>{if(document.hidden){if(state.pollTimer)clearTimeout(state.pollTimer);state.pollTimer=null;}else if(window.currentPage?.()==='entertainment')refreshAll(true);});
-  window.addEventListener('beforeunload',()=>{if(state.pollTimer)clearTimeout(state.pollTimer);state.pollTimer=null;});
-  window.renderEntertainment=function renderConsolidatedLgPage(){if(typeof window.renderLgRemoteControls==='function')window.renderLgRemoteControls();mountLgTvPage();refreshAll(true);};
-
-  const start=()=>{if(typeof window.renderLgRemoteControls==='function')window.renderLgRemoteControls();mountLgTvPage();refreshAll(false);};
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
 })();
