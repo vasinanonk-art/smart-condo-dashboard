@@ -149,65 +149,81 @@ def _collect_live(key: str) -> Dict[str, Any]:
     from pywebostv.controls import ApplicationControl, MediaControl, SourceControl, SystemControl
 
     store = {"client_key": key}
-    client = WebOSClient(TV_IP, secure=True)
-    client.connect()
-    registered = False
-    for value in client.register(store):
-        if value == WebOSClient.REGISTERED:
-            registered = True
-            break
-        if value == WebOSClient.PROMPTED:
+    client = None
+    try:
+        client = WebOSClient(TV_IP, secure=True)
+        client.connect()
+        registered = False
+        for value in client.register(store):
+            if value == WebOSClient.REGISTERED:
+                registered = True
+                break
+            if value == WebOSClient.PROMPTED:
+                raise PermissionError("pairing_required")
+        if not registered:
             raise PermissionError("pairing_required")
-    if not registered:
-        raise PermissionError("pairing_required")
 
-    app_control = ApplicationControl(client)
-    media = MediaControl(client)
-    source = SourceControl(client)
-    system = SystemControl(client)
+        app_control = ApplicationControl(client)
+        media = MediaControl(client)
+        source = SourceControl(client)
+        system = SystemControl(client)
 
-    current = _call(app_control, ("get_current", "get_current_app"), {}) or {}
-    app_id = str(current.get("appId") or current.get("id") or current.get("app_id") or "").strip() if isinstance(current, Mapping) else str(current or "").strip()
-    source_value = _call(source, ("get_current", "get_source", "get_current_source"), {})
-    input_id, input_name = _input_name(source_value)
-    app_name = _friendly_app(app_id)
-    if app_name and not app_name.startswith("HDMI") and app_name not in {"Live TV", "External Input"}:
-        input_id, input_name = "webos", "App / webOS"
-    elif app_name and app_name.startswith("HDMI"):
-        input_id, input_name = app_id, app_name
+        current = _call(app_control, ("get_current", "get_current_app"), {}) or {}
+        app_id = str(current.get("appId") or current.get("id") or current.get("app_id") or "").strip() if isinstance(current, Mapping) else str(current or "").strip()
+        source_value = _call(source, ("get_current", "get_source", "get_current_source"), {})
+        input_id, input_name = _input_name(source_value)
+        app_name = _friendly_app(app_id)
+        if app_name and not app_name.startswith("HDMI") and app_name not in {"Live TV", "External Input"}:
+            input_id, input_name = "webos", "App / webOS"
+        elif app_name and app_name.startswith("HDMI"):
+            input_id, input_name = app_id, app_name
 
-    volume_raw = _call(media, ("get_volume",), {}) or {}
-    volume = None
-    muted = None
-    sound_output = None
-    if isinstance(volume_raw, Mapping):
-        raw_volume = volume_raw.get("volume")
-        try: volume = int(raw_volume) if raw_volume is not None else None
-        except (TypeError, ValueError): volume = None
-        raw_mute = volume_raw.get("muted", volume_raw.get("mute"))
-        muted = bool(raw_mute) if raw_mute is not None else None
-        sound_output = volume_raw.get("soundOutput") or volume_raw.get("sound_output")
+        volume_raw = _call(media, ("get_volume",), {}) or {}
+        volume = None
+        muted = None
+        sound_output = None
+        if isinstance(volume_raw, Mapping):
+            raw_volume = volume_raw.get("volume")
+            try: volume = int(raw_volume) if raw_volume is not None else None
+            except (TypeError, ValueError): volume = None
+            raw_mute = volume_raw.get("muted", volume_raw.get("mute"))
+            muted = bool(raw_mute) if raw_mute is not None else None
+            sound_output = volume_raw.get("soundOutput") or volume_raw.get("sound_output")
 
-    info = _call(system, ("info", "get_info", "get_system_info"), {}) or {}
-    if not isinstance(info, Mapping): info = {}
-    now = int(time.time())
-    return {
-        "online": True, "power_state": "on", "connection_state": "connected",
-        "paired": True, "pairing_required": False,
-        "current_app": {"id": app_id or None, "name": app_name},
-        "current_input": {"id": input_id, "name": input_name},
-        "audio": {"volume": volume, "muted": muted, "sound_output": sound_output},
-        "device": {
-            "name": info.get("deviceName") or info.get("name"),
-            "model": info.get("modelName") or info.get("model"),
-            "product_name": info.get("productName"),
-            "software_version": info.get("softwareVersion") or info.get("swVersion"),
-            "webos_version": info.get("webOSVersion") or info.get("webosVersion"),
-            "firmware_version": info.get("firmwareVersion") or info.get("firmware"),
-        },
-        "last_update_ts": now, "last_success_ts": now, "last_error": None,
-        "consecutive_failures": 0, "stale": False,
-    }
+        info = _call(system, ("info", "get_info", "get_system_info"), {}) or {}
+        if not isinstance(info, Mapping): info = {}
+        now = int(time.time())
+        return {
+            "online": True, "power_state": "on", "connection_state": "connected",
+            "paired": True, "pairing_required": False,
+            "current_app": {"id": app_id or None, "name": app_name},
+            "current_input": {"id": input_id, "name": input_name},
+            "audio": {"volume": volume, "muted": muted, "sound_output": sound_output},
+            "device": {
+                "name": info.get("deviceName") or info.get("name"),
+                "model": info.get("modelName") or info.get("model"),
+                "product_name": info.get("productName"),
+                "software_version": info.get("softwareVersion") or info.get("swVersion"),
+                "webos_version": info.get("webOSVersion") or info.get("webosVersion"),
+                "firmware_version": info.get("firmwareVersion") or info.get("firmware"),
+            },
+            "last_update_ts": now, "last_success_ts": now, "last_error": None,
+            "consecutive_failures": 0, "stale": False,
+        }
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception as close_error:
+                log.warning("Failed to close LG WebOS client: %s", _safe_code(close_error))
+            websocket_thread = getattr(client, "_th", None)
+            if websocket_thread is not None and websocket_thread.is_alive():
+                try:
+                    websocket_thread.join(timeout=0.5)
+                    if websocket_thread.is_alive():
+                        log.warning("LG WebOS client thread did not stop after close")
+                except Exception as join_error:
+                    log.warning("Failed to join LG WebOS client thread: %s", _safe_code(join_error))
 
 
 def _persist() -> None:

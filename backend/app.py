@@ -26,7 +26,7 @@ CONDO_MQTT_TOPICS = [CONDO_SENSOR_TOPIC, CONDO_PRESENCE_BEER_TOPIC, CONDO_PRESEN
 TUYA_DEVICES_FILE = os.getenv("TUYA_DEVICES_FILE", "/root/tuya/devices.json")
 TUYA_SNAPSHOT_FILE = os.getenv("TUYA_SNAPSHOT_FILE", "/root/tuya/snapshot.json")
 CAMERA_CONFIG_PATHS = [
-    os.getenv("CAMERA_CONFIG_FILE", "/opt/smart-condo-dashboard-run/config/cameras.local.json"),
+    "/opt/smart-condo-dashboard-run/config/cameras.local.json",
     "/root/.smart-condo-dashboard/cameras.local.json",
     os.path.abspath(os.path.join(os.getcwd(), "config", "cameras.local.json")),
 ]
@@ -249,7 +249,7 @@ mqttc.on_message = on_message
 @app.on_event("startup")
 def startup():
     preload_snapshot_cache()
-    log_camera_config_startup()
+    log_runtime_config_startup()
     start_light_poller()
     state["mqtt_subscription_log"] = "subscribed MQTT topics: " + ", ".join(CONDO_MQTT_TOPICS)
     print(state["mqtt_subscription_log"], flush=True)
@@ -451,7 +451,7 @@ def load_lights() -> List[Dict[str, Any]]:
 
 
 def camera_config_payload() -> Dict[str, Any]:
-    for path in CAMERA_CONFIG_PATHS:
+    for path in camera_config_paths():
         if path and os.path.exists(path):
             data = load_json_optional(path)
             if isinstance(data, list):
@@ -465,6 +465,39 @@ def camera_config_payload() -> Dict[str, Any]:
     return {"loaded": False, "path": None, "cameras": []}
 
 
+def camera_config_paths() -> List[str]:
+    configured = os.getenv("CAMERA_CONFIG_FILE", "").strip()
+    paths = ([configured] if configured else []) + list(CAMERA_CONFIG_PATHS)
+    return list(dict.fromkeys(path for path in paths if path))
+
+
+def _first_existing_path(paths: List[str]) -> str | None:
+    return next((path for path in paths if path and os.path.isfile(path)), None)
+
+
+def runtime_config_diagnostics() -> Dict[str, Any]:
+    runtime_root = os.path.abspath(
+        os.path.expanduser(os.getenv("SMART_CONDO_DATA_DIR", "/root/.smart-condo-dashboard"))
+    )
+    camera_path = _first_existing_path(camera_config_paths())
+    sonoff_path = _first_existing_path(sonoff_client.config_paths())
+    settings_path = os.path.join(runtime_root, "settings.json")
+    local_files = set()
+    for directory in (runtime_root, os.path.join(APP_DIR, "config")):
+        if not os.path.isdir(directory):
+            continue
+        for name in os.listdir(directory):
+            path = os.path.join(directory, name)
+            if name.endswith(".local.json") and os.path.isfile(path):
+                local_files.add(os.path.realpath(path))
+    return {
+        "camera_config_present": camera_path is not None,
+        "sonoff_config_present": sonoff_path is not None,
+        "settings_present": os.path.isfile(settings_path),
+        "local_config_files_count": len(local_files),
+    }
+
+
 def load_camera_config() -> Dict[str, Any]:
     payload = camera_config_payload()
     state["camera_config_loaded"] = bool(payload["loaded"])
@@ -473,12 +506,21 @@ def load_camera_config() -> Dict[str, Any]:
     return payload
 
 
+def log_runtime_config_startup() -> None:
+    load_camera_config()
+    diagnostics = runtime_config_diagnostics()
+    lines = [
+        "Runtime config:",
+        f"Camera: {'found' if diagnostics['camera_config_present'] else 'missing'}",
+        f"Sonoff: {'found' if diagnostics['sonoff_config_present'] else 'missing'}",
+        f"Settings: {'found' if diagnostics['settings_present'] else 'missing'}",
+    ]
+    state["camera_config_log"] = lines[1]
+    print("\n".join(lines), flush=True)
+
+
 def log_camera_config_startup() -> None:
-    payload = load_camera_config()
-    path = payload["path"] or "not found"
-    log = f"Loaded {len(payload['cameras'])} cameras from {path}"
-    state["camera_config_log"] = log
-    print(log, flush=True)
+    log_runtime_config_startup()
 
 
 def tcp_check(ip: str, port: int, timeout: float = CAMERA_TCP_TIMEOUT_SEC) -> bool:
@@ -987,7 +1029,13 @@ def execute_for_target(target: str, fn, delay_between_devices: float = 0.0, upda
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "mqtt_connected": state["mqtt_connected"], "mqtt_host": MQTT_HOST, "mqtt_port": MQTT_PORT}
+    return {
+        "ok": True,
+        "mqtt_connected": state["mqtt_connected"],
+        "mqtt_host": MQTT_HOST,
+        "mqtt_port": MQTT_PORT,
+        **runtime_config_diagnostics(),
+    }
 
 
 @app.get("/api/state")

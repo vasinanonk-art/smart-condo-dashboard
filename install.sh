@@ -1,21 +1,85 @@
 #!/bin/sh
 set -eu
 
-APP_SRC="/opt/smart-condo-dashboard"
-APP_RUN="/opt/smart-condo-dashboard-run"
+APP_SRC="${APP_SRC:-/opt/smart-condo-dashboard}"
+APP_RUN="${APP_RUN:-/opt/smart-condo-dashboard-run}"
+PERSISTENT_CONFIG_ROOT="${PERSISTENT_CONFIG_ROOT:-/root/.smart-condo-dashboard}"
+INSTALL_LOCK_FILE="${INSTALL_LOCK_FILE:-/run/lock/smart-condo-dashboard-install.lock}"
 VENV="$APP_RUN/venv"
 PY="$VENV/bin/python"
-LOCAL_CONFIG_TMP="/tmp/smart-condo-dashboard-local-config-backup"
+DRY_RUN=0
+
+if [ "${1:-}" = "--dry-run" ]; then
+    DRY_RUN=1
+elif [ "$#" -gt 0 ]; then
+    echo "Usage: $0 [--dry-run]" >&2
+    exit 2
+fi
+
+install -d "$(dirname "$INSTALL_LOCK_FILE")"
+exec 9>"$INSTALL_LOCK_FILE"
+if ! flock -n 9; then
+    echo "ERROR: another smart-condo-dashboard deployment is active; no runtime files were touched." >&2
+    exit 1
+fi
+echo "Deployment lock acquired."
+
+. "$APP_SRC/scripts/runtime_config_guard.sh"
+
+LOCAL_CONFIG_TMP=$(mktemp -d "${TMPDIR:-/tmp}/smart-condo-dashboard-local-config.XXXXXX")
+LOCAL_CONFIG_MANIFEST="$LOCAL_CONFIG_TMP/manifest"
+LOCAL_CONFIG_BACKUP="$LOCAL_CONFIG_TMP/files"
+KEEP_LOCAL_CONFIG_BACKUP=0
+DEPLOY_STARTED=0
+CONFIG_RESTORE_COMPLETE=0
+deployment_cleanup() {
+    cleanup_status=$1
+    trap - EXIT HUP INT TERM
+    if [ "$DEPLOY_STARTED" -eq 1 ] && [ "$CONFIG_RESTORE_COMPLETE" -eq 0 ]; then
+        echo "Deployment exited early; restoring preserved local configuration." >&2
+        if ! restore_local_configs "$APP_RUN" "$LOCAL_CONFIG_BACKUP" "$LOCAL_CONFIG_MANIFEST"; then
+            KEEP_LOCAL_CONFIG_BACKUP=1
+        fi
+    fi
+    if [ "$KEEP_LOCAL_CONFIG_BACKUP" -eq 0 ]; then
+        rm -rf "$LOCAL_CONFIG_TMP"
+    else
+        echo "Preserved configuration backup retained at: $LOCAL_CONFIG_TMP" >&2
+    fi
+    flock -u 9
+    exit "$cleanup_status"
+}
+trap 'deployment_cleanup $?' EXIT
+trap 'exit 1' HUP INT TERM
 
 install -d "$APP_RUN"
-rm -rf "$LOCAL_CONFIG_TMP"
-install -d "$LOCAL_CONFIG_TMP"
+preserve_local_configs "$APP_RUN" "$LOCAL_CONFIG_BACKUP" "$LOCAL_CONFIG_MANIFEST"
+verify_config_backups "$LOCAL_CONFIG_BACKUP" "$LOCAL_CONFIG_MANIFEST"
 
-# Preserve local runtime configs outside the run path before rebuilding config.
-[ ! -f "$APP_RUN/config/cameras.local.json" ] || cp "$APP_RUN/config/cameras.local.json" "$LOCAL_CONFIG_TMP/cameras.local.json"
-[ ! -f "$APP_RUN/config/ewelink.local.json" ] || cp "$APP_RUN/config/ewelink.local.json" "$LOCAL_CONFIG_TMP/ewelink.local.json"
+CAMERA_WAS_PRESENT=0
+SONOFF_WAS_PRESENT=0
+runtime_config_present \
+    "${CAMERA_CONFIG_FILE:-$PERSISTENT_CONFIG_ROOT/cameras.local.json}" \
+    "$APP_RUN/config/cameras.local.json" && CAMERA_WAS_PRESENT=1
+runtime_config_present \
+    "${EWELINK_CONFIG_FILE:-$PERSISTENT_CONFIG_ROOT/ewelink.local.json}" \
+    "$APP_RUN/config/ewelink.local.json" && SONOFF_WAS_PRESENT=1
 
-# Rebuild runtime folders from repository files only. Do not copy or run frontend patch scripts.
+if [ "$DRY_RUN" -eq 1 ]; then
+    verify_config_backups "$LOCAL_CONFIG_BACKUP" "$LOCAL_CONFIG_MANIFEST"
+    verify_preserved_configs "$APP_RUN" "$LOCAL_CONFIG_MANIFEST"
+    echo "Dry run: managed runtime directories would be replaced without rsync --delete."
+    echo "Dry run: persistent root would remain untouched: $PERSISTENT_CONFIG_ROOT"
+    echo "Dry run: Camera config previously present: $CAMERA_WAS_PRESENT"
+    echo "Dry run: Sonoff config previously present: $SONOFF_WAS_PRESENT"
+    echo "Dry run: local configuration preservation verified."
+    exit 0
+fi
+
+echo "Replacing managed runtime directories. Preserved config/*.local.json files will be restored."
+# This deployment intentionally does not use rsync --delete. Only the managed code
+# directories below are replaced; the persistent configuration root is never touched.
+DEPLOY_STARTED=1
 [ ! -d "$APP_RUN/backend" ] || rm -r "$APP_RUN/backend"
 [ ! -d "$APP_RUN/frontend" ] || rm -r "$APP_RUN/frontend"
 [ ! -d "$APP_RUN/config" ] || rm -r "$APP_RUN/config"
@@ -25,6 +89,7 @@ install -d "$LOCAL_CONFIG_TMP"
 cp -R "$APP_SRC/backend" "$APP_RUN/backend"
 cp -R "$APP_SRC/frontend" "$APP_RUN/frontend"
 cp -R "$APP_SRC/config" "$APP_RUN/config"
+cp -R "$APP_SRC/scripts" "$APP_RUN/scripts"
 cp "$APP_SRC/sonoff_client.py" "$APP_RUN/sonoff_client.py"
 
 # Explicitly install the production dashboard shell and authoritative frontend assets.
@@ -34,10 +99,35 @@ for asset in dashboard_v3.css dashboard_v3_layout.css dashboard_upgrade.css dash
     install -m 0644 "$APP_SRC/frontend/assets/$asset" "$APP_RUN/frontend/assets/$asset"
 done
 
-# Restore local runtime configs after config folder rebuild.
-[ ! -f "$LOCAL_CONFIG_TMP/cameras.local.json" ] || cp "$LOCAL_CONFIG_TMP/cameras.local.json" "$APP_RUN/config/cameras.local.json"
-[ ! -f "$LOCAL_CONFIG_TMP/ewelink.local.json" ] || cp "$LOCAL_CONFIG_TMP/ewelink.local.json" "$APP_RUN/config/ewelink.local.json"
-rm -rf "$LOCAL_CONFIG_TMP"
+if ! restore_local_configs "$APP_RUN" "$LOCAL_CONFIG_BACKUP" "$LOCAL_CONFIG_MANIFEST"; then
+    KEEP_LOCAL_CONFIG_BACKUP=1
+    echo "ERROR: deployment aborted before service restart because local configuration could not be restored." >&2
+    exit 1
+fi
+CONFIG_RESTORE_COMPLETE=1
+if ! verify_preserved_configs "$APP_RUN" "$LOCAL_CONFIG_MANIFEST"; then
+    restore_local_configs "$APP_RUN" "$LOCAL_CONFIG_BACKUP" "$LOCAL_CONFIG_MANIFEST" || true
+    KEEP_LOCAL_CONFIG_BACKUP=1
+    echo "ERROR: deployment aborted before service restart because local configuration was lost." >&2
+    exit 1
+fi
+
+if [ "$CAMERA_WAS_PRESENT" -eq 1 ] && ! runtime_config_present \
+    "${CAMERA_CONFIG_FILE:-$PERSISTENT_CONFIG_ROOT/cameras.local.json}" \
+    "$APP_RUN/config/cameras.local.json"; then
+    restore_local_configs "$APP_RUN" "$LOCAL_CONFIG_BACKUP" "$LOCAL_CONFIG_MANIFEST" || true
+    KEEP_LOCAL_CONFIG_BACKUP=1
+    echo "ERROR: deployment aborted before service restart because Camera configuration was lost." >&2
+    exit 1
+fi
+if [ "$SONOFF_WAS_PRESENT" -eq 1 ] && ! runtime_config_present \
+    "${EWELINK_CONFIG_FILE:-$PERSISTENT_CONFIG_ROOT/ewelink.local.json}" \
+    "$APP_RUN/config/ewelink.local.json"; then
+    restore_local_configs "$APP_RUN" "$LOCAL_CONFIG_BACKUP" "$LOCAL_CONFIG_MANIFEST" || true
+    KEEP_LOCAL_CONFIG_BACKUP=1
+    echo "ERROR: deployment aborted before service restart because Sonoff configuration was lost." >&2
+    exit 1
+fi
 
 if [ ! -x "$PY" ]; then
     [ ! -d "$VENV" ] || rm -r "$VENV"

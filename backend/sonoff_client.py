@@ -12,7 +12,8 @@ import urllib.request
 from typing import Any, Dict, List, Tuple
 
 CONFIG_PATHS = [
-    os.getenv("EWELINK_CONFIG_FILE", "/opt/smart-condo-dashboard-run/config/ewelink.local.json"),
+    "/opt/smart-condo-dashboard-run/config/ewelink.local.json",
+    "/root/.smart-condo-dashboard/ewelink.local.json",
     os.path.abspath(os.path.join(os.getcwd(), "config", "ewelink.local.json")),
 ]
 
@@ -101,7 +102,7 @@ def log_refresh_diag(detail: Dict[str, Any]) -> None:
 
 
 def config_payload() -> Dict[str, Any]:
-    for path in CONFIG_PATHS:
+    for path in config_paths():
         if path and os.path.exists(path):
             try:
                 with open(path, encoding="utf-8") as f:
@@ -119,6 +120,12 @@ def config_payload() -> Dict[str, Any]:
     _cache["config_path"] = None
     set_diag("config_missing")
     return {"loaded": False, "path": None, "config": {}}
+
+
+def config_paths() -> List[str]:
+    configured = os.getenv("EWELINK_CONFIG_FILE", "").strip()
+    paths = ([configured] if configured else []) + list(CONFIG_PATHS)
+    return list(dict.fromkeys(path for path in paths if path))
 
 
 def region(cfg: Dict[str, Any]) -> str:
