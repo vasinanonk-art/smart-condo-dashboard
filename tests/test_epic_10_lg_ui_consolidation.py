@@ -1,89 +1,61 @@
-"""EPIC 10 source-level regression contracts for the single LG TV frontend owner."""
+"""Regression contracts for the compact, single-owner LG frontend."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-INDEX = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
-UI = (ROOT / "frontend" / "assets" / "dashboard_lg_status.js").read_text(encoding="utf-8")
-CSS = (ROOT / "frontend" / "assets" / "dashboard_lg_status.css").read_text(encoding="utf-8")
+INDEX = (ROOT / "frontend/index.html").read_text()
+UI = (ROOT / "frontend/assets/dashboard_lg_status.js").read_text()
+REMOTE = (ROOT / "frontend/assets/dashboard_lg_remote.js").read_text()
+CSS = (ROOT / "frontend/assets/dashboard_lg_remote.css").read_text()
 
 
 def test_only_one_lg_ui_bundle_is_loaded():
     assert INDEX.count("dashboard_lg_status.js") == 1
     assert INDEX.count("dashboard_lg_status.css") == 1
     assert "dashboard_lg_pairing.js" not in INDEX
-    assert "dashboard_lg_pairing.css" not in INDEX
 
 
 def test_legacy_pairing_assets_are_deleted():
-    assert not (ROOT / "frontend" / "assets" / "dashboard_lg_pairing.js").exists()
-    assert not (ROOT / "frontend" / "assets" / "dashboard_lg_pairing.css").exists()
+    assert not (ROOT / "frontend/assets/dashboard_lg_pairing.js").exists()
+    assert not (ROOT / "frontend/assets/dashboard_lg_pairing.css").exists()
 
 
-def test_single_mount_without_mutation_observer_or_poll_remount():
-    assert UI.count("function mountLgTvPage()") == 1
+def test_single_mount_without_observer_or_remount_loop():
+    assert UI.count("function mount()") == 1
     assert "MutationObserver" not in UI
     assert "outerHTML" not in UI
-    assert "insertAdjacentHTML" not in UI
-    assert "host.innerHTML" not in UI
-    assert "state.mounted" in UI
+    assert "window.renderLgTvCompact" in UI
 
 
-def test_only_one_timer_owns_status_and_pairing_refresh():
-    assert "pollTimer" in UI
-    assert "pairTimer" not in UI
+def test_only_one_timer_owns_status_refresh():
+    assert "state.timer" in UI
     assert "setInterval" not in UI
-    assert UI.count("setTimeout(()=>refreshAll(true)") == 1
-    assert "['connecting','prompted'].includes" in UI
+    assert UI.count("setTimeout(refresh, 15000)") == 1
 
 
-def test_exactly_one_set_of_primary_status_cards():
-    for card in ("status", "app", "input", "volume", "mute", "updated"):
-        markup = UI[UI.index("page.innerHTML = `"):UI.index("entertainment.insertBefore")]
-        assert markup.count(f'data-lg-card="{card}"') == 1
-    assert UI.count('class="lg-tv-pairing-panel"') == 1
-
-
-def test_full_telemetry_fields_are_rendered():
-    for field in (
-        "lgTvVolume", "lgTvMute", "lgTvSoundOutput", "lgTvDeviceName",
-        "lgTvModel", "lgTvProduct", "lgTvSoftware", "lgTvFirmware", "lgTvWebos",
-    ):
+def test_compact_summary_has_no_always_visible_diagnostics():
+    for field in ("lgTvStatus", "lgTvSource", "lgTvVolume", "lgTvUpdated"):
         assert field in UI
-    assert "audio?.sound_output" in UI
-    assert "device?.product_name" in UI
-    assert "device?.software_version" in UI
-    assert "device?.firmware_version" in UI
-    assert "device?.webos_version" in UI
+    for technical in ("lgTvFirmware", "lgTvWebos", "lgTvDeviceName", "TV IP", "key source"):
+        assert technical not in UI
+    assert "<details" in UI and "TV Details / Pairing" in UI
 
 
-def test_friendly_app_mapping_and_unknown_id_fallback():
-    for label in ("Home", "Netflix", "YouTube", "Prime Video", "Disney+", "Browser", "HDMI"):
-        assert label in UI
-    assert "mappings.find" in UI
-    assert "return id" in UI
+def test_live_only_input_and_application_enumeration():
+    assert "capabilities.inputs" in REMOTE
+    assert "capabilities.applications" in REMOTE
+    assert "enumeration_available" in REMOTE
+    assert "Live ${escape(title.toLowerCase())} enumeration is unavailable." in REMOTE
 
 
-def test_diagnostics_contract_and_duplicate_detection():
-    assert "window.dashboardLgDiagnostics" in UI
-    for field in (
-        "active_mounts", "active_pollers", "legacy_renderer_detected",
-        "duplicate_cards", "css_version", "last_refresh", "status_age",
-    ):
-        assert field in UI
-
-
-def test_responsive_css_grid_without_absolute_or_fixed_widths():
+def test_responsive_grid_without_fixed_width():
     assert "display:grid" in CSS
     assert "grid-template-columns" in CSS
-    assert "@media(max-width:1100px)" in CSS
     assert "@media(max-width:760px)" in CSS
-    assert "@media(max-width:480px)" in CSS
-    assert "position:absolute" not in CSS.replace(" ", "")
+    assert "@media(max-width:520px)" in CSS
     assert "width:300px" not in CSS.replace(" ", "")
 
 
-def test_remote_layout_is_preserved_and_not_rebuilt_by_consolidated_ui():
-    assert "dashboard_lg_remote.js" in INDEX
-    assert "tvButtons" in INDEX
-    assert "remoteCard.classList.add" in UI
-    assert "remote.innerHTML" not in UI
+def test_remote_is_restored_after_legacy_page_render():
+    household = (ROOT / "frontend/assets/dashboard_household_devices.js").read_text()
+    assert "window.renderLgTvCompact?.()" in household
+    assert "window.renderLgCompactRemote?.(state.capabilities || {})" in UI

@@ -21,6 +21,7 @@
     const page = document.querySelector('[data-page="entertainment"] .grid');
     const original = document.getElementById('tvButtons')?.closest('.card');
     if (!page || !original) return false;
+    if (original.classList.contains('lg-tv-compact-card') && document.getElementById('lgCommandToast')) return true;
     original.className = 'card span-12 lg-tv-compact-card';
     original.innerHTML = `
       <div class="lg-compact-summary">
@@ -100,6 +101,9 @@
       toast(error.message || 'Command failed', true);
       throw error;
     }
+  };
+  window.renderLgTvCompact = function renderLgTvCompact() {
+    if (mount()) render();
   };
 
   if (mount()) {

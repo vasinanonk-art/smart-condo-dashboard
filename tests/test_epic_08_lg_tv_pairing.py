@@ -97,10 +97,10 @@ def test_pairing_flow_is_preserved_in_consolidated_ui():
     assert 'dashboard_lg_remote.js' in INDEX
     assert 'dashboard_lg_status.js' in INDEX
     assert 'dashboard_lg_pairing.js' not in INDEX
-    for label in ('Repair Pairing', 'Test Connection', 'Save & Reconnect', 'Cancel Pairing'):
+    for label in ('Repair', 'Test pairing', 'Save key', 'Cancel'):
         assert label in UI
-    assert 'Approve the connection request on the LG TV' in UI
-    assert "['connecting','prompted'].includes" in UI
+    assert 'Approve the pairing request on the TV.' in UI
+    assert '/api/lg-tv/pairing/request' in UI
 
 
 def test_regression_forbidden_integrations_untouched():

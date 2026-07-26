@@ -1,76 +1,61 @@
 from pathlib import Path
 
-ROOT=Path(__file__).resolve().parents[1]
-UI=(ROOT/'frontend'/'assets'/'dashboard_lg_status.js').read_text(encoding='utf-8')
-CSS=(ROOT/'frontend'/'assets'/'dashboard_lg_status.css').read_text(encoding='utf-8')
-INDEX=(ROOT/'frontend'/'index.html').read_text(encoding='utf-8')
-REMOTE=(ROOT/'frontend'/'assets'/'dashboard_lg_remote.js').read_text(encoding='utf-8')
+ROOT = Path(__file__).resolve().parents[1]
+UI = (ROOT / "frontend/assets/dashboard_lg_status.js").read_text()
+REMOTE = (ROOT / "frontend/assets/dashboard_lg_remote.js").read_text()
+CSS = (
+    (ROOT / "frontend/assets/dashboard_lg_status.css").read_text()
+    + (ROOT / "frontend/assets/dashboard_lg_remote.css").read_text()
+)
+INDEX = (ROOT / "frontend/index.html").read_text()
 
 
-def test_live_status_values_and_stable_mount():
-    for item in ('lgTvStatus','lgTvApp','lgTvInput','lgTvVolume','lgTvMute','lgTvUpdated'):
+def test_compact_live_status_and_stable_mount():
+    for item in ("lgTvStatus", "lgTvSource", "lgTvVolume", "lgTvUpdated"):
         assert item in UI
-    assert 'function mountLgTvPage()' in UI
-    assert "document.getElementById('lgTvPage')" in UI
-    assert 'state.mounted = true' in UI
-    assert 'outerHTML' not in UI
-    assert 'MutationObserver' not in UI
+    assert "function mount()" in UI
+    assert "lg-tv-compact-card" in UI
+    assert "MutationObserver" not in UI
+    assert "TV IP" not in UI and "client key" not in UI.lower()
 
 
-def test_background_polling_keeps_values_and_is_single():
-    assert 'state.pollTimer=setTimeout' in UI
-    assert 'setInterval' not in UI
-    assert "document.addEventListener('visibilitychange'" in UI
-    assert "window.addEventListener('beforeunload'" in UI
-    assert 'state.status=status' in UI
-    assert "innerHTML = ''" not in UI
+def test_background_polling_is_single_and_bounded():
+    assert "state.timer = setTimeout(refresh, 15000)" in UI
+    assert "setInterval" not in UI
+    assert "if (state.busy) return" in UI
 
 
-def test_stale_response_and_diagnostics():
-    assert 'sequence<state.appliedSequence' in UI
-    assert 'state.ignoredStale+=1' in UI
-    assert 'window.dashboardLgDiagnostics' in UI
-    for field in ('active_mounts','active_pollers','legacy_renderer_detected','duplicate_cards','css_version','last_refresh','status_age'):
-        assert field in UI
-    assert 'client_key' not in UI.lower()
+def test_pairing_actions_are_inside_compact_details():
+    assert 'class="lg-tv-details"' in UI
+    for path in ("test", "request", "save", "cancel", "forget"):
+        assert f"/api/lg-tv/pairing/{path}" in UI
+    assert "confirm('Forget the saved LG TV pairing key?')" in UI
 
 
-def test_pairing_polish_and_actions():
-    for text in ('Paired & Connected','LG TV is paired and ready','Repair Pairing','Test Connection','Forget Pairing','Save & Reconnect','Cancel Pairing'):
-        assert text in UI
-    assert 'Available after a new key is registered.' in UI
-    assert '/api/lg-tv/pairing/test' in UI and '/api/lg-tv/pairing/forget' in UI
-    assert "confirm('Forget the saved LG TV pairing key?" in UI
-
-
-def test_manual_refresh_and_individual_command_disable():
-    assert '/api/lg-tv/status/refresh' in UI
-    assert 'button.disabled=true' in UI
-    assert 'if(button)button.disabled=true' in UI
-    command_handler = UI[UI.index('window.tv=async'):]
+def test_command_uses_post_response_without_duplicate_get():
+    command_handler = UI[UI.index("window.tv = async"):]
     assert "/api/lg-tv/command" in command_handler
+    assert "state.status = output.state" in command_handler
     assert "/api/lg-tv/status/refresh" not in command_handler
 
 
-def test_relative_time_and_null_audio_rendering():
-    assert 'Just now' in UI and 'sec ago' in UI and 'min ago' in UI
-    assert "s.audio?.muted === true ? 'Muted'" in UI
-    assert "s.audio?.muted === false ? 'Unmuted'" in UI
-    assert "Math.round(Number(s.audio.volume))" in UI
+def test_audio_and_source_rendering_are_null_safe():
+    assert "const audio = value.audio || {}" in UI
+    assert "source.get" not in UI
+    assert "value.current_input" in UI and "value.current_app" in UI
+    assert "volumeValue == null ? 'Unavailable'" in UI
 
 
-def test_responsive_and_accessibility():
-    assert '@media(max-width:1100px)' in CSS
-    assert '@media(max-width:760px)' in CSS
-    assert '@media(max-width:480px)' in CSS
-    assert 'grid-template-columns:repeat(3' in CSS
+def test_responsive_and_accessible():
+    assert "@media(max-width:760px)" in CSS
+    assert "@media(max-width:520px)" in CSS
     assert 'aria-live="polite"' in UI
-    assert 'min-height' in CSS
+    assert 'role="status"' in UI
 
 
-def test_existing_remote_layout_and_commands_preserved():
-    assert 'dashboard_lg_remote.js' in INDEX
-    assert 'dashboard_lg_status.js' in INDEX
-    assert INDEX.index('dashboard_lg_remote.js') < INDEX.index('dashboard_lg_status.js')
-    for command in ('power_on','power_off','volume_up','hdmi1','netflix'):
+def test_remote_has_supported_commands_without_hardcoded_inputs_or_apps():
+    assert INDEX.index("dashboard_lg_remote.js") < INDEX.index("dashboard_lg_status.js")
+    for command in ("power_on", "power_off", "volume_up", "set_input", "launch_app"):
         assert command in REMOTE
+    for unsupported_assumption in ("hdmi1", "hdmi2", "netflix", "youtube"):
+        assert unsupported_assumption not in REMOTE.lower()
