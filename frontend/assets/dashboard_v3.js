@@ -188,13 +188,24 @@ function ensureChartToolbar(id) {
 function bindRangeButtons(container) {
   container?.querySelectorAll('[data-range]').forEach(button => button.onclick = () => setRange(button.dataset.range));
 }
+function renderCameraControls() {
+  const host=$('cameraControls');if(!host)return;
+  host.innerHTML=(S.cameras||[]).map(camera=>{const c=camera.capabilities||{},controls=[];
+    if(c.snapshot)controls.push(`<button class="btn ghost" data-camera-snapshot="${safeText(camera.id)}">Snapshot</button>`);
+    if(c.ptz_move)['left','up','down','right'].forEach(direction=>controls.push(`<button class="btn ghost" data-camera-command="move" data-camera-direction="${direction}" data-camera-id="${safeText(camera.id)}">${direction}</button>`));
+    if(c.home_position)controls.push(`<button class="btn ghost" data-camera-command="home_position" data-camera-id="${safeText(camera.id)}">Home</button>`);
+    return `<article class="card span-4"><strong>${safeText(camera.name)}</strong><div class="device-meta">${safeText(camera.provider)}${camera.unsupported_reason?` · ${safeText(camera.unsupported_reason)}`:''}</div><div class="controls">${controls.join('')||'<span class="device-meta">Read-only</span>'}</div></article>`;
+  }).join('')||'<span class="device-meta">Camera configuration unavailable.</span>';
+  host.querySelectorAll('[data-camera-snapshot]').forEach(button=>button.onclick=()=>window.open(`/api/camera-control/${encodeURIComponent(button.dataset.cameraSnapshot)}/snapshot`,'_blank','noopener'));
+  host.querySelectorAll('[data-camera-command]').forEach(button=>button.onclick=async()=>{button.disabled=true;try{await post(`/api/camera-control/${encodeURIComponent(button.dataset.cameraId)}/command`,{command:button.dataset.cameraCommand,direction:button.dataset.cameraDirection||null,duration:.3});toast('Camera command complete');}catch(error){toast(error.message);}finally{button.disabled=false;}});
+}
 function renderOverview() {
   const history = S.history;
   $('overviewMetrics').innerHTML = metricHTML('Temperature',fmt(S.sensor.temperature),'°C','Current indoor reading') + metricHTML('Humidity',fmt(S.sensor.humidity),'%','Current indoor reading') + metricHTML('Living Room PM2.5',fmt(S.air.living_room?.value),'µg/m³',S.air.living_room?.stale?'Stale':'Home Assistant') + metricHTML('Bedroom PM2.5',fmt(S.air.bedroom?.value),'µg/m³',S.air.bedroom?.stale?'Stale':'Home Assistant');
   $('overviewStats').innerHTML = statsHTML('Temperature',stat(history,'temperature'),'°C') + statsHTML('Humidity',stat(history,'humidity'),'%') + statsHTML('Living Room PM2.5',stat(history,'pm25_living_room'),'µg/m³') + statsHTML('Bedroom PM2.5',stat(history,'pm25_bedroom'),'µg/m³');
   $('overviewRanges').innerHTML = rangeButtons(); bindRangeButtons($('overviewRanges'));
   drawChart('overviewChart', history, SERIES.overview); drawChart('overviewPmChart', history, SERIES.air);
-  ensureChartToolbar('overviewChart'); ensureChartToolbar('overviewPmChart'); renderOverviewSummary();
+  ensureChartToolbar('overviewChart'); ensureChartToolbar('overviewPmChart'); renderOverviewSummary(); renderCameraControls();
 }
 function renderOverviewSummary() {
   const people = S.presence || {};
@@ -352,7 +363,7 @@ async function loadLights() { try { const payload = await get('/api/lights/statu
 async function loadScenes() { try { const payload = await get('/api/scenes'); S.scenes = payload.scenes || S.scenes; } catch (error) { console.warn('Scenes refresh failed:', error.message); } }
 async function loadHealth() { try { const payload = await get('/api/health'); S.health = payload; const tv = extractTvState(payload); if (tv) S.tv.lastValid = tv; } catch (error) { console.warn('Health refresh failed:', error.message); } }
 async function loadSystem() { try { S.system = await get('/api/dashboard/status'); const tv = extractTvState(S.system); if (tv) S.tv.lastValid = tv; } catch (error) { console.warn('System refresh failed:', error.message); } }
-async function loadCameras() { try { const payload = await get('/api/cameras'); S.cameras = payload.cameras || S.cameras; } catch (error) { console.warn('Camera refresh failed:', error.message); } }
+async function loadCameras() { try { const payload = await get('/api/camera-control/devices'); S.cameras = payload.cameras || S.cameras; } catch (error) { console.warn('Camera refresh failed:', error.message); } }
 
 function renderBadges() {
   if ($('mqttBadge')) { $('mqttBadge').textContent = S.health.mqtt_connected ? 'MQTT Online' : 'MQTT Offline'; $('mqttBadge').className = `badge ${S.health.mqtt_connected?'ok':'bad'}`; }
