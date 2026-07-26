@@ -24,6 +24,11 @@ CAPABILITY_KEYS = (
     "snapshot", "live_stream", "onvif_profiles", "ptz_move", "ptz_stop",
     "zoom", "presets", "home_position", "firmware_info",
 )
+PUBLIC_CAMERA_ALIASES = {
+    "camera-1": "tapo-c220",
+    "camera-2": "xiaomi-camera-1",
+    "camera-3": "xiaomi-camera-2",
+}
 
 
 @dataclass(frozen=True)
@@ -164,6 +169,23 @@ def _profile_projection(profile: Any) -> Dict[str, Any]:
     }
 
 
+def _safe_snapshot_uri(media: Any, profile_token: Any, host: str | None) -> str | None:
+    if not profile_token or not host:
+        return None
+    uri_result = media.GetSnapshotUri({"ProfileToken": profile_token})
+    uri = str(getattr(uri_result, "Uri", "") or "")
+    parsed_uri = urllib.parse.urlsplit(uri)
+    if (
+        parsed_uri.scheme not in {"http", "https"}
+        or not parsed_uri.hostname
+        or parsed_uri.hostname.casefold() != host.casefold()
+        or parsed_uri.username is not None
+        or parsed_uri.password is not None
+    ):
+        return None
+    return uri
+
+
 def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
     result = _base_result(spec, "onvif", None)
     started = time.monotonic()
@@ -174,6 +196,16 @@ def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
         raw_profiles = list(media.GetProfiles() or [])
         profiles = [_profile_projection(profile) for profile in raw_profiles[:16]]
         discovered = {"onvif_profiles", "firmware_info"}
+        snapshot_available = False
+        if raw_profiles and "snapshot" in spec.declared_capabilities:
+            try:
+                snapshot_available = bool(
+                    _safe_snapshot_uri(media, getattr(raw_profiles[0], "token", None), spec.host)
+                )
+                if snapshot_available:
+                    discovered.add("snapshot")
+            except Exception:
+                snapshot_available = False
         ptz_available = False
         presets: list[Dict[str, str]] = []
         try:
@@ -194,7 +226,7 @@ def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
         declared = spec.declared_capabilities
         controllable = spec.verification_status == "verified"
         result["capabilities"].update({
-            "snapshot": "snapshot" in declared,
+            "snapshot": snapshot_available,
             # Profile discovery does not itself provide a browser-safe stream.
             # Keep live viewing disabled until an authenticated media proxy exists.
             "live_stream": False,
@@ -202,7 +234,7 @@ def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
             "ptz_move": controllable and ptz_available and "ptz_move" in declared,
             "ptz_stop": controllable and ptz_available and "ptz_stop" in declared,
             "zoom": controllable and ptz_available and "zoom" in declared,
-            "presets": controllable and bool(presets) and "presets" in declared,
+            "presets": bool(presets) and "presets" in declared,
             "home_position": controllable and ptz_available and "home_position" in declared,
             "firmware_info": True,
         })
@@ -294,7 +326,8 @@ def _spec(camera_id: str) -> CameraSpec | None:
     status, specs = load_inventory()
     if status != "configured":
         return None
-    return next((item for item in specs if item.id == camera_id), None)
+    resolved_id = PUBLIC_CAMERA_ALIASES.get(camera_id, camera_id)
+    return next((item for item in specs if item.id == resolved_id), None)
 
 
 def camera_status_readonly(camera_id: str):
@@ -332,16 +365,8 @@ def _snapshot_onvif(spec: CameraSpec):
     if not profiles:
         raise LookupError("snapshot_unavailable")
     profile_token = getattr(profiles[0], "token", None)
-    uri_result = media.GetSnapshotUri({"ProfileToken": profile_token})
-    uri = str(getattr(uri_result, "Uri", "") or "")
-    parsed_uri = urllib.parse.urlsplit(uri)
-    if (
-        parsed_uri.scheme not in {"http", "https"}
-        or not parsed_uri.hostname
-        or parsed_uri.hostname.casefold() != (spec.host or "").casefold()
-        or parsed_uri.username is not None
-        or parsed_uri.password is not None
-    ):
+    uri = _safe_snapshot_uri(media, profile_token, spec.host)
+    if uri is None:
         raise LookupError("snapshot_unavailable")
     credentials = _credentials(spec)
     if credentials is None:

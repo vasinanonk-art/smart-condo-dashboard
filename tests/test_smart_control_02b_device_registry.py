@@ -30,21 +30,29 @@ def test_registry_requires_authentication(monkeypatch):
 
 def test_registry_has_stable_safe_contract_and_rooms(monkeypatch):
     monkeypatch.setattr(registry, "_tapo_detected", lambda: True)
-    monkeypatch.setattr(registry.camera_control, "inventory", lambda: [])
+    monkeypatch.setattr(
+        registry.camera_read_providers,
+        "_inventory_payload",
+        lambda **kwargs: {"config_loaded": False, "cameras": []},
+    )
     monkeypatch.setattr(registry.lg_tv_control, "capabilities", lambda **kwargs: {"supported": ["power_off"], "power_on": {"supported": False}})
     monkeypatch.setattr(registry.lg_tv_status, "_public_status", lambda: {"online": True, "last_success_ts": 1, "audio": {"volume": 10}})
     first = registry.registry()
     second = registry.registry()
     assert [item["id"] for item in first] == [item["id"] for item in second]
     assert all(set(item) == SAFE_FIELDS for item in first)
-    assert {item["room"] for item in first} <= {"living_room", "bed_room"}
+    assert {item["room"] for item in first} <= {"living_room", "bed_room", "unknown"}
     assert any(item["id"] == "living-room-air-conditioner" for item in first)
     assert any(item["id"] == "bed-room-air-conditioner" for item in first)
 
 
 def test_registry_never_exposes_provider_secrets(monkeypatch):
     monkeypatch.setattr(registry, "_tapo_detected", lambda: True)
-    monkeypatch.setattr(registry.camera_control, "inventory", lambda: [])
+    monkeypatch.setattr(
+        registry.camera_read_providers,
+        "_inventory_payload",
+        lambda **kwargs: {"config_loaded": False, "cameras": []},
+    )
     monkeypatch.setattr(registry.lg_tv_control, "capabilities", lambda **kwargs: {"supported": []})
     monkeypatch.setattr(registry.lg_tv_status, "_public_status", lambda: {})
     serialized = json.dumps(registry.registry()).lower()

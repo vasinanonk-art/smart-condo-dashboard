@@ -9,7 +9,7 @@ import copy
 from typing import Any, Dict
 
 from backend import app as app_module
-from backend import camera_control, lg_tv_control, lg_tv_status, tapo_ir_local_bridge
+from backend import camera_read_providers, lg_tv_control, lg_tv_status, tapo_ir_local_bridge
 
 app = app_module.app
 _SAFE_FIELDS = {
@@ -115,18 +115,44 @@ def _ir_devices() -> list[Dict[str, Any]]:
 
 
 def _camera_placeholders() -> list[Dict[str, Any]]:
-    configured = camera_control.inventory()
-    names = ("Tapo C220", "Xiaomi Camera 1", "Xiaomi Camera 2")
+    payload = camera_read_providers._inventory_payload(discover_live=True)
+    configured = {
+        item["id"]: item
+        for item in payload.get("cameras", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    inventory = (
+        ("camera-1", "tapo-c220", "Tapo C220"),
+        ("camera-2", "xiaomi-camera-1", "Xiaomi Camera 1"),
+        ("camera-3", "xiaomi-camera-2", "Xiaomi Camera 2"),
+    )
     result = []
-    for index, name in enumerate(names):
-        record = configured[index] if index < len(configured) else None
-        capabilities = copy.deepcopy(record.capabilities) if record is not None else {}
+    for public_id, config_id, name in inventory:
+        record = configured.get(config_id)
+        capabilities = copy.deepcopy(record.get("capabilities") or {}) if record else {}
+        online = record.get("online") if record else None
+        health = record.get("health") if record else "unknown"
+        state_quality = "confirmed" if online is True else "unknown"
+        state = {}
+        if record:
+            state = {
+                "vendor": record.get("vendor"),
+                "model": record.get("model"),
+                "last_update": record.get("last_update"),
+                "provider_verified": record.get("verification_status") == "verified",
+                "discovered_capabilities": copy.deepcopy(record.get("discovered_capabilities") or []),
+            }
         result.append(_device(
-            f"camera-{index + 1}", "living_room", name, "camera",
-            online=None,
-            health="unknown" if record is not None else "unavailable",
+            public_id,
+            record.get("room", "unknown") if record else "unknown",
+            record.get("display_name", name) if record else name,
+            "camera",
+            online=online,
+            health=health,
             capabilities=capabilities,
-            reason=record.reason if record is not None else "Configuration unavailable",
+            state=state,
+            state_quality=state_quality,
+            reason=record.get("unavailable_reason") if record else "Configuration unavailable",
         ))
     return result
 

@@ -69,7 +69,10 @@ def _fake_onvif():
             Resolution=SimpleNamespace(Width=1920, Height=1080),
         ),
     )
-    media = SimpleNamespace(GetProfiles=lambda: [profile])
+    media = SimpleNamespace(
+        GetProfiles=lambda: [profile],
+        GetSnapshotUri=lambda request: SimpleNamespace(Uri="http://camera.local/snapshot"),
+    )
     ptz = SimpleNamespace(
         GetConfigurations=lambda: [SimpleNamespace(token="secret-configuration-token")],
         GetPresets=lambda request: [SimpleNamespace(token="secret-preset-token", Name="Home")],
@@ -107,6 +110,7 @@ def test_tapo_onvif_discovery_is_per_camera_and_secret_safe(monkeypatch, tmp_pat
     assert item["online"] is True
     assert item["vendor"] == "Tapo" and item["model"] == "C220"
     assert item["capabilities"]["onvif_profiles"] is True
+    assert item["capabilities"]["snapshot"] is True
     assert item["capabilities"]["ptz_move"] is True
     assert item["capabilities"]["presets"] is True
     assert item["capabilities"]["live_stream"] is False
@@ -244,6 +248,11 @@ def test_snapshot_rejects_device_supplied_cross_host_uri(monkeypatch):
         assert str(exc) == "snapshot_unavailable"
     else:
         raise AssertionError("cross-host snapshot URI was accepted")
+
+
+def test_stable_household_camera_alias_resolves_strict_inventory_id(monkeypatch, tmp_path):
+    _install_config(monkeypatch, tmp_path, _verified_onvif(id="tapo-c220"))
+    assert providers._spec("camera-1").id == "tapo-c220"
 
 
 def test_camera_read_routes_require_dashboard_authentication(monkeypatch):

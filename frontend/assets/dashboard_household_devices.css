@@ -11,6 +11,17 @@
   grid-column: 1 / -1;
 }
 
+.household-camera-preview {
+  display: block;
+  grid-column: 1 / -1;
+  width: 100%;
+  height: auto;
+  max-height: 240px;
+  object-fit: contain;
+  border-radius: 10px;
+  background: #101820;
+}
+
 @media (max-width: 1100px) {
   .household-grid {
     grid-template-columns: repeat(2, minmax(320px, 1fr));
