@@ -1,0 +1,2 @@
+CAMERA_CONFIG_FILE=/root/.smart-condo-dashboard/cameras.local.json
+EWELINK_CONFIG_FILE=/root/.smart-condo-dashboard/ewelink.local.json

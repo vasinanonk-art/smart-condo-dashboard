@@ -1,0 +1,36 @@
+{
+  "email": "<EWELINK_ACCOUNT_EMAIL_OR_REMOVE_IF_USING_PHONE>",
+  "phoneNumber": "<EWELINK_ACCOUNT_PHONE_OR_REMOVE_IF_USING_EMAIL>",
+  "password": "<EWELINK_ACCOUNT_PASSWORD>",
+  "countryCode": "<EWELINK_COUNTRY_CODE_EG_+66>",
+  "region": "<EWELINK_REGION_AS_EU_US_OR_CN>",
+  "use_config_app": false,
+  "app_id": "<OPTIONAL_APPLICATION_ID_REMOVE_WHEN_USE_CONFIG_APP_IS_FALSE>",
+  "app_secret": "<OPTIONAL_APPLICATION_SECRET_REMOVE_WHEN_USE_CONFIG_APP_IS_FALSE>",
+  "devices": [
+    {
+      "deviceid": "<SONOFF_DEVICE_ID_1>",
+      "name": "BASICR2",
+      "model": "BASICR2",
+      "gang_count": 1
+    },
+    {
+      "deviceid": "<SONOFF_DEVICE_ID_2>",
+      "name": "M5-2C-120W",
+      "model": "M5-2C-120W",
+      "gang_count": 2
+    },
+    {
+      "deviceid": "<SONOFF_DEVICE_ID_3>",
+      "name": "M5-3C-120W",
+      "model": "M5-3C-120W",
+      "gang_count": 3
+    },
+    {
+      "deviceid": "<SONOFF_DEVICE_ID_4>",
+      "name": "M5-1C-120W",
+      "model": "M5-1C-120W",
+      "gang_count": 1
+    }
+  ]
+}
