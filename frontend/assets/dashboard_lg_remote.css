@@ -40,30 +40,28 @@
     "power navigation playback"
     "volume applications applications"
     "inputs inputs inputs";
-  grid-template-columns: minmax(180px, .82fr) minmax(250px, 1.08fr) minmax(220px, 1fr);
-  gap: 14px;
-  align-items: stretch;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
   min-width: 0;
-  padding: 2px;
 }
 
 .household-lg-section {
   display: grid;
-  grid-template-rows: auto 1fr;
-  gap: 12px;
+  gap: 10px;
+  align-content: start;
   min-width: 0;
   height: auto;
-  padding: 16px;
+  padding: 14px;
   border: 1px solid rgba(148, 163, 184, .16);
-  border-radius: 16px;
+  border-radius: 14px;
   background: #0e151f;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, .16);
 }
 
 .household-lg-section-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+  gap: 10px;
   align-items: baseline;
 }
 
@@ -72,24 +70,23 @@
   color: #f2f6fb;
   font-size: 13px;
   font-weight: 800;
-  letter-spacing: .01em;
 }
 
 .household-lg-section-head span {
   color: #718096;
   font-size: 9px;
   font-weight: 750;
-  letter-spacing: .08em;
+  letter-spacing: .06em;
 }
 
 .household-lg-section .household-action-button {
   width: 100%;
   min-width: 0;
-  min-height: 42px;
-  height: 42px;
-  padding: 8px 10px;
+  min-height: 40px;
+  height: 40px;
+  padding: 7px 10px;
   border: 1px solid rgba(148, 163, 184, .17);
-  border-radius: 11px;
+  border-radius: 9px;
   background: #151f2b;
   color: #e8eef6;
   font-size: 12px;
@@ -143,21 +140,16 @@
 .household-lg-playback-grid,
 .household-lg-app-grid,
 .household-lg-input-grid,
-.household-lg-navigation {
+.household-lg-navigation,
+.household-lg-navigation-footer {
   display: grid;
-  gap: 9px;
+  gap: 8px;
   min-width: 0;
   margin: 0;
 }
 
 .household-lg-button-row {
   grid-template-columns: minmax(0, 1fr);
-  align-content: start;
-}
-
-.household-lg-button-row .household-action-button {
-  min-height: 48px;
-  height: 48px;
 }
 
 .household-lg-power-on {
@@ -171,42 +163,21 @@
 }
 
 .household-lg-navigation {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(3, 48px);
   grid-template-rows: repeat(3, 40px);
-  width: min(100%, 208px);
-  aspect-ratio: 1;
-  justify-self: center;
-  align-self: start;
-  align-content: center;
-  gap: 7px;
-  padding: 22px;
-  border: 1px solid rgba(148, 163, 184, .15);
-  border-radius: 50%;
-  background: #0a1018;
-  box-shadow:
-    inset 0 0 0 7px rgba(255, 255, 255, .018),
-    0 12px 28px rgba(0, 0, 0, .24);
+  justify-content: center;
 }
 
 .household-lg-navigation .household-action-button {
   height: 40px;
   min-height: 40px;
   padding: 4px;
-  border-radius: 50%;
-  background: #172331;
-  font-size: 14px;
 }
 
 .household-lg-navigation .household-lg-nav-ok {
-  border-color: rgba(91, 167, 255, .5);
+  border-color: rgba(91, 167, 255, .55);
   background: #24486c;
   color: #fff;
-  font-size: 11px;
-}
-
-.household-lg-navigation .household-lg-nav-back,
-.household-lg-navigation .household-lg-nav-home {
-  font-size: 9px;
 }
 
 .household-lg-nav-empty {
@@ -214,31 +185,26 @@
   min-height: 0;
 }
 
-.household-lg-volume-grid {
+.household-lg-navigation-footer {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-content: start;
+  width: min(100%, 200px);
+  justify-self: center;
 }
 
-.household-lg-playback-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-content: start;
-}
-
+.household-lg-volume-grid,
+.household-lg-playback-grid,
 .household-lg-app-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-content: start;
 }
 
 .household-lg-applications .household-action-button {
-  min-height: 46px;
-  height: 46px;
-  justify-content: start;
+  height: 42px;
+  min-height: 42px;
   text-align: left;
 }
 
 .household-lg-input-grid {
-  grid-template-columns: repeat(auto-fit, minmax(120px, 170px));
-  justify-content: start;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
 }
 
 .household-lg-input-grid .household-action-button {
@@ -252,7 +218,7 @@
   grid-template-columns: auto minmax(100px, 1fr) 32px;
   gap: 10px;
   align-items: center;
-  padding-top: 4px;
+  padding-top: 2px;
   color: #8996a8;
   font-size: 10px;
   font-weight: 700;
@@ -316,24 +282,15 @@
       "inputs";
     grid-template-columns: minmax(0, 1fr);
   }
-
-  .household-lg-button-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 390px) {
   .household-lg-section {
-    padding: 13px;
+    padding: 12px;
   }
 
   .household-lg-section-head span {
     display: none;
-  }
-
-  .household-lg-navigation {
-    width: min(100%, 208px);
-    padding: 20px;
   }
 
   .household-lg-input-grid {

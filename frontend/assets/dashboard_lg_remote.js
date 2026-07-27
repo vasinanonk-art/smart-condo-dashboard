@@ -78,17 +78,23 @@
           ${button('power_on', 'Power On', !supported.has('power_on'), supported.has('power_on') ? '' : wolReason, '', 'household-lg-power-on')}
           ${button('power_off', 'Power Off', !supported.has('power_off'), 'Power Off is unavailable.', '', 'household-lg-power-off')}
         </div>${supported.has('power_on') ? '' : UI.warningBox(wolReason, 'lg-power-on-reason')}</section>
-        <section class="household-lg-section household-lg-navigation-section"><header class="household-lg-section-head"><h3>Navigation</h3><span>Remote wheel</span></header><div class="household-action-grid household-lg-navigation">
-          <span class="household-lg-nav-empty" aria-hidden="true"></span>
-          ${button('up', '▲', !supported.has('up'), '', '', 'household-lg-nav-up')}
-          <span class="household-lg-nav-empty" aria-hidden="true"></span>
-          ${button('left', '◀', !supported.has('left'), '', '', 'household-lg-nav-left')}
-          ${button('ok', 'OK', !supported.has('ok'), '', '', 'household-lg-nav-ok')}
-          ${button('right', '▶', !supported.has('right'), '', '', 'household-lg-nav-right')}
-          ${button('back', 'Back', !supported.has('back'), '', '', 'household-lg-nav-back')}
-          ${button('down', '▼', !supported.has('down'), '', '', 'household-lg-nav-down')}
-          ${button('home', 'Home', !supported.has('home'), '', '', 'household-lg-nav-home')}
-        </div></section>
+        <section class="household-lg-section household-lg-navigation-section"><header class="household-lg-section-head"><h3>Navigation</h3><span>Controls</span></header>
+          <div class="household-lg-navigation">
+            <span class="household-lg-nav-empty" aria-hidden="true"></span>
+            ${button('up', '▲', !supported.has('up'), '', '', 'household-lg-nav-up')}
+            <span class="household-lg-nav-empty" aria-hidden="true"></span>
+            ${button('left', '◀', !supported.has('left'), '', '', 'household-lg-nav-left')}
+            ${button('ok', 'OK', !supported.has('ok'), '', '', 'household-lg-nav-ok')}
+            ${button('right', '▶', !supported.has('right'), '', '', 'household-lg-nav-right')}
+            <span class="household-lg-nav-empty" aria-hidden="true"></span>
+            ${button('down', '▼', !supported.has('down'), '', '', 'household-lg-nav-down')}
+            <span class="household-lg-nav-empty" aria-hidden="true"></span>
+          </div>
+          <div class="household-lg-navigation-footer">
+            ${button('back', 'Back', !supported.has('back'), '', '', 'household-lg-nav-back')}
+            ${button('home', 'Home', !supported.has('home'), '', '', 'household-lg-nav-home')}
+          </div>
+        </section>
         <section class="household-lg-section household-lg-playback"><header class="household-lg-section-head"><h3>Playback</h3><span>Media</span></header><div class="household-action-grid household-lg-playback-grid">
           ${['play','pause','stop','rewind','fast_forward'].map(name => button(name, commands.find(item => item[0] === name)[1], !supported.has(name))).join('')}
         </div></section>
