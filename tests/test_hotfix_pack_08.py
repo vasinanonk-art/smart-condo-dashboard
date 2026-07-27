@@ -127,7 +127,8 @@ class HotfixPack08Tests(unittest.TestCase):
         self.assertIn("const xTs = ts =>", js)
         self.assertIn("splitSegments", js)
         self.assertIn("max_gap_sec", js)
-        self.assertIn("Missing intervals are not connected.", js)
+        self.assertIn("Missing intervals remain gaps.", js)
+        self.assertIn("movingAverage(rawRows, 3, maxGap)", js)
 
 
 if __name__ == "__main__":

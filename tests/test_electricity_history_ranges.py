@@ -207,7 +207,7 @@ def test_frontend_uses_explicit_contract_and_one_request_per_selection():
         Path(__file__).resolve().parents[1] / "frontend/assets/dashboard_electricity.js"
     ).read_text(encoding="utf-8")
     handler = source[source.index("document.querySelectorAll('[data-electricity-range]"):]
-    handler = handler[:handler.index("document.querySelectorAll('[data-electricity-comparison]')")]
+    handler = handler[:handler.index("const bucket = document.querySelector('[data-electricity-bucket]')")]
     assert handler.count("loadHistory(") == 1
     assert "URLSearchParams" in source
     assert "start:" in source and "end:" in source and "bucket," in source
@@ -340,17 +340,17 @@ def test_frontend_has_comparison_metrics_server_csv_and_distinct_states():
         Path(__file__).resolve().parents[1] / "frontend/assets/dashboard_electricity.js"
     ).read_text(encoding="utf-8")
     for label in (
-        "Today", "Yesterday", "Last 7 days", "Peak Interval",
-        "Average Interval", "Minimum Interval", "Peak Usage Time",
+        "Today", "Compared with yesterday", "Today’s Peak",
+        "Average Daily", "Average Hourly", "Maximum Interval", "Minimum Interval",
     ):
         assert label in source
     assert "comparisonRequestId" in source
     assert "format: 'csv'" in source
     assert "await response.blob()" in source
-    assert "Available history:" in source
+    assert "electricity-history-available" in source
     assert "No history samples for this range." in source
     assert "electricity-history-message error" in source
-    assert "Actual:" in source
+    assert "Actual resolution" in source
     assert "state.exportLoading" in source
     assert "document.body.appendChild(anchor)" in source
     assert "URL.revokeObjectURL(url)" in source

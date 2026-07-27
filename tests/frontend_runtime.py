@@ -163,3 +163,48 @@ const fs=require('fs'),vm=require('vm');
 }})().catch(error=>{{console.error(error);process.exit(1);}});
 """
     )
+
+
+def electricity_analytics_behavior():
+    source = json.dumps(str(ROOT / "frontend/assets/dashboard_electricity.js"))
+    return run_node(
+        f"""
+const fs=require('fs'),vm=require('vm');
+const document={{
+  readyState:'loading',body:{{appendChild:()=>{{}}}},querySelectorAll:()=>[],
+  querySelector:(selector)=>selector==='[data-page="electricity"]'?{{}}:null,
+  getElementById:()=>null,createElement:()=>({{}})
+}};
+const window={{
+  safeText:String,refresh:async()=>{{}},renderPage:()=>{{}},currentPage:()=> 'overview',
+  get:async()=>({{}}),nav:()=>{{}}
+}};
+const context={{
+  window,document,console,fetch:async()=>({{}}),URL,URLSearchParams,Intl,Date,
+  setTimeout,clearTimeout
+}};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync({source},'utf8'),context);
+const api=window.DashboardElectricityHistory;
+api.state.history={{bucket:'30m'}};
+const rows=[
+  {{timestamp:'2026-07-26T00:00:00+07:00',interval_start:'2026-07-26T00:00:00+07:00',interval_end:'2026-07-26T00:30:00+07:00',energy_kwh:1,cost_thb:5,data_quality:'valid'}},
+  {{timestamp:'2026-07-26T00:30:00+07:00',interval_start:'2026-07-26T00:30:00+07:00',interval_end:'2026-07-26T01:00:00+07:00',energy_kwh:2,cost_thb:10,data_quality:'valid'}},
+  {{timestamp:'2026-07-26T01:00:00+07:00',interval_start:'2026-07-26T01:00:00+07:00',interval_end:'2026-07-26T01:30:00+07:00',energy_kwh:3,cost_thb:15,data_quality:'valid'}},
+  {{timestamp:'2026-07-26T04:00:00+07:00',interval_start:'2026-07-26T04:00:00+07:00',interval_end:'2026-07-26T04:30:00+07:00',energy_kwh:4,cost_thb:20,data_quality:'partial'}}
+];
+const average=api.movingAverage(rows,3,2700).map(row=>row.moving_average_kwh);
+const statistics=api.analyticsStatistics(rows);
+const tooltip=api.tooltipContent(rows[0]);
+process.stdout.write(JSON.stringify({{
+  average,
+  highest:statistics.highest.energy,
+  lowest:statistics.lowest.energy,
+  averageHourly:statistics.averageHourly.energy,
+  maximum:statistics.maximum.energy_kwh,
+  minimum:statistics.minimum.energy_kwh,
+  tooltip,
+  bucket:api.bucketLabel('30m')
+}}));
+"""
+    )

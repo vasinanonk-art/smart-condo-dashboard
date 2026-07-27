@@ -109,8 +109,10 @@ class Epic04FrontendTests(unittest.TestCase):
 
     def test_electricity_frontend_has_persistent_ranges_and_exports(self):
         js = self.read("frontend/assets/dashboard_electricity.js")
-        for value in ("24H", "7D", "30D", "Start date", "End date", "Apply", "Reset", "CSV", "PNG"):
+        for value in ("['24h'", "['7d'", "['30d'", "Start date", "End date", "Apply", "Reset"):
             self.assertIn(value, js)
+        self.assertIn('data-electricity-export="csv"', js)
+        self.assertIn('data-electricity-export="png"', js)
         self.assertIn("/api/electricity/history", js)
         self.assertIn("/api/electricity/billing", js)
         self.assertIn("Estimated from configured tariff", js)

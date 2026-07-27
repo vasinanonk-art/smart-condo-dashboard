@@ -29,6 +29,8 @@
     comparisonLoading: false,
     comparisonError: null,
     comparisonRequestId: 0,
+    customVisible: false,
+    todayPeak: null,
   };
 
   const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
@@ -87,6 +89,45 @@
       minute: '2-digit',
       hour12: false,
     }).format(new Date(ts * 1000)) + ' ICT';
+  }
+
+  function localDate(value) {
+    const ts = epoch(value);
+    if (!ts) return 'Not available';
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Bangkok',
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+    }).format(new Date(ts * 1000));
+  }
+
+  function localClock(value) {
+    const ts = epoch(value);
+    if (!ts) return 'Not available';
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Bangkok',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(ts * 1000));
+  }
+
+  const bucketLabels = {
+    '15m': '15 minutes',
+    '30m': '30 minutes',
+    hour: '1 hour',
+    '3h': '3 hours',
+    day: '1 day',
+  };
+
+  function bucketLabel(value) {
+    return bucketLabels[String(value || '')] || 'Not available';
+  }
+
+  function money(value) {
+    const parsed = number(value);
+    return parsed === null ? 'Not available' : `฿${parsed.toFixed(2)}`;
   }
 
   function metric(label, value, unit = '', secondary = false) {
@@ -211,6 +252,15 @@
       const payload = await window.get(historyRequest(range, customStart, customEnd));
       if (requestId !== state.historyRequestId) return;
       state.history = payload;
+      const todayStart = epoch(`${thailandDate()}T00:00:00+07:00`);
+      if (epoch(payload.start) <= todayStart && epoch(payload.end) >= todayStart) {
+        state.todayPeak = (payload.points || []).reduce((best, row) => (
+          thailandDate(new Date(epoch(row.timestamp) * 1000)) === thailandDate()
+          && number(row.energy_kwh) !== null
+          && (!best || number(row.energy_kwh) > number(best.energy_kwh))
+            ? row : best
+        ), null);
+      }
     } catch (error) {
       if (requestId !== state.historyRequestId) return;
       state.historyError = error?.message || 'Electricity history is unavailable.';
@@ -296,6 +346,73 @@
     return segments;
   }
 
+  function movingAverage(rows, windowSize = 3, maxGap = 7200) {
+    const result = [];
+    let window = [];
+    let previousTimestamp = null;
+    rows.forEach(row => {
+      const value = number(row.energy_kwh);
+      const timestamp = epoch(row.timestamp);
+      if (value === null || timestamp === null || (previousTimestamp !== null && timestamp - previousTimestamp > maxGap)) {
+        window = [];
+      }
+      if (value === null || timestamp === null) {
+        result.push({...row, moving_average_kwh: null});
+        previousTimestamp = timestamp;
+        return;
+      }
+      window.push(value);
+      window = window.slice(-windowSize);
+      result.push({
+        ...row,
+        moving_average_kwh: window.length === windowSize
+          ? window.reduce((sum, item) => sum + item, 0) / window.length
+          : null,
+      });
+      previousTimestamp = timestamp;
+    });
+    return result;
+  }
+
+  function analyticsStatistics(rows = chartData()) {
+    const valid = rows.filter(row => number(row.energy_kwh) !== null && epoch(row.timestamp) !== null);
+    const daily = new Map();
+    let durationHours = 0;
+    valid.forEach(row => {
+      const day = thailandDate(new Date(epoch(row.timestamp) * 1000));
+      const entry = daily.get(day) || {day, energy: 0, cost: 0, costAvailable: true};
+      entry.energy += number(row.energy_kwh);
+      const cost = number(row.cost_thb);
+      if (cost === null) entry.costAvailable = false;
+      else entry.cost += cost;
+      daily.set(day, entry);
+      const start = epoch(row.interval_start);
+      const end = epoch(row.interval_end);
+      if (start !== null && end !== null && end > start) durationHours += (end - start) / 3600;
+    });
+    const days = [...daily.values()].map(item => ({
+      ...item,
+      cost: item.costAvailable ? item.cost : null,
+    }));
+    const highest = days.length ? days.reduce((best, item) => item.energy > best.energy ? item : best) : null;
+    const lowest = days.length ? days.reduce((best, item) => item.energy < best.energy ? item : best) : null;
+    const totalEnergy = valid.reduce((sum, row) => sum + number(row.energy_kwh), 0);
+    const costs = valid.map(row => number(row.cost_thb));
+    const totalCost = costs.length && costs.every(value => value !== null)
+      ? costs.reduce((sum, value) => sum + value, 0)
+      : null;
+    const maximum = valid.length ? valid.reduce((best, row) => number(row.energy_kwh) > number(best.energy_kwh) ? row : best) : null;
+    const minimum = valid.length ? valid.reduce((best, row) => number(row.energy_kwh) < number(best.energy_kwh) ? row : best) : null;
+    return {
+      highest,
+      lowest,
+      averageDaily: days.length ? {energy: totalEnergy / days.length, cost: totalCost === null ? null : totalCost / days.length} : null,
+      averageHourly: durationHours > 0 ? {energy: totalEnergy / durationHours, cost: totalCost === null ? null : totalCost / durationHours} : null,
+      maximum,
+      minimum,
+    };
+  }
+
   function axisLabelStride(bucket, pointCount) {
     if (bucket === '15m') return 8;
     if (bucket === '30m') return 4;
@@ -312,23 +429,39 @@
     if (!allRows.length || !series.length) return '<div class="electricity-empty">No history samples for this range.</div>';
     const width = 900, height = 260, left = 58, right = 20, top = 18, bottom = 38;
     const plotRight = width - right, plotBottom = height - bottom, plotW = plotRight - left, plotH = plotBottom - top;
-    const base = requestedWindow(allRows), windowRange = visibleWindow(base), rows = visibleRows(allRows, windowRange);
+    const base = requestedWindow(allRows), windowRange = visibleWindow(base);
+    const rawRows = visibleRows(allRows, windowRange);
+    const maxGap = Number(state.history?.max_gap_sec) || 7200;
+    const rows = movingAverage(rawRows, 3, maxGap);
     if (!rows.length) return '<div class="electricity-empty">No samples in the current zoom window.</div>';
     const values = [];
-    series.forEach(item => rows.forEach(row => {
-      const value = number(row[item.key]);
-      if (value !== null) values.push(value);
-    }));
+    rows.forEach(row => {
+      const energy = number(row.energy_kwh);
+      const average = number(row.moving_average_kwh);
+      if (energy !== null) values.push(energy);
+      if (average !== null) values.push(average);
+    });
     if (!values.length) return '<div class="electricity-empty">No selected metrics are available.</div>';
-    let min = Math.min(...values), max = Math.max(...values);
-    if (min === max) { min -= 1; max += 1; }
+    const min = 0;
+    let max = Math.max(...values);
+    if (max <= 0) max = 1;
     const xTs = ts => left + ((ts - windowRange.start) / Math.max(1, windowRange.end - windowRange.start)) * plotW;
     const y = value => top + (max - value) / (max - min) * plotH;
-    const maxGap = Number(state.history?.max_gap_sec) || 7200;
-    const paths = series.map(item => splitSegments(rows, item.key, maxGap).map(segment => {
-      const path = segment.map((row, index) => `${index ? 'L' : 'M'}${xTs(epoch(row.timestamp)).toFixed(2)},${y(number(row[item.key])).toFixed(2)}`).join(' ');
-      return `<path class="history-line ${item.cls}" d="${path}"/>`;
-    }).join('')).join('');
+    const spacing = rows.length > 1
+      ? Math.min(...rows.slice(1).map((row, index) => Math.max(1, xTs(epoch(row.timestamp)) - xTs(epoch(rows[index].timestamp)))))
+      : plotW;
+    const barWidth = Math.max(2, Math.min(24, spacing * 0.68));
+    const bars = rows.map(row => {
+      const value = number(row.energy_kwh);
+      if (value === null) return '';
+      const barY = y(value);
+      const barX = Math.max(left, Math.min(plotRight - barWidth, xTs(epoch(row.timestamp)) - barWidth / 2));
+      return `<rect class="history-bar energy" x="${barX.toFixed(2)}" y="${barY.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${Math.max(1, plotBottom - barY).toFixed(2)}" rx="2"/>`;
+    }).join('');
+    const averagePaths = splitSegments(rows, 'moving_average_kwh', maxGap).map(segment => {
+      const path = segment.map((row, index) => `${index ? 'L' : 'M'}${xTs(epoch(row.timestamp)).toFixed(2)},${y(number(row.moving_average_kwh)).toFixed(2)}`).join(' ');
+      return `<path class="history-average-line" d="${path}"/>`;
+    }).join('');
     const positions = rows.map(row => xTs(epoch(row.timestamp)));
     const bucket = String(state.history?.bucket || 'hour');
     const labelStride = axisLabelStride(bucket, rows.length);
@@ -340,7 +473,14 @@
       .map(row => `<text class="history-axis-label" x="${xTs(epoch(row.timestamp)).toFixed(2)}" y="${plotBottom + 22}" text-anchor="middle">${safe(labelFormatter.format(new Date(epoch(row.timestamp) * 1000)))}</text>`)
       .join('');
     state.renderedChart = {rows, series, positions, plot: {left, right: plotRight, top, bottom: plotBottom}, y, min, max, windowRange};
-    return `<div class="electricity-history-chart-wrap${state.historyLoading ? ' is-loading' : ''}"><svg id="electricityHistoryChart" class="electricity-history-chart" viewBox="0 0 ${width} ${height}"><line class="axis" x1="${left}" y1="${plotBottom}" x2="${plotRight}" y2="${plotBottom}"/><g class="history-axis-labels">${axisLabels}</g>${paths}<g class="history-hover" style="display:none"><line class="history-crosshair" y1="${top}" y2="${plotBottom}"/><g class="history-points"></g></g><rect class="history-hit" x="${left}" y="${top}" width="${plotW}" height="${plotH}" fill="transparent"/></svg><div class="electricity-history-tooltip" style="display:none"></div>${state.historyLoading ? '<div class="electricity-chart-loading" role="status">Loading selected range…</div>' : ''}</div>`;
+    return `<div class="electricity-history-chart-wrap${state.historyLoading ? ' is-loading' : ''}"><svg id="electricityHistoryChart" class="electricity-history-chart" viewBox="0 0 ${width} ${height}"><line class="axis" x1="${left}" y1="${plotBottom}" x2="${plotRight}" y2="${plotBottom}"/><g class="history-axis-labels">${axisLabels}</g><g class="history-bars">${bars}</g>${averagePaths}<g class="history-hover" style="display:none"><line class="history-crosshair" y1="${top}" y2="${plotBottom}"/><g class="history-points"></g></g><rect class="history-hit" x="${left}" y="${top}" width="${plotW}" height="${plotH}" fill="transparent"/></svg><div class="electricity-chart-legend"><span><i class="energy"></i>Energy</span><span><i class="average"></i>3-interval moving average</span></div><div class="electricity-history-tooltip" style="display:none"></div>${state.historyLoading ? '<div class="electricity-chart-loading" role="status">Loading selected range…</div>' : ''}</div>`;
+  }
+
+  function tooltipContent(row) {
+    const energy = number(row.energy_kwh);
+    const cost = number(row.cost_thb);
+    const quality = row.data_quality === 'valid' ? 'Good' : row.data_quality === 'partial' ? 'Partial' : 'Unknown';
+    return `<strong>${safe(localDate(row.timestamp))}</strong><span>${safe(localClock(row.interval_start || row.timestamp))}–${safe(localClock(row.interval_end))}</span><dl><div><dt>Energy</dt><dd>${energy === null ? 'Not available' : `${safe(energy.toFixed(4))} kWh`}</dd></div><div><dt>Cost</dt><dd>${cost === null ? 'Not available' : safe(money(cost))}</dd></div><div><dt>Bucket</dt><dd>${safe(bucketLabel(state.history?.bucket))}</dd></div><div><dt>Quality</dt><dd>${safe(quality)}</dd></div></dl>`;
   }
 
   function installChartInteraction() {
@@ -366,19 +506,8 @@
           if (value !== null) host.insertAdjacentHTML('beforeend', `<circle class="history-point ${item.cls}" cx="${sampleX}" cy="${model.y(value)}" r="5"/>`);
         });
       },
-      renderTooltip: ({row}) => `<strong>${safe(localTime(row.timestamp))}</strong><span>Energy: ${number(row.energy_kwh) === null ? 'Not available' : safe(number(row.energy_kwh).toFixed(4))} kWh</span>${number(row.cost_thb) === null ? '' : `<span>Cost: ${safe(number(row.cost_thb).toFixed(2))} THB</span>`}`,
+      renderTooltip: ({row}) => tooltipContent(row),
     });
-  }
-
-  function historyRangeSummary() {
-    if (!state.history) return '';
-    const summary = state.history.summary || {};
-    const cost = number(summary.total_cost_thb);
-    const available = state.history.available_range || {};
-    const availableText = available.start && available.end
-      ? `<small>Available history: ${safe(localTime(available.start))} – ${safe(localTime(available.end))}</small>`
-      : '<small>Available history: no retained samples</small>';
-    return `<div class="electricity-history-coverage complete"><strong>Selected range:</strong> ${safe(localTime(state.history.start))} – ${safe(localTime(state.history.end))}<small>Total consumption: ${safe(Number(summary.total_energy_kwh || 0).toFixed(4))} kWh${cost === null ? '' : ` · ${safe(cost.toFixed(2))} THB`}</small>${availableText}</div>`;
   }
 
   function historyRequestState() {
@@ -387,22 +516,39 @@
     return '';
   }
 
-  function comparisonPanel() {
-    const choices = [['today', 'Today'], ['yesterday', 'Yesterday'], ['7d', 'Last 7 days']];
+  function summaryCards() {
     const comparison = state.comparison || {};
     const current = comparison.current || {};
     const percentage = number(comparison.percentage_difference);
     const hasCurrent = Number(current.point_count || 0) > 0;
-    const difference = percentage === null
-      ? 'Previous comparable period has no valid data'
-      : `${percentage > 0 ? '+' : ''}${percentage.toFixed(1)}% vs previous period`;
-    return `<section class="electricity-comparison">
-      <div class="electricity-comparison-head"><div><strong>Usage comparison</strong><small>Comparable periods in Asia/Bangkok</small></div><div class="electricity-comparison-controls">${choices.map(([key, label]) => `<button class="btn ghost ${state.comparisonRange === key ? 'active' : ''}" data-electricity-comparison="${key}">${label}</button>`).join('')}</div></div>
-      ${state.comparisonError ? `<div class="electricity-history-message error">${safe(state.comparisonError)}</div>` : ''}
-      <div class="electricity-comparison-values${state.comparisonLoading ? ' is-loading' : ''}">
-        ${metric('Total consumption', hasCurrent ? Number(current.total_energy_kwh || 0).toFixed(4) : null, 'kWh', true)}
-        ${metric('Estimated cost', hasCurrent ? current.total_cost_thb : null, 'THB', true)}
-        ${metric('Change', hasCurrent ? difference : null, '', true)}
+    const peak = state.todayPeak;
+    const trendClass = percentage === null ? 'neutral' : percentage > 0 ? 'up' : percentage < 0 ? 'down' : 'neutral';
+    const trend = percentage === null ? 'Not available' : `${percentage > 0 ? '▲ +' : percentage < 0 ? '▼ ' : ''}${percentage.toFixed(1)}%`;
+    return `<section class="electricity-analytics-summary${state.comparisonLoading ? ' is-loading' : ''}" aria-label="Today electricity summary">
+      <article class="electricity-summary-card"><span>Today</span><strong>${hasCurrent ? safe(Number(current.total_energy_kwh || 0).toFixed(2)) : 'Not available'}${hasCurrent ? '<small>kWh</small>' : ''}</strong></article>
+      <article class="electricity-summary-card"><span>Estimated Cost</span><strong>${hasCurrent ? safe(money(current.total_cost_thb)) : 'Not available'}</strong></article>
+      <article class="electricity-summary-card"><span>Today’s Peak</span><strong>${peak ? `${safe(number(peak.energy_kwh).toFixed(2))}<small>kWh</small>` : 'Not available'}</strong><small>${peak ? safe(localClock(peak.timestamp)) : 'No valid interval'}</small></article>
+      <article class="electricity-summary-card comparison ${trendClass}"><span>Comparison</span><strong>${safe(trend)}</strong><small>Compared with yesterday</small></article>
+    </section>`;
+  }
+
+  function statisticCard(label, item, detail = '') {
+    const energy = item && number(item.energy ?? item.energy_kwh);
+    const cost = item && number(item.cost ?? item.cost_thb);
+    return `<article class="electricity-stat-card"><span>${safe(label)}</span><strong>${energy === null ? 'Not available' : `${safe(energy.toFixed(3))} kWh`}</strong><small>${cost === null ? 'Cost unavailable' : safe(money(cost))}${detail ? ` · ${safe(detail)}` : ''}</small></article>`;
+  }
+
+  function statisticsPanel() {
+    const stats = analyticsStatistics();
+    return `<section class="electricity-statistics" aria-label="Electricity statistics">
+      <div class="electricity-section-head"><div><h2>Statistics</h2><small>Calculated from the selected history already loaded</small></div></div>
+      <div class="electricity-stat-grid">
+        ${statisticCard('Highest Day', stats.highest, stats.highest?.day || '')}
+        ${statisticCard('Lowest Day', stats.lowest, stats.lowest?.day || '')}
+        ${statisticCard('Average Daily', stats.averageDaily)}
+        ${statisticCard('Average Hourly', stats.averageHourly)}
+        ${statisticCard('Maximum Interval', stats.maximum, stats.maximum ? localTime(stats.maximum.timestamp) : '')}
+        ${statisticCard('Minimum Interval', stats.minimum, stats.minimum ? localTime(stats.minimum.timestamp) : '')}
       </div>
     </section>`;
   }
@@ -505,9 +651,10 @@
     const mapping = source === 'tuya_local' ? badge('Mapping', diagnostics.mapping_verified === true ? 'Verified' : 'Provisional', diagnostics.mapping_verified === true ? 'ok' : 'warn') : '';
     const safeDiag = ['mapping_verified', 'stale', 'last_success', 'last_attempt_ts', 'last_error', 'consecutive_failures', 'configured_ip', 'runtime_ip', 'auto_discovery', 'last_scan_ts', 'last_scan_result', 'scan_count', 'poller_started', 'poller_alive'];
     const rangeButtons = [
-      ['24h', '24H'],
-      ['7d', '7D'],
-      ['30d', '30D'],
+      ['24h', '24h'],
+      ['7d', '7d'],
+      ['30d', '30d'],
+      ['custom', 'Custom'],
     ];
     const bucketChoices = [
       ['auto', 'Auto'], ['15m', '15 minutes'], ['30m', '30 minutes'],
@@ -518,26 +665,33 @@
     const actualCostLabel = partial ? 'Estimated cost for available data' : 'Estimated bill';
 
     host.innerHTML = `
-      <div class="electricity-badges">${badge('Meter', healthName(payload.health, payload), payload.health === 'offline' ? 'bad' : payload.health === 'healthy' ? 'ok' : 'warn')}${badge('Source', sourceName(source))}${mapping}</div>
-      <div class="electricity-primary-grid">${metric('Voltage', payload.voltage, 'V')}${metric('Current', payload.current, 'A')}${metric('Active Power', payload.power, 'W')}${metric('Total Energy', payload.total_energy, 'kWh')}</div>
-      <div class="electricity-secondary-grid">${metric('Status / Health', healthName(payload.health, payload), '', true)}${metric('Last Update', localTime(payload.last_update || diagnostics.last_success), '', true)}${metric('Runtime IP', runtimeIp, '', true)}${metric('Poll Latency', pollLatency, pollLatency == null ? '' : 'ms', true)}${metric('Data Source', sourceName(source), '', true)}</div>
+      ${summaryCards()}
+      ${state.comparisonError ? `<div class="electricity-history-message error">${safe(state.comparisonError)}</div>` : ''}
+      ${statisticsPanel()}
       <section class="electricity-history-card">
-        <div class="card-head"><div><h2>Electricity History</h2><small>Persistent backend history with real timestamp coverage</small></div><div><button class="btn ghost" data-electricity-export="csv" ${state.historyLoading || state.exportLoading || !state.history ? 'disabled' : ''}>${state.exportLoading ? 'Exporting…' : 'Export CSV'}</button><button class="btn ghost" data-electricity-export="png" ${state.historyLoading || !state.history ? 'disabled' : ''}>PNG</button></div></div>
-        <div class="electricity-range-buttons">${rangeButtons.map(([key, label]) => `<button class="btn ghost ${state.range === key ? 'active' : ''}" data-electricity-range="${key}">${label}</button>`).join('')}</div>
-        <label class="electricity-bucket-control">Bucket<select data-electricity-bucket>${bucketChoices.map(([value,label])=>`<option value="${value}" ${state.bucketMode===value?'selected':''}>${label}</option>`).join('')}</select><small>Actual: ${safe(state.history?.bucket || 'Not available')}</small></label>
-        <form class="electricity-custom-range" data-electricity-custom>
+        <div class="electricity-section-head"><div><h2>Consumption History</h2><small>Energy bars with a gap-aware three-interval moving average</small></div></div>
+        <div class="electricity-history-toolbar" aria-label="Electricity history controls">
+          <div class="electricity-toolbar-group"><span>Range</span><div class="electricity-range-buttons">${rangeButtons.map(([key, label]) => `<button class="btn ghost ${state.range === key ? 'active' : ''}" data-electricity-range="${key}">${label}</button>`).join('')}</div></div>
+          <label class="electricity-toolbar-group electricity-bucket-control"><span>Resolution</span><select data-electricity-bucket>${bucketChoices.map(([value,label])=>`<option value="${value}" ${state.bucketMode===value?'selected':''}>${label}</option>`).join('')}</select></label>
+          <div class="electricity-toolbar-group electricity-history-available"><span>History</span><strong>${state.history?.available_range?.start ? safe(localDate(state.history.available_range.start)) : 'Unavailable'} <i>→</i> ${state.history?.available_range?.end ? (thailandDate(new Date(epoch(state.history.available_range.end) * 1000)) === thailandDate() ? 'Today' : safe(localDate(state.history.available_range.end))) : 'Unavailable'}</strong></div>
+          <div class="electricity-range-buttons electricity-export-actions"><button class="btn ghost electricity-export-button" data-electricity-export="csv" ${state.historyLoading || state.exportLoading || !state.history ? 'disabled' : ''}>${state.exportLoading ? 'Exporting…' : 'Export CSV'}</button><button class="btn ghost electricity-export-button" data-electricity-export="png" ${state.historyLoading || !state.history ? 'disabled' : ''}>PNG</button></div>
+        </div>
+        <form class="electricity-custom-range${state.customVisible || state.range === 'custom' ? ' is-visible' : ''}" data-electricity-custom>
           <label>Start date<input type="date" name="start" value="${safe(state.customStart)}" max="${safe(thailandDate())}"></label>
           <label>End date<input type="date" name="end" value="${safe(state.customEnd)}" max="${safe(thailandDate())}"></label>
           <button class="btn ghost" type="submit">Apply</button>
           <button class="btn ghost" type="button" data-electricity-custom-reset>Reset</button>
         </form>
-        ${comparisonPanel()}
         ${historyRequestState()}
-        ${historyRangeSummary()}
-        <div class="electricity-history-summary">${metric('Total Consumption', historySummary.total_energy_kwh, 'kWh', true)}${metric('Estimated Cost', historySummary.total_cost_thb, 'THB', true)}${metric('Peak Interval', historySummary.peak_interval_kwh, 'kWh', true)}${metric('Average Interval', historySummary.average_interval_kwh, 'kWh', true)}${metric('Minimum Interval', historySummary.minimum_interval_kwh, 'kWh', true)}${metric('Peak Usage Time', historySummary.peak_timestamp ? localTime(historySummary.peak_timestamp) : null, '', true)}${metric('Aggregation', state.history?.bucket || null, '', true)}</div>
-        <div class="electricity-chart-tools"><div><strong>Interval consumption</strong><small> Missing intervals are not connected.</small></div><div class="electricity-zoom-tools"><button class="btn ghost" data-electricity-view="zoom-in">Zoom +</button><button class="btn ghost" data-electricity-view="zoom-out">Zoom −</button><button class="btn ghost" data-electricity-view="pan-left">Pan ←</button><button class="btn ghost" data-electricity-view="pan-right">Pan →</button><button class="btn ghost" data-electricity-view="reset">Reset</button></div></div>
+        <div class="electricity-chart-meta"><div><strong>${safe(Number(historySummary.total_energy_kwh || 0).toFixed(3))} kWh</strong><span>${number(historySummary.total_cost_thb) === null ? 'Cost unavailable' : safe(money(historySummary.total_cost_thb))}</span></div><div><span>Selected range</span><strong>${state.history ? `${safe(localDate(state.history.start))} – ${safe(localDate(state.history.end))}` : 'Not available'}</strong></div><div><span>Actual resolution</span><strong>${safe(bucketLabel(state.history?.bucket))}</strong></div></div>
+        <div class="electricity-chart-tools"><div><strong>Interval consumption</strong><small>Missing intervals remain gaps.</small></div><div class="electricity-zoom-tools"><button class="btn ghost" data-electricity-view="zoom-in">Zoom +</button><button class="btn ghost" data-electricity-view="zoom-out">Zoom −</button><button class="btn ghost" data-electricity-view="pan-left">Pan ←</button><button class="btn ghost" data-electricity-view="pan-right">Pan →</button><button class="btn ghost" data-electricity-view="reset">Reset</button></div></div>
         ${renderChart()}
       </section>
+      <details class="electricity-meter-details"><summary>Live Meter Details</summary>
+        <div class="electricity-badges">${badge('Meter', healthName(payload.health, payload), payload.health === 'offline' ? 'bad' : payload.health === 'healthy' ? 'ok' : 'warn')}${badge('Source', sourceName(source))}${mapping}</div>
+        <div class="electricity-primary-grid">${metric('Voltage', payload.voltage, 'V')}${metric('Current', payload.current, 'A')}${metric('Active Power', payload.power, 'W')}${metric('Total Energy', payload.total_energy, 'kWh')}</div>
+        <div class="electricity-secondary-grid">${metric('Status / Health', healthName(payload.health, payload), '', true)}${metric('Last Update', localTime(payload.last_update || diagnostics.last_success), '', true)}${metric('Runtime IP', runtimeIp, '', true)}${metric('Poll Latency', pollLatency, pollLatency == null ? '' : 'ms', true)}${metric('Data Source', sourceName(source), '', true)}</div>
+      </details>
       <section class="electricity-cost-card">
         <div class="card-head"><div><h2>Electricity Cost</h2><small>Billing cycle cuts on day ${safe(billing.billing_cycle_day || 2)} of each month</small></div></div>
         ${billingCoverageWarning(billing)}
@@ -554,14 +708,23 @@
 
   function bind() {
     document.querySelectorAll('[data-electricity-range]').forEach(button => button.onclick = async () => {
-      await loadHistory(button.dataset.electricityRange);
-    });
-    document.querySelectorAll('[data-electricity-comparison]').forEach(button => button.onclick = async () => {
-      await loadComparison(button.dataset.electricityComparison);
+      const range = button.dataset.electricityRange;
+      if (range === 'custom') {
+        state.customVisible = true;
+        state.range = 'custom';
+        render();
+        return;
+      }
+      state.customVisible = false;
+      await loadHistory(range);
     });
     const bucket = document.querySelector('[data-electricity-bucket]');
     if (bucket) bucket.onchange = async () => {
       state.bucketMode = bucket.value;
+      if (state.range === 'custom' && (!state.customStart || !state.customEnd)) {
+        render();
+        return;
+      }
       await loadHistory(state.range, state.customStart, state.customEnd);
     };
     document.querySelector('[data-electricity-custom]')?.addEventListener('submit', async event => {
@@ -569,11 +732,13 @@
       const form = new FormData(event.currentTarget);
       state.customStart = String(form.get('start') || '');
       state.customEnd = String(form.get('end') || '');
+      state.customVisible = true;
       await loadHistory('custom', state.customStart, state.customEnd);
     });
     document.querySelector('[data-electricity-custom-reset]')?.addEventListener('click', () => {
       state.customStart = '';
       state.customEnd = '';
+      state.customVisible = false;
       loadHistory('24h');
     });
     document.querySelectorAll('[data-electricity-view]').forEach(button => button.onclick = () => {
@@ -611,5 +776,6 @@
     .then(() => { if (window.currentPage() === 'electricity') render(); });
   window.DashboardElectricityHistory = {
     state, historyRequest, csvExport, axisLabelStride, splitSegments,
+    movingAverage, analyticsStatistics, tooltipContent, bucketLabel,
   };
 })();
