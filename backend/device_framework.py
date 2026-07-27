@@ -75,7 +75,7 @@ class UnifiedDevice:
     name: str
     room: Optional[str] = None
     online: Optional[bool] = None
-    health: str = "unknown"
+    health: Optional[str] = None
     last_update_ts: Optional[int] = None
     latency_ms: Optional[float] = None
     status: Dict[str, Any] = field(default_factory=dict)

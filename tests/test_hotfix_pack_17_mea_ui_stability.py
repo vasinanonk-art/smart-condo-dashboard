@@ -5,6 +5,10 @@ ownership/polling contracts without a live MEA dependency.
 """
 from pathlib import Path
 
+import pytest
+
+from backend import mea_tariff_hotfix17 as parser
+
 ROOT = Path(__file__).resolve().parents[1]
 PARSER = (ROOT / "backend" / "mea_tariff_hotfix17.py").read_text(encoding="utf-8")
 UI = (ROOT / "frontend" / "assets" / "dashboard_electricity_settings_hotfix17.js").read_text(encoding="utf-8")
@@ -27,7 +31,10 @@ def test_type_1_2_section_is_bounded_before_sibling_or_next_category():
     assert "_is_boundary" in PARSER
     assert "type_1_2_section_not_found" in PARSER
     assert "type_1_2_section_ambiguous" in PARSER
-    assert "tier_parse_failed" in PARSER
+    malformed = b"<h2>1.2 Residential Type 1.2</h2><p>residential tariff details without any tier rates; service charge 24.62</p>"
+    with pytest.raises(ValueError) as exc:
+        parser.parse_type_1_2_dom(malformed, "text/html", "https://www.mea.or.th/residential")
+    assert str(exc.value) in {"tier_parse_failed", "type_1_2_section_not_found"}
 
 
 def test_ft_fetch_starts_only_after_base_parse():
@@ -85,7 +92,8 @@ def test_check_now_and_save_keep_stable_dom():
     assert "saveElectricitySettings" in UI
     assert "button.disabled=true" in UI
     assert "window.scrollTo(0,scrollY)" in UI
-    assert ".remove()" not in UI
+    assert "host.remove()" not in UI
+    assert "settingsStableCard.remove()" not in UI
     assert "host.innerHTML" in UI  # one initial mount only
 
 

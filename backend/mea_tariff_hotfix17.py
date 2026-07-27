@@ -141,7 +141,6 @@ def _is_type_1_2(text: str) -> bool:
         or "บ้านอยู่อาศัยประเภท 1.2" in value
         or "บ้านอยู่อาศัย ประเภท 1.2" in value
         or "residential type 1.2" in value
-        or ("อัตราปกติ" in value and "เกิน 150 หน่วย" in value)
     )
 
 
