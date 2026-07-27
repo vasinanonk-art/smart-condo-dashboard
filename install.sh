@@ -51,10 +51,22 @@ LOCAL_CONFIG_MANIFEST="$LOCAL_CONFIG_TMP/manifest"
 LOCAL_CONFIG_BACKUP="$LOCAL_CONFIG_TMP/files"
 KEEP_LOCAL_CONFIG_BACKUP=0
 DEPLOY_STARTED=0
+DEPLOY_COMPLETE=0
 CONFIG_RESTORE_COMPLETE=0
+RUNTIME_ROLLBACK_TMP=
 deployment_cleanup() {
     cleanup_status=$1
     trap - EXIT HUP INT TERM
+    if [ "$DEPLOY_STARTED" -eq 1 ] && [ "$DEPLOY_COMPLETE" -eq 0 ] &&
+       [ -n "$RUNTIME_ROLLBACK_TMP" ]; then
+        echo "Deployment exited early; restoring the previous managed runtime." >&2
+        if ! restore_managed_runtime \
+            "$APP_RUN" "$RUNTIME_ROLLBACK_TMP/files" "$RUNTIME_ROLLBACK_TMP/manifest"; then
+            KEEP_LOCAL_CONFIG_BACKUP=1
+            echo "ERROR: managed runtime rollback failed; backup retained at: $RUNTIME_ROLLBACK_TMP" >&2
+            RUNTIME_ROLLBACK_TMP=
+        fi
+    fi
     if [ "$DEPLOY_STARTED" -eq 1 ] && [ "$CONFIG_RESTORE_COMPLETE" -eq 0 ]; then
         echo "Deployment exited early; restoring preserved local configuration." >&2
         if ! restore_local_configs "$APP_RUN" "$LOCAL_CONFIG_BACKUP" "$LOCAL_CONFIG_MANIFEST"; then
@@ -67,6 +79,7 @@ deployment_cleanup() {
         echo "Preserved configuration backup retained at: $LOCAL_CONFIG_TMP" >&2
     fi
     rm -rf "$SOURCE_SNAPSHOT_TMP"
+    [ -z "$RUNTIME_ROLLBACK_TMP" ] || rm -rf "$RUNTIME_ROLLBACK_TMP"
     flock -u 9
     exit "$cleanup_status"
 }
@@ -100,18 +113,22 @@ fi
 echo "Replacing managed runtime directories. Preserved config/*.local.json files will be restored."
 # This deployment intentionally does not use rsync --delete. Only the managed code
 # directories below are replaced; the persistent configuration root is never touched.
+RUNTIME_ROLLBACK_TMP=$(mktemp -d "${TMPDIR:-/tmp}/smart-condo-dashboard-runtime-rollback.XXXXXX")
+preserve_managed_runtime "$APP_RUN" "$RUNTIME_ROLLBACK_TMP/files" "$RUNTIME_ROLLBACK_TMP/manifest"
 DEPLOY_STARTED=1
 [ ! -d "$APP_RUN/backend" ] || rm -r "$APP_RUN/backend"
 [ ! -d "$APP_RUN/frontend" ] || rm -r "$APP_RUN/frontend"
 [ ! -d "$APP_RUN/config" ] || rm -r "$APP_RUN/config"
 [ ! -d "$APP_RUN/scripts" ] || rm -r "$APP_RUN/scripts"
 [ ! -f "$APP_RUN/sonoff_client.py" ] || rm "$APP_RUN/sonoff_client.py"
+[ ! -f "$APP_RUN/VERSION" ] || rm "$APP_RUN/VERSION"
 
 cp -R "$DEPLOY_SRC/backend" "$APP_RUN/backend"
 cp -R "$DEPLOY_SRC/frontend" "$APP_RUN/frontend"
 cp -R "$DEPLOY_SRC/config" "$APP_RUN/config"
 cp -R "$DEPLOY_SRC/scripts" "$APP_RUN/scripts"
 cp "$DEPLOY_SRC/sonoff_client.py" "$APP_RUN/sonoff_client.py"
+cp "$DEPLOY_SRC/VERSION" "$APP_RUN/VERSION"
 
 # Explicitly install the production dashboard shell and authoritative frontend assets.
 install -d "$APP_RUN/frontend/assets"
@@ -153,6 +170,7 @@ fi
 if [ "$RUNTIME_ONLY" -eq 1 ]; then
     echo "Runtime-only deployment: virtual environment and dependencies were not modified."
     systemctl restart smart-condo-dashboard
+    DEPLOY_COMPLETE=1
     systemctl status smart-condo-dashboard --no-pager -l || true
     exit 0
 fi
@@ -181,4 +199,5 @@ install -m 0644 "$DEPLOY_SRC/systemd/smart-condo-dashboard.service" /etc/systemd
 systemctl daemon-reload
 systemctl enable smart-condo-dashboard
 systemctl restart smart-condo-dashboard
+DEPLOY_COMPLETE=1
 systemctl status smart-condo-dashboard --no-pager -l || true

@@ -139,6 +139,7 @@ def test_runtime_only_deployment_updates_managed_tree_without_touching_venv(tmp_
         (source / "frontend" / "assets").mkdir(exist_ok=True)
         (source / "frontend" / "assets" / asset).write_text("", encoding="utf-8")
     (source / "sonoff_client.py").write_text("# mirror", encoding="utf-8")
+    (source / "VERSION").write_text("1.0.0\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q"], cwd=source, check=True)
     subprocess.run(["git", "config", "user.email", "deployment-test@example.invalid"], cwd=source, check=True)
     subprocess.run(["git", "config", "user.name", "Deployment Test"], cwd=source, check=True)
@@ -184,6 +185,21 @@ def test_runtime_only_deployment_updates_managed_tree_without_touching_venv(tmp_
     assert "virtual environment and dependencies were not modified" in result.stdout
     assert "isolated snapshot of Git HEAD" in result.stdout
     assert "restart smart-condo-dashboard" in systemctl_log.read_text()
+
+    second = subprocess.run(
+        ["sh", str(INSTALL), "--runtime-only"],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert second.returncode == 0, second.stderr
+    assert subprocess.check_output(
+        ["git", "status", "--short"], cwd=source, text=True,
+    ) == source_status_before
+    assert venv_marker.read_text() == "unchanged"
+    assert local_config.read_text() == '{"preserve": true}'
 
 
 def test_deploy_guard_fails_when_preserved_config_is_missing(tmp_path):
@@ -358,6 +374,44 @@ def test_checksum_manifest_handles_multiple_files_and_spaces(tmp_path):
     )
     assert restore.returncode == 0, restore.stderr
     assert {name: (config / name).read_bytes() for name in expected} == expected
+
+
+def test_interrupted_managed_runtime_can_be_restored_without_touching_venv(tmp_path):
+    run_root = tmp_path / "run"
+    backup = tmp_path / "rollback" / "files"
+    manifest = tmp_path / "rollback" / "manifest"
+    for directory in ("backend", "frontend", "config"):
+        (run_root / directory).mkdir(parents=True, exist_ok=True)
+        (run_root / directory / "old.txt").write_text(directory)
+    (run_root / "venv").mkdir()
+    (run_root / "venv" / "marker").write_text("preserved")
+    (run_root / "sonoff_client.py").write_text("old mirror")
+
+    preserve = _run_guard(
+        'preserve_managed_runtime "$2" "$3" "$4"',
+        run_root,
+        backup,
+        manifest,
+    )
+    assert preserve.returncode == 0, preserve.stderr
+
+    shutil.rmtree(run_root / "backend")
+    (run_root / "backend").mkdir()
+    (run_root / "backend" / "partial.txt").write_text("partial deploy")
+    (run_root / "scripts").mkdir()
+    (run_root / "scripts" / "new.txt").write_text("must disappear")
+
+    restore = _run_guard(
+        'restore_managed_runtime "$2" "$3" "$4"',
+        run_root,
+        backup,
+        manifest,
+    )
+    assert restore.returncode == 0, restore.stderr
+    assert (run_root / "backend" / "old.txt").read_text() == "backend"
+    assert not (run_root / "backend" / "partial.txt").exists()
+    assert not (run_root / "scripts").exists()
+    assert (run_root / "venv" / "marker").read_text() == "preserved"
 
 
 def test_checksum_verification_rejects_altered_config(tmp_path):

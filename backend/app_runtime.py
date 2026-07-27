@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import app as app_module
+from backend.version import __version__
 from backend.sensor_history_store import (
     HISTORY_RETENTION_SEC,
     append_row,
@@ -21,7 +22,7 @@ from backend.sensor_history_store import (
 )
 
 app = app_module.app
-APP_VERSION = "3.1.0"
+APP_VERSION = __version__
 FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
 FRONTEND_ASSETS_DIR = os.path.join(FRONTEND_DIR, "assets")
 DASHBOARD_V3_ASSETS = (

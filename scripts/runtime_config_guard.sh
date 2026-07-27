@@ -74,3 +74,41 @@ runtime_config_present() {
     guard_legacy_path=$2
     [ -f "$guard_persistent_path" ] || [ -f "$guard_legacy_path" ]
 }
+
+preserve_managed_runtime() {
+    guard_run_root=$1
+    guard_backup_root=$2
+    guard_manifest=$3
+    install -d "$(dirname "$guard_manifest")"
+    : > "$guard_manifest"
+    install -d "$guard_backup_root"
+    for guard_name in backend frontend config scripts sonoff_client.py VERSION; do
+        guard_path="$guard_run_root/$guard_name"
+        [ -e "$guard_path" ] || continue
+        cp -Rp "$guard_path" "$guard_backup_root/$guard_name"
+        printf '%s\n' "$guard_name" >> "$guard_manifest"
+    done
+}
+
+restore_managed_runtime() {
+    guard_run_root=$1
+    guard_backup_root=$2
+    guard_manifest=$3
+    for guard_name in backend frontend config scripts sonoff_client.py VERSION; do
+        guard_path="$guard_run_root/$guard_name"
+        [ ! -d "$guard_path" ] || rm -r "$guard_path"
+        [ ! -f "$guard_path" ] || rm "$guard_path"
+    done
+    while IFS= read -r guard_name; do
+        [ -n "$guard_name" ] || continue
+        case "$guard_name" in
+            backend|frontend|config|scripts|sonoff_client.py|VERSION) ;;
+            *)
+                printf 'ERROR: invalid managed runtime backup entry: %s\n' "$guard_name" >&2
+                return 1
+                ;;
+        esac
+        guard_path="$guard_run_root/$guard_name"
+        cp -Rp "$guard_backup_root/$guard_name" "$guard_path"
+    done < "$guard_manifest"
+}
