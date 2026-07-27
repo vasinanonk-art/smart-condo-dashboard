@@ -67,7 +67,8 @@ class ElectricityHistoryTests(unittest.TestCase):
             "service_charge": 10,
             "vat_percent": 7,
         }
-        with patch.dict(os.environ, {"ELECTRICITY_TARIFF_CONFIG_JSON": json.dumps(config)}, clear=False):
+        normalized = {**config, "minimum_charge": 0}
+        with patch.object(history, "_tariff_config", return_value=(normalized, None)):
             bill = history.calculate_bill(20)
         self.assertTrue(bill["configured"])
         self.assertEqual(bill["base_energy_charge"], 50.0)
@@ -76,9 +77,9 @@ class ElectricityHistoryTests(unittest.TestCase):
         self.assertEqual(bill["total"], 74.9)
 
     def test_missing_or_invalid_tariff_is_safe(self):
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.object(history, "_tariff_config", return_value=(None, "tariff_not_configured")):
             self.assertFalse(history.calculate_bill(10)["configured"])
-        with patch.dict(os.environ, {"ELECTRICITY_TARIFF_CONFIG_JSON": "{}"}, clear=False):
+        with patch.object(history, "_tariff_config", return_value=(None, "invalid_tariff_config")):
             self.assertFalse(history.calculate_bill(10)["configured"])
 
 
@@ -108,7 +109,7 @@ class Epic04FrontendTests(unittest.TestCase):
 
     def test_electricity_frontend_has_persistent_ranges_and_exports(self):
         js = self.read("frontend/assets/dashboard_electricity.js")
-        for value in ("Live", "24H", "7D", "30D", "This Month", "CSV", "PNG"):
+        for value in ("24H", "7D", "30D", "Start date", "End date", "Apply", "Reset", "CSV", "PNG"):
             self.assertIn(value, js)
         self.assertIn("/api/electricity/history", js)
         self.assertIn("/api/electricity/billing", js)

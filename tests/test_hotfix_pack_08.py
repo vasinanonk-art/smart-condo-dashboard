@@ -84,7 +84,7 @@ class HotfixPack08Tests(unittest.TestCase):
         self.assertIn("coverage_percent", result["summary"])
 
     def test_tariff_status_missing_and_valid(self):
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.object(history, "_tariff_config", return_value=(None, "tariff_not_configured")):
             status = coverage.get_tariff_status()
             self.assertFalse(status["configured"])
             self.assertFalse(status["valid"])
@@ -98,7 +98,8 @@ class HotfixPack08Tests(unittest.TestCase):
             "service_charge": 20,
             "vat_percent": 7,
         }
-        with patch.dict(os.environ, {"ELECTRICITY_TARIFF_CONFIG_JSON": json.dumps(config)}, clear=True):
+        normalized = {**config, "minimum_charge": 0}
+        with patch.object(history, "_tariff_config", return_value=(normalized, None)):
             status = coverage.get_tariff_status()
             self.assertTrue(status["configured"])
             self.assertTrue(status["valid"])
@@ -123,11 +124,10 @@ class HotfixPack08Tests(unittest.TestCase):
 
     def test_real_timestamp_axis_and_gap_breaks(self):
         js = self.read("frontend/assets/dashboard_electricity.js")
-        self.assertIn("xTs=ts=>", js)
+        self.assertIn("const xTs = ts =>", js)
         self.assertIn("splitSegments", js)
         self.assertIn("max_gap_sec", js)
-        self.assertIn("Partial history", js)
-        self.assertIn("Empty time is not interpolated", js)
+        self.assertIn("Missing intervals are not connected.", js)
 
 
 if __name__ == "__main__":

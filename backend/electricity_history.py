@@ -11,6 +11,7 @@ import io
 import json
 import math
 import os
+import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta
@@ -18,7 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import Query
+from fastapi import HTTPException, Query
 
 from backend import app as app_module
 
@@ -28,10 +29,89 @@ RETENTION_DAYS = max(1, int(os.getenv("ELECTRICITY_HISTORY_RETENTION_DAYS", "400
 DEFAULT_PATH = Path.home() / ".smart-condo-dashboard" / "electricity_history.jsonl"
 HISTORY_PATH = Path(os.getenv("ELECTRICITY_HISTORY_PATH", str(DEFAULT_PATH))).expanduser()
 MAX_INTEGRATION_GAP_SEC = max(60, int(os.getenv("ELECTRICITY_HISTORY_MAX_GAP_SEC", "900")))
+MAX_QUERY_DAYS = min(400, max(1, int(os.getenv("ELECTRICITY_HISTORY_MAX_QUERY_DAYS", "400"))))
 _lock = threading.RLock()
 _last_prune_day: Optional[str] = None
 
 SAFE_FIELDS = ("ts", "voltage", "current", "power", "total_energy", "source", "health")
+
+
+def _database_path() -> Path:
+    configured = os.getenv("ELECTRICITY_HISTORY_DB_PATH", "").strip()
+    return Path(configured).expanduser() if configured else HISTORY_PATH.with_suffix(".sqlite3")
+
+
+def _database() -> sqlite3.Connection:
+    path = _database_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path, timeout=5)
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS samples (
+            ts INTEGER PRIMARY KEY,
+            voltage REAL,
+            current REAL,
+            power REAL,
+            total_energy REAL,
+            source TEXT,
+            health TEXT
+        )
+        """
+    )
+    connection.execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    return connection
+
+
+def _insert_samples(connection: sqlite3.Connection, rows: Iterable[Mapping[str, Any]]) -> None:
+    connection.executemany(
+        """
+        INSERT INTO samples(ts, voltage, current, power, total_energy, source, health)
+        VALUES(?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(ts) DO UPDATE SET
+            voltage=excluded.voltage,
+            current=excluded.current,
+            power=excluded.power,
+            total_energy=excluded.total_energy,
+            source=excluded.source,
+            health=excluded.health
+        """,
+        (
+            (
+                int(row["ts"]),
+                _number(row.get("voltage")),
+                _number(row.get("current")),
+                _number(row.get("power")),
+                _number(row.get("total_energy")),
+                str(row.get("source") or "unknown")[:40],
+                str(row.get("health") or "unknown")[:20],
+            )
+            for row in rows
+        ),
+    )
+
+
+def _ensure_database_history(connection: sqlite3.Connection) -> None:
+    imported = connection.execute(
+        "SELECT value FROM metadata WHERE key='jsonl_import_complete'"
+    ).fetchone()
+    recorded_size = connection.execute(
+        "SELECT value FROM metadata WHERE key='jsonl_size'"
+    ).fetchone()
+    current_size = HISTORY_PATH.stat().st_size if HISTORY_PATH.exists() else 0
+    if imported and recorded_size and int(recorded_size[0]) == current_size:
+        return
+    connection.execute("DELETE FROM samples")
+    _insert_samples(connection, _iter_rows())
+    connection.execute(
+        "INSERT OR REPLACE INTO metadata(key, value) VALUES('jsonl_import_complete', ?)",
+        (str(int(time.time())),),
+    )
+    connection.execute(
+        "INSERT OR REPLACE INTO metadata(key, value) VALUES('jsonl_size', ?)",
+        (str(current_size),),
+    )
+    connection.commit()
 
 
 def _number(value: Any) -> Optional[float]:
@@ -98,6 +178,21 @@ def append_success(payload: Mapping[str, Any]) -> bool:
                 os.fsync(handle.fileno())
             except OSError:
                 pass
+        try:
+            with _database() as connection:
+                _insert_samples(connection, (sample,))
+                imported = connection.execute(
+                    "SELECT 1 FROM metadata WHERE key='jsonl_import_complete'"
+                ).fetchone()
+                if imported:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO metadata(key, value) VALUES('jsonl_size', ?)",
+                        (str(HISTORY_PATH.stat().st_size),),
+                    )
+        except (OSError, sqlite3.Error):
+            # JSONL remains the durable compatibility source. A later indexed
+            # query can rebuild the non-destructive SQLite sidecar.
+            pass
         _prune_if_due(sample["ts"])
     return True
 
@@ -140,6 +235,11 @@ def _prune_if_due(now_ts: int) -> None:
         return
     _last_prune_day = day
     cutoff = now_ts - RETENTION_DAYS * 86400
+    try:
+        with _database() as connection:
+            connection.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
+    except sqlite3.Error:
+        pass
     rows = [row for row in _iter_rows() if int(row["ts"]) >= cutoff]
     temporary = HISTORY_PATH.with_suffix(HISTORY_PATH.suffix + ".tmp")
     try:
@@ -368,8 +468,198 @@ def calculate_bill(usage_kwh: Optional[float], estimated: bool = True) -> Dict[s
     }
 
 
+def _api_datetime(value: str, field: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail=f"invalid_{field}") from None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=BANGKOK)
+    return parsed.astimezone(BANGKOK)
+
+
+def _bucket_start(timestamp: int, bucket: str) -> int:
+    value = datetime.fromtimestamp(timestamp, BANGKOK)
+    if bucket == "day":
+        value = value.replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        value = value.replace(minute=0, second=0, microsecond=0)
+    return int(value.timestamp())
+
+
+def _indexed_aggregation(start_ts: int, end_ts: int, bucket: str) -> tuple[list[Dict[str, Any]], int]:
+    bucket_seconds = 3600 if bucket == "hour" else 86400
+    bangkok_offset = 7 * 3600
+    with _lock:
+        with _database() as connection:
+            _ensure_database_history(connection)
+            sample_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM samples WHERE ts >= ? AND ts <= ?",
+                    (start_ts, end_ts),
+                ).fetchone()[0]
+            )
+            result = connection.execute(
+                """
+                WITH ordered AS (
+                    SELECT
+                        ts,
+                        total_energy,
+                        power,
+                        LAG(ts) OVER (ORDER BY ts) AS previous_ts,
+                        LAG(total_energy) OVER (ORDER BY ts) AS previous_total,
+                        LAG(power) OVER (ORDER BY ts) AS previous_power
+                    FROM samples
+                    WHERE ts >= ? AND ts <= ?
+                ),
+                intervals AS (
+                    SELECT
+                        CAST(((ts - 1 + ?) / ?) AS INTEGER) * ? - ? AS bucket_ts,
+                        CASE
+                            WHEN ts - previous_ts <= 0 OR ts - previous_ts > ? THEN NULL
+                            WHEN previous_total IS NOT NULL
+                                 AND total_energy IS NOT NULL
+                                 AND total_energy - previous_total BETWEEN 0 AND 1000
+                                THEN total_energy - previous_total
+                            WHEN previous_power IS NOT NULL AND power IS NOT NULL
+                                THEN ((MAX(0.0, previous_power) + MAX(0.0, power)) / 2.0)
+                                     * (ts - previous_ts) / 3600000.0
+                            ELSE NULL
+                        END AS energy_kwh
+                    FROM ordered
+                )
+                SELECT bucket_ts, SUM(energy_kwh), COUNT(energy_kwh)
+                FROM intervals
+                WHERE energy_kwh IS NOT NULL
+                GROUP BY bucket_ts
+                ORDER BY bucket_ts
+                """,
+                (
+                    start_ts,
+                    end_ts,
+                    bangkok_offset,
+                    bucket_seconds,
+                    bucket_seconds,
+                    bangkok_offset,
+                    MAX_INTEGRATION_GAP_SEC,
+                ),
+            ).fetchall()
+    points = [
+        {
+            "timestamp": datetime.fromtimestamp(int(row[0]), BANGKOK).isoformat(),
+            "energy_kwh": round(max(0.0, float(row[1])), 6),
+            "cost_thb": None,
+        }
+        for row in result
+        if int(row[2]) > 0
+    ]
+    return points, sample_count
+
+
+def _apply_point_costs(points: list[Dict[str, Any]]) -> None:
+    total_energy = sum(point["energy_kwh"] for point in points)
+    bill = calculate_bill(total_energy)
+    total_cost = _number(bill.get("total")) if bill.get("configured") else None
+    if total_cost is not None and total_energy > 0:
+        for point in points:
+            point["cost_thb"] = round(total_cost * point["energy_kwh"] / total_energy, 4)
+
+
+def _aggregate_history(rows: list[Mapping[str, Any]], bucket: str) -> list[Dict[str, Any]]:
+    buckets: Dict[int, Dict[str, Any]] = {}
+    for previous, current in zip(rows, rows[1:]):
+        previous_ts = int(previous["ts"])
+        current_ts = int(current["ts"])
+        elapsed = current_ts - previous_ts
+        if elapsed <= 0 or elapsed > MAX_INTEGRATION_GAP_SEC:
+            continue
+        consumption: Optional[float] = None
+        previous_total = _number(previous.get("total_energy"))
+        current_total = _number(current.get("total_energy"))
+        if previous_total is not None and current_total is not None:
+            delta = current_total - previous_total
+            # A negative delta is a meter reset, not negative consumption.
+            if 0 <= delta <= 1000:
+                consumption = delta
+        if consumption is None:
+            previous_power = _number(previous.get("power"))
+            current_power = _number(current.get("power"))
+            if previous_power is not None and current_power is not None:
+                consumption = (
+                    (max(0.0, previous_power) + max(0.0, current_power))
+                    / 2.0
+                    * elapsed
+                    / 3_600_000.0
+                )
+        if consumption is None:
+            continue
+        # Attribute an interval ending exactly on a boundary to the interval
+        # that just completed, not to the next empty bucket.
+        key = _bucket_start(current_ts - 1, bucket)
+        entry = buckets.setdefault(key, {"energy_kwh": 0.0, "interval_count": 0})
+        entry["energy_kwh"] += max(0.0, consumption)
+        entry["interval_count"] += 1
+    points = [
+        {
+            "timestamp": datetime.fromtimestamp(timestamp, BANGKOK).isoformat(),
+            "energy_kwh": round(values["energy_kwh"], 6),
+            "cost_thb": None,
+        }
+        for timestamp, values in sorted(buckets.items())
+        if values["interval_count"]
+    ]
+    _apply_point_costs(points)
+    return points
+
+
+def history_series_payload(start_value: str, end_value: str, bucket: str) -> Dict[str, Any]:
+    if bucket not in {"hour", "day"}:
+        raise HTTPException(status_code=422, detail="invalid_bucket")
+    start = _api_datetime(start_value, "start")
+    end = _api_datetime(end_value, "end")
+    now = datetime.now(BANGKOK)
+    if start > end:
+        raise HTTPException(status_code=422, detail="start_after_end")
+    if start > now or end > now + timedelta(seconds=60):
+        raise HTTPException(status_code=422, detail="future_range_not_supported")
+    if end - start > timedelta(days=min(MAX_QUERY_DAYS, RETENTION_DAYS)):
+        raise HTTPException(status_code=422, detail="range_too_large")
+    start_ts, end_ts = int(start.timestamp()), int(end.timestamp())
+    points, sample_count = _indexed_aggregation(start_ts, end_ts, bucket)
+    total_energy = round(sum(point["energy_kwh"] for point in points), 6)
+    _apply_point_costs(points)
+    point_costs = [point["cost_thb"] for point in points]
+    total_cost = round(sum(point_costs), 2) if points and all(value is not None for value in point_costs) else None
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "timezone": "Asia/Bangkok",
+        "bucket": bucket,
+        "energy_semantics": "interval_consumption",
+        "points": points,
+        "summary": {
+            "point_count": len(points),
+            "sample_count": sample_count,
+            "total_energy_kwh": total_energy,
+            "total_cost_thb": total_cost,
+        },
+        "max_gap_sec": 5400 if bucket == "hour" else 129600,
+    }
+
+
 @app.get("/api/electricity/history")
-def get_history(range: str = Query("24h"), from_ts: Optional[int] = Query(None, alias="from"), to_ts: Optional[int] = Query(None, alias="to")) -> Dict[str, Any]:
+def get_history(
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+    bucket: str = Query("hour"),
+    range: str = Query("24h"),
+    from_ts: Optional[int] = Query(None, alias="from"),
+    to_ts: Optional[int] = Query(None, alias="to"),
+) -> Dict[str, Any]:
+    if start is not None or end is not None:
+        if not start or not end:
+            raise HTTPException(status_code=422, detail="start_and_end_required")
+        return history_series_payload(start, end, bucket)
     selected = range if range in {"24h", "7d", "30d", "month", "year"} else "24h"
     return history_payload(selected, from_ts, to_ts)
 
