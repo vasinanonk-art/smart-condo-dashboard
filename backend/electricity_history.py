@@ -20,6 +20,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from backend import app as app_module
 
@@ -544,15 +545,30 @@ def _indexed_aggregation(start_ts: int, end_ts: int, bucket: str) -> tuple[list[
                     MAX_INTEGRATION_GAP_SEC,
                 ),
             ).fetchall()
-    points = [
-        {
-            "timestamp": datetime.fromtimestamp(int(row[0]), BANGKOK).isoformat(),
-            "energy_kwh": round(max(0.0, float(row[1])), 6),
-            "cost_thb": None,
-        }
-        for row in result
-        if int(row[2]) > 0
-    ]
+    interval = timedelta(hours=1) if bucket == "hour" else timedelta(days=1)
+    requested_start = datetime.fromtimestamp(start_ts, BANGKOK)
+    requested_end = datetime.fromtimestamp(end_ts, BANGKOK)
+    points = []
+    for row in result:
+        if int(row[2]) <= 0:
+            continue
+        interval_start = datetime.fromtimestamp(int(row[0]), BANGKOK)
+        reported_start = max(interval_start, requested_start)
+        reported_end = min(interval_start + interval, requested_end)
+        points.append(
+            {
+                "timestamp": interval_start.isoformat(),
+                "interval_start": reported_start.isoformat(),
+                "interval_end": reported_end.isoformat(),
+                "energy_kwh": round(max(0.0, float(row[1])), 6),
+                "cost_thb": None,
+                "data_quality": (
+                    "valid"
+                    if reported_start == interval_start and reported_end == interval_start + interval
+                    else "partial"
+                ),
+            }
+        )
     return points, sample_count
 
 
@@ -599,17 +615,64 @@ def _aggregate_history(rows: list[Mapping[str, Any]], bucket: str) -> list[Dict[
         entry = buckets.setdefault(key, {"energy_kwh": 0.0, "interval_count": 0})
         entry["energy_kwh"] += max(0.0, consumption)
         entry["interval_count"] += 1
-    points = [
-        {
-            "timestamp": datetime.fromtimestamp(timestamp, BANGKOK).isoformat(),
-            "energy_kwh": round(values["energy_kwh"], 6),
-            "cost_thb": None,
-        }
-        for timestamp, values in sorted(buckets.items())
-        if values["interval_count"]
-    ]
+    interval = timedelta(hours=1) if bucket == "hour" else timedelta(days=1)
+    points = []
+    for timestamp, values in sorted(buckets.items()):
+        if not values["interval_count"]:
+            continue
+        interval_start = datetime.fromtimestamp(timestamp, BANGKOK)
+        points.append(
+            {
+                "timestamp": interval_start.isoformat(),
+                "interval_start": interval_start.isoformat(),
+                "interval_end": (interval_start + interval).isoformat(),
+                "energy_kwh": round(values["energy_kwh"], 6),
+                "cost_thb": None,
+                "data_quality": "valid",
+            }
+        )
     _apply_point_costs(points)
     return points
+
+
+def _available_history_range() -> Dict[str, Optional[str]]:
+    with _lock:
+        with _database() as connection:
+            _ensure_database_history(connection)
+            first_ts, last_ts = connection.execute(
+                "SELECT MIN(ts), MAX(ts) FROM samples"
+            ).fetchone()
+    return {
+        "start": datetime.fromtimestamp(int(first_ts), BANGKOK).isoformat() if first_ts is not None else None,
+        "end": datetime.fromtimestamp(int(last_ts), BANGKOK).isoformat() if last_ts is not None else None,
+    }
+
+
+def _series_summary(points: list[Mapping[str, Any]], sample_count: int) -> Dict[str, Any]:
+    valid = [
+        (point, _number(point.get("energy_kwh")))
+        for point in points
+        if _number(point.get("energy_kwh")) is not None
+    ]
+    total_energy = round(sum(value for _, value in valid), 6)
+    point_costs = [_number(point.get("cost_thb")) for point, _ in valid]
+    total_cost = (
+        round(sum(value for value in point_costs if value is not None), 2)
+        if valid and all(value is not None for value in point_costs)
+        else None
+    )
+    peak = max(valid, key=lambda item: item[1]) if valid else None
+    values = [value for _, value in valid]
+    return {
+        "point_count": len(points),
+        "sample_count": sample_count,
+        "total_energy_kwh": total_energy,
+        "total_cost_thb": total_cost,
+        "peak_interval_kwh": round(peak[1], 6) if peak else None,
+        "average_interval_kwh": round(sum(values) / len(values), 6) if values else None,
+        "minimum_interval_kwh": round(min(values), 6) if values else None,
+        "peak_timestamp": peak[0].get("timestamp") if peak else None,
+    }
 
 
 def history_series_payload(start_value: str, end_value: str, bucket: str) -> Dict[str, Any]:
@@ -626,10 +689,7 @@ def history_series_payload(start_value: str, end_value: str, bucket: str) -> Dic
         raise HTTPException(status_code=422, detail="range_too_large")
     start_ts, end_ts = int(start.timestamp()), int(end.timestamp())
     points, sample_count = _indexed_aggregation(start_ts, end_ts, bucket)
-    total_energy = round(sum(point["energy_kwh"] for point in points), 6)
     _apply_point_costs(points)
-    point_costs = [point["cost_thb"] for point in points]
-    total_cost = round(sum(point_costs), 2) if points and all(value is not None for value in point_costs) else None
     return {
         "start": start.isoformat(),
         "end": end.isoformat(),
@@ -637,14 +697,114 @@ def history_series_payload(start_value: str, end_value: str, bucket: str) -> Dic
         "bucket": bucket,
         "energy_semantics": "interval_consumption",
         "points": points,
-        "summary": {
-            "point_count": len(points),
-            "sample_count": sample_count,
-            "total_energy_kwh": total_energy,
-            "total_cost_thb": total_cost,
-        },
+        "summary": _series_summary(points, sample_count),
+        "available_range": _available_history_range(),
         "max_gap_sec": 5400 if bucket == "hour" else 129600,
     }
+
+
+def _comparison_bounds(name: str, now: datetime) -> tuple[datetime, datetime, datetime, datetime, str]:
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if name == "today":
+        elapsed = now - today
+        return today, now, today - timedelta(days=1), today - timedelta(days=1) + elapsed, "hour"
+    if name == "yesterday":
+        return (
+            today - timedelta(days=1),
+            today,
+            today - timedelta(days=2),
+            today - timedelta(days=1),
+            "hour",
+        )
+    if name == "7d":
+        return now - timedelta(days=7), now, now - timedelta(days=14), now - timedelta(days=7), "day"
+    raise HTTPException(status_code=422, detail="invalid_comparison")
+
+
+def _comparison_period(start: datetime, end: datetime, bucket: str) -> Dict[str, Any]:
+    points, sample_count = _indexed_aggregation(int(start.timestamp()), int(end.timestamp()), bucket)
+    _apply_point_costs(points)
+    summary = _series_summary(points, sample_count)
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "total_energy_kwh": summary["total_energy_kwh"],
+        "total_cost_thb": summary["total_cost_thb"],
+        "point_count": summary["point_count"],
+        "sample_count": summary["sample_count"],
+    }
+
+
+def comparison_payload(name: str, now_value: Optional[datetime] = None) -> Dict[str, Any]:
+    now = (now_value or datetime.now(BANGKOK)).astimezone(BANGKOK)
+    current_start, current_end, previous_start, previous_end, bucket = _comparison_bounds(name, now)
+    current = _comparison_period(current_start, current_end, bucket)
+    previous = _comparison_period(previous_start, previous_end, bucket)
+    previous_energy = _number(previous["total_energy_kwh"])
+    current_energy = _number(current["total_energy_kwh"])
+    percentage = None
+    if (
+        current["point_count"] > 0
+        and previous["point_count"] > 0
+        and current_energy is not None
+        and previous_energy is not None
+        and previous_energy > 0
+    ):
+        percentage = round((current_energy - previous_energy) / previous_energy * 100.0, 2)
+    return {
+        "comparison": name,
+        "timezone": "Asia/Bangkok",
+        "bucket": bucket,
+        "current": current,
+        "previous": previous,
+        "percentage_difference": percentage,
+    }
+
+
+def _csv_row(values: Iterable[Any]) -> str:
+    output = io.StringIO()
+    csv.writer(output, lineterminator="\r\n").writerow(values)
+    return output.getvalue()
+
+
+def history_csv_response(payload: Mapping[str, Any]) -> StreamingResponse:
+    points = payload.get("points") or []
+    bucket = str(payload.get("bucket") or "")
+    start_date = _api_datetime(str(payload["start"]), "start").date().isoformat()
+    end_date = _api_datetime(str(payload["end"]), "end").date().isoformat()
+
+    def rows() -> Iterable[bytes | str]:
+        yield b"\xef\xbb\xbf"
+        yield _csv_row(
+            (
+                "timestamp_local",
+                "interval_start",
+                "interval_end",
+                "energy_kwh",
+                "cost_thb",
+                "bucket",
+                "data_quality",
+            )
+        )
+        for point in points:
+            yield _csv_row(
+                (
+                    point.get("timestamp"),
+                    point.get("interval_start"),
+                    point.get("interval_end"),
+                    point.get("energy_kwh"),
+                    point.get("cost_thb") if point.get("cost_thb") is not None else "",
+                    bucket,
+                    point.get("data_quality") or "valid",
+                )
+            )
+
+    filename = f"electricity-history-{start_date}-to-{end_date}.csv"
+    return StreamingResponse(
+        rows(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/electricity/history")
@@ -652,14 +812,25 @@ def get_history(
     start: Optional[str] = Query(None),
     end: Optional[str] = Query(None),
     bucket: str = Query("hour"),
+    comparison: Optional[str] = Query(None),
+    format: str = Query("json"),
     range: str = Query("24h"),
     from_ts: Optional[int] = Query(None, alias="from"),
     to_ts: Optional[int] = Query(None, alias="to"),
-) -> Dict[str, Any]:
+) -> Any:
+    if format not in {"json", "csv"}:
+        raise HTTPException(status_code=422, detail="invalid_format")
+    if comparison is not None:
+        if format != "json":
+            raise HTTPException(status_code=422, detail="comparison_csv_not_supported")
+        return comparison_payload(comparison)
     if start is not None or end is not None:
         if not start or not end:
             raise HTTPException(status_code=422, detail="start_and_end_required")
-        return history_series_payload(start, end, bucket)
+        payload = history_series_payload(start, end, bucket)
+        return history_csv_response(payload) if format == "csv" else payload
+    if format == "csv":
+        raise HTTPException(status_code=422, detail="csv_range_required")
     selected = range if range in {"24h", "7d", "30d", "month", "year"} else "24h"
     return history_payload(selected, from_ts, to_ts)
 

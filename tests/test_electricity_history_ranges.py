@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -90,6 +91,10 @@ def test_empty_range_returns_no_points_without_fabrication(history_store):
         "sample_count": 0,
         "total_energy_kwh": 0,
         "total_cost_thb": None,
+        "peak_interval_kwh": None,
+        "average_interval_kwh": None,
+        "minimum_interval_kwh": None,
+        "peak_timestamp": None,
     }
 
 
@@ -105,6 +110,21 @@ def test_invalid_reversed_future_and_oversized_ranges_are_rejected(history_store
             now.isoformat(),
             "day",
         )
+
+
+def test_exact_four_hundred_day_range_is_allowed(history_store, monkeypatch):
+    now = datetime.now(history.BANGKOK)
+    monkeypatch.setattr(history, "MAX_QUERY_DAYS", 400)
+    monkeypatch.setattr(history, "RETENTION_DAYS", 400)
+    monkeypatch.setattr(history, "_indexed_aggregation", lambda *_args: ([], 0))
+    monkeypatch.setattr(history, "_available_history_range", lambda: {"start": None, "end": None})
+
+    payload = history.history_series_payload(
+        (now - timedelta(days=400)).isoformat(), now.isoformat(), "day"
+    )
+
+    assert payload["summary"]["point_count"] == 0
+    assert payload["bucket"] == "day"
 
 
 def test_cumulative_meter_reset_never_creates_negative_consumption():
@@ -125,9 +145,10 @@ def test_frontend_range_switching_has_loading_empty_and_stale_response_guards():
     ).read_text(encoding="utf-8")
     assert "const requestId = ++state.historyRequestId" in source
     assert "requestId !== state.historyRequestId" in source
-    assert "state.history = null" in source
+    assert "state.history = null" not in source[source.index("async function loadHistory"):source.index("function chartData")]
     assert "state.historyLoading = true" in source
     assert "Loading electricity history…" in source
+    assert "electricity-history-chart-wrap${state.historyLoading ? ' is-loading' : ''}" in source
     assert "No history samples for this range." in source
     assert "await window.get(historyRequest(range, customStart, customEnd))" in source
     assert "Start date" in source and "End date" in source
@@ -143,3 +164,107 @@ def test_frontend_uses_explicit_contract_and_one_request_per_selection():
     assert handler.count("loadHistory(") == 1
     assert "URLSearchParams" in source
     assert "start:" in source and "end:" in source and "bucket," in source
+
+
+def test_today_and_yesterday_comparison_boundaries_use_bangkok(history_store):
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=history.BANGKOK)
+    _write_rows(history_store, datetime(2026, 7, 25, tzinfo=history.BANGKOK), 60)
+
+    today = history.comparison_payload("today", now)
+    yesterday = history.comparison_payload("yesterday", now)
+
+    assert today["current"]["start"] == "2026-07-27T00:00:00+07:00"
+    assert today["current"]["end"] == "2026-07-27T12:00:00+07:00"
+    assert today["previous"]["start"] == "2026-07-26T00:00:00+07:00"
+    assert today["previous"]["end"] == "2026-07-26T12:00:00+07:00"
+    assert yesterday["current"]["start"] == "2026-07-26T00:00:00+07:00"
+    assert yesterday["current"]["end"] == "2026-07-27T00:00:00+07:00"
+    assert yesterday["previous"]["start"] == "2026-07-25T00:00:00+07:00"
+    assert yesterday["previous"]["end"] == "2026-07-26T00:00:00+07:00"
+    assert today["percentage_difference"] == pytest.approx(0)
+
+
+def test_comparison_omits_percentage_for_empty_or_zero_previous_period(history_store):
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=history.BANGKOK)
+    _write_rows(history_store, now.replace(hour=0), 12)
+
+    payload = history.comparison_payload("today", now)
+
+    assert payload["current"]["point_count"] > 0
+    assert payload["previous"]["point_count"] == 0
+    assert payload["percentage_difference"] is None
+
+
+def test_last_seven_days_compares_with_the_previous_seven_days(history_store):
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=history.BANGKOK)
+    _write_rows(history_store, now - timedelta(days=14), 14 * 24)
+
+    payload = history.comparison_payload("7d", now)
+
+    assert payload["bucket"] == "day"
+    assert payload["current"]["start"] == "2026-07-20T12:00:00+07:00"
+    assert payload["previous"]["start"] == "2026-07-13T12:00:00+07:00"
+    assert payload["previous"]["end"] == payload["current"]["start"]
+    assert payload["percentage_difference"] == pytest.approx(0)
+
+
+def test_summary_reports_peak_average_minimum_and_peak_timestamp(history_store):
+    start = datetime(2026, 7, 20, tzinfo=history.BANGKOK)
+    _write_rows(history_store, start, 3)
+
+    payload = history.history_series_payload(
+        start.isoformat(), (start + timedelta(hours=3)).isoformat(), "hour"
+    )
+    summary = payload["summary"]
+
+    assert summary["peak_interval_kwh"] is not None
+    assert summary["average_interval_kwh"] is not None
+    assert summary["minimum_interval_kwh"] is not None
+    assert summary["peak_timestamp"].endswith("+07:00")
+    assert summary["peak_interval_kwh"] >= summary["average_interval_kwh"] >= summary["minimum_interval_kwh"]
+    assert payload["available_range"]["start"].endswith("+07:00")
+    assert payload["available_range"]["end"].endswith("+07:00")
+
+
+def test_csv_export_has_bom_safe_columns_and_date_filename(history_store):
+    start = datetime(2026, 7, 20, tzinfo=history.BANGKOK)
+    end = start + timedelta(hours=2)
+    _write_rows(history_store, start, 2)
+    payload = history.history_series_payload(start.isoformat(), end.isoformat(), "hour")
+    response = history.history_csv_response(payload)
+
+    async def body():
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk if isinstance(chunk, bytes) else chunk.encode("utf-8"))
+        return b"".join(chunks)
+
+    content = asyncio.run(body())
+    text = content.decode("utf-8-sig")
+    assert content.startswith(b"\xef\xbb\xbf")
+    assert text.splitlines()[0] == (
+        "timestamp_local,interval_start,interval_end,energy_kwh,"
+        "cost_thb,bucket,data_quality"
+    )
+    assert "2026-07-20T00:00:00+07:00" in text
+    assert ",hour,valid" in text
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="electricity-history-2026-07-20-to-2026-07-20.csv"'
+    )
+
+
+def test_frontend_has_comparison_metrics_server_csv_and_distinct_states():
+    source = (
+        Path(__file__).resolve().parents[1] / "frontend/assets/dashboard_electricity.js"
+    ).read_text(encoding="utf-8")
+    for label in (
+        "Today", "Yesterday", "Last 7 days", "Peak Interval",
+        "Average Interval", "Minimum Interval", "Peak Usage Time",
+    ):
+        assert label in source
+    assert "comparisonRequestId" in source
+    assert "format: 'csv'" in source
+    assert "await response.blob()" in source
+    assert "Available history:" in source
+    assert "No history samples for this range." in source
+    assert "electricity-history-message error" in source

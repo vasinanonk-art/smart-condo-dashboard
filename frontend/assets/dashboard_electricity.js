@@ -22,6 +22,11 @@
     historyRequestId: 0,
     customStart: '',
     customEnd: '',
+    comparison: null,
+    comparisonRange: 'today',
+    comparisonLoading: false,
+    comparisonError: null,
+    comparisonRequestId: 0,
   };
 
   const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
@@ -199,7 +204,6 @@
     state.zoom = 1;
     state.pan = 0;
     state.range = range;
-    state.history = null;
     state.historyLoading = true;
     state.historyError = null;
     render();
@@ -209,12 +213,33 @@
       state.history = payload;
     } catch (error) {
       if (requestId !== state.historyRequestId) return;
-      state.history = null;
       state.historyError = error?.message || 'Electricity history is unavailable.';
       console.error('Electricity history failed', {name: error?.name || 'Error'});
     } finally {
       if (requestId === state.historyRequestId) {
         state.historyLoading = false;
+        render();
+      }
+    }
+  }
+
+  async function loadComparison(range = state.comparisonRange) {
+    const requestId = ++state.comparisonRequestId;
+    state.comparisonRange = range;
+    state.comparisonLoading = true;
+    state.comparisonError = null;
+    render();
+    try {
+      const query = new URLSearchParams({comparison: range});
+      const payload = await window.get(`/api/electricity/history?${query.toString()}`);
+      if (requestId !== state.comparisonRequestId) return;
+      state.comparison = payload;
+    } catch (error) {
+      if (requestId !== state.comparisonRequestId) return;
+      state.comparisonError = error?.message || 'Comparison is unavailable.';
+    } finally {
+      if (requestId === state.comparisonRequestId) {
+        state.comparisonLoading = false;
         render();
       }
     }
@@ -272,8 +297,8 @@
   }
 
   function renderChart() {
-    if (state.historyLoading) return '<div class="electricity-empty electricity-loading" role="status">Loading electricity history…</div>';
-    if (state.historyError) return `<div class="electricity-empty electricity-error">${safe(state.historyError)}</div>`;
+    if (state.historyLoading && !state.history) return '<div class="electricity-empty electricity-loading" role="status">Loading electricity history…</div>';
+    if (state.historyError && !state.history) return `<div class="electricity-empty electricity-error">${safe(state.historyError)}</div>`;
     const allRows = chartData().filter(row => epoch(row.timestamp)).sort((a, b) => epoch(a.timestamp) - epoch(b.timestamp));
     const series = seriesDefinitions();
     if (!allRows.length || !series.length) return '<div class="electricity-empty">No history samples for this range.</div>';
@@ -298,7 +323,7 @@
     }).join('')).join('');
     const positions = rows.map(row => xTs(epoch(row.timestamp)));
     state.renderedChart = {rows, series, positions, plot: {left, right: plotRight, top, bottom: plotBottom}, y, min, max, windowRange};
-    return `<div class="electricity-history-chart-wrap"><svg id="electricityHistoryChart" class="electricity-history-chart" viewBox="0 0 ${width} ${height}"><line class="axis" x1="${left}" y1="${plotBottom}" x2="${plotRight}" y2="${plotBottom}"/>${paths}<g class="history-hover" style="display:none"><line class="history-crosshair" y1="${top}" y2="${plotBottom}"/><g class="history-points"></g></g><rect class="history-hit" x="${left}" y="${top}" width="${plotW}" height="${plotH}" fill="transparent"/></svg><div class="electricity-history-tooltip" style="display:none"></div></div>`;
+    return `<div class="electricity-history-chart-wrap${state.historyLoading ? ' is-loading' : ''}"><svg id="electricityHistoryChart" class="electricity-history-chart" viewBox="0 0 ${width} ${height}"><line class="axis" x1="${left}" y1="${plotBottom}" x2="${plotRight}" y2="${plotBottom}"/>${paths}<g class="history-hover" style="display:none"><line class="history-crosshair" y1="${top}" y2="${plotBottom}"/><g class="history-points"></g></g><rect class="history-hit" x="${left}" y="${top}" width="${plotW}" height="${plotH}" fill="transparent"/></svg><div class="electricity-history-tooltip" style="display:none"></div>${state.historyLoading ? '<div class="electricity-chart-loading" role="status">Loading selected range…</div>' : ''}</div>`;
   }
 
   function installChartInteraction() {
@@ -329,11 +354,40 @@
   }
 
   function historyRangeSummary() {
-    if (state.historyLoading) return '<div class="electricity-history-coverage partial">Loading selected range…</div>';
     if (!state.history) return '';
     const summary = state.history.summary || {};
     const cost = number(summary.total_cost_thb);
-    return `<div class="electricity-history-coverage complete"><strong>Selected range:</strong> ${safe(localTime(state.history.start))} – ${safe(localTime(state.history.end))}<small>Total consumption: ${safe(Number(summary.total_energy_kwh || 0).toFixed(4))} kWh${cost === null ? '' : ` · ${safe(cost.toFixed(2))} THB`}</small></div>`;
+    const available = state.history.available_range || {};
+    const availableText = available.start && available.end
+      ? `<small>Available history: ${safe(localTime(available.start))} – ${safe(localTime(available.end))}</small>`
+      : '<small>Available history: no retained samples</small>';
+    return `<div class="electricity-history-coverage complete"><strong>Selected range:</strong> ${safe(localTime(state.history.start))} – ${safe(localTime(state.history.end))}<small>Total consumption: ${safe(Number(summary.total_energy_kwh || 0).toFixed(4))} kWh${cost === null ? '' : ` · ${safe(cost.toFixed(2))} THB`}</small>${availableText}</div>`;
+  }
+
+  function historyRequestState() {
+    if (state.historyError) return `<div class="electricity-history-message error" role="alert">${safe(state.historyError)}</div>`;
+    if (state.historyLoading) return '<div class="electricity-history-message loading" role="status">Loading electricity history…</div>';
+    return '';
+  }
+
+  function comparisonPanel() {
+    const choices = [['today', 'Today'], ['yesterday', 'Yesterday'], ['7d', 'Last 7 days']];
+    const comparison = state.comparison || {};
+    const current = comparison.current || {};
+    const percentage = number(comparison.percentage_difference);
+    const hasCurrent = Number(current.point_count || 0) > 0;
+    const difference = percentage === null
+      ? 'Previous comparable period has no valid data'
+      : `${percentage > 0 ? '+' : ''}${percentage.toFixed(1)}% vs previous period`;
+    return `<section class="electricity-comparison">
+      <div class="electricity-comparison-head"><div><strong>Usage comparison</strong><small>Comparable periods in Asia/Bangkok</small></div><div class="electricity-comparison-controls">${choices.map(([key, label]) => `<button class="btn ghost ${state.comparisonRange === key ? 'active' : ''}" data-electricity-comparison="${key}">${label}</button>`).join('')}</div></div>
+      ${state.comparisonError ? `<div class="electricity-history-message error">${safe(state.comparisonError)}</div>` : ''}
+      <div class="electricity-comparison-values${state.comparisonLoading ? ' is-loading' : ''}">
+        ${metric('Total consumption', hasCurrent ? Number(current.total_energy_kwh || 0).toFixed(4) : null, 'kWh', true)}
+        ${metric('Estimated cost', hasCurrent ? current.total_cost_thb : null, 'THB', true)}
+        ${metric('Change', hasCurrent ? difference : null, '', true)}
+      </div>
+    </section>`;
   }
 
   function billingCoverageWarning(billing) {
@@ -356,10 +410,28 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  function csvExport() {
-    const rows = chartData();
-    const lines = ['timestamp,energy_kwh,cost_thb', ...rows.map(row => [row.timestamp || '', row.energy_kwh ?? '', row.cost_thb ?? ''].map(value => `"${String(value).replaceAll('"', '""')}"`).join(','))];
-    download(new Blob([lines.join('\n')], {type: 'text/csv'}), `electricity-${state.range}.csv`);
+  async function csvExport() {
+    if (!state.history?.start || !state.history?.end) return;
+    const query = new URLSearchParams({
+      start: state.history.start,
+      end: state.history.end,
+      bucket: state.history.bucket,
+      format: 'csv',
+    });
+    try {
+      const response = await fetch(`/api/electricity/history?${query.toString()}`, {
+        credentials: 'same-origin',
+        headers: {'Accept': 'text/csv'},
+      });
+      if (!response.ok) throw new Error(`CSV export failed (${response.status})`);
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const matched = disposition.match(/filename="?([^";]+)"?/i);
+      const fallback = `electricity-history-${thailandDate(new Date(state.history.start))}-to-${thailandDate(new Date(state.history.end))}.csv`;
+      download(await response.blob(), matched?.[1] || fallback);
+    } catch (error) {
+      state.historyError = error?.message || 'CSV export is unavailable.';
+      render();
+    }
   }
 
   function pngExport() {
@@ -415,7 +487,7 @@
       <div class="electricity-primary-grid">${metric('Voltage', payload.voltage, 'V')}${metric('Current', payload.current, 'A')}${metric('Active Power', payload.power, 'W')}${metric('Total Energy', payload.total_energy, 'kWh')}</div>
       <div class="electricity-secondary-grid">${metric('Status / Health', healthName(payload.health, payload), '', true)}${metric('Last Update', localTime(payload.last_update || diagnostics.last_success), '', true)}${metric('Runtime IP', runtimeIp, '', true)}${metric('Poll Latency', pollLatency, pollLatency == null ? '' : 'ms', true)}${metric('Data Source', sourceName(source), '', true)}</div>
       <section class="electricity-history-card">
-        <div class="card-head"><div><h2>Electricity History</h2><small>Persistent backend history with real timestamp coverage</small></div><div><button class="btn ghost" data-electricity-export="csv">CSV</button><button class="btn ghost" data-electricity-export="png">PNG</button></div></div>
+        <div class="card-head"><div><h2>Electricity History</h2><small>Persistent backend history with real timestamp coverage</small></div><div><button class="btn ghost" data-electricity-export="csv" ${state.historyLoading || !state.history ? 'disabled' : ''}>Export CSV</button><button class="btn ghost" data-electricity-export="png" ${state.historyLoading || !state.history ? 'disabled' : ''}>PNG</button></div></div>
         <div class="electricity-range-buttons">${rangeButtons.map(([key, label]) => `<button class="btn ghost ${state.range === key ? 'active' : ''}" data-electricity-range="${key}">${label}</button>`).join('')}</div>
         <form class="electricity-custom-range" data-electricity-custom>
           <label>Start date<input type="date" name="start" value="${safe(state.customStart)}" max="${safe(thailandDate())}"></label>
@@ -423,9 +495,12 @@
           <button class="btn ghost" type="submit">Apply</button>
           <button class="btn ghost" type="button" data-electricity-custom-reset>Reset</button>
         </form>
+        ${comparisonPanel()}
+        ${historyRequestState()}
+        ${historyRangeSummary()}
+        <div class="electricity-history-summary">${metric('Total Consumption', historySummary.total_energy_kwh, 'kWh', true)}${metric('Estimated Cost', historySummary.total_cost_thb, 'THB', true)}${metric('Peak Interval', historySummary.peak_interval_kwh, 'kWh', true)}${metric('Average Interval', historySummary.average_interval_kwh, 'kWh', true)}${metric('Minimum Interval', historySummary.minimum_interval_kwh, 'kWh', true)}${metric('Peak Usage Time', historySummary.peak_timestamp ? localTime(historySummary.peak_timestamp) : null, '', true)}${metric('Aggregation', state.history?.bucket === 'hour' ? 'Hourly' : state.history?.bucket === 'day' ? 'Daily' : null, '', true)}</div>
         <div class="electricity-chart-tools"><div><strong>Interval consumption</strong><small> Missing intervals are not connected.</small></div><div class="electricity-zoom-tools"><button class="btn ghost" data-electricity-view="zoom-in">Zoom +</button><button class="btn ghost" data-electricity-view="zoom-out">Zoom −</button><button class="btn ghost" data-electricity-view="pan-left">Pan ←</button><button class="btn ghost" data-electricity-view="pan-right">Pan →</button><button class="btn ghost" data-electricity-view="reset">Reset</button></div></div>
-        ${historyRangeSummary()}${renderChart()}
-        <div class="electricity-history-summary">${metric('Total Consumption', historySummary.total_energy_kwh, 'kWh', true)}${metric('Estimated Cost', historySummary.total_cost_thb, 'THB', true)}${metric('Chart Points', historySummary.point_count, '', true)}${metric('Aggregation', state.history?.bucket, '', true)}</div>
+        ${renderChart()}
       </section>
       <section class="electricity-cost-card">
         <div class="card-head"><div><h2>Electricity Cost</h2><small>Billing cycle cuts on day ${safe(billing.billing_cycle_day || 2)} of each month</small></div></div>
@@ -444,6 +519,9 @@
   function bind() {
     document.querySelectorAll('[data-electricity-range]').forEach(button => button.onclick = async () => {
       await loadHistory(button.dataset.electricityRange);
+    });
+    document.querySelectorAll('[data-electricity-comparison]').forEach(button => button.onclick = async () => {
+      await loadComparison(button.dataset.electricityComparison);
     });
     document.querySelector('[data-electricity-custom]')?.addEventListener('submit', async event => {
       event.preventDefault();
@@ -485,6 +563,6 @@
   };
   document.querySelectorAll('[data-nav]').forEach(button => button.onclick = () => window.nav(button.dataset.nav));
   Promise.allSettled([loadStatus(), loadSummary(), loadBillingCycleStatus(), loadBilling(), loadTariff(), loadTariffSync()])
-    .then(() => loadHistory())
+    .then(() => Promise.allSettled([loadHistory(), loadComparison()]))
     .then(() => { if (window.currentPage() === 'electricity') render(); });
 })();
