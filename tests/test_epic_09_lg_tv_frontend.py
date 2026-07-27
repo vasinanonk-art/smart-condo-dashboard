@@ -64,7 +64,7 @@ def test_remote_has_supported_commands_without_hardcoded_inputs_or_apps():
 def test_live_applications_render_at_most_six_common_installed_buttons():
     assert "const commonApplications" in REMOTE
     assert ".slice(0, 6)" in REMOTE
-    assert "items.find(item => pattern.test" in REMOTE
+    assert "items.find(candidate => pattern.test" in REMOTE
     assert 'data-lg-value="${escape(item.id)}"' in REMOTE
     assert "window.tv(element.dataset.lgCommand, element.dataset.lgValue)" in REMOTE
     assert "renderApplications(" in REMOTE
@@ -74,8 +74,10 @@ def test_live_applications_render_at_most_six_common_installed_buttons():
 def test_inputs_are_separate_live_inventory_and_switch_immediately():
     assert "const allowedInputs" not in REMOTE
     assert "items.filter(item => item && item.id && item.label)" in REMOTE
-    assert 'data-lg-option="set_input"' in REMOTE
-    assert "await window.tv('set_input', value)" in REMOTE
+    assert "household-lg-input-grid" in REMOTE
+    assert "button('set_input', item.label" in REMOTE
+    assert "<select" not in REMOTE
+    assert "data-lg-option" not in REMOTE
 
 
 def test_navigation_is_a_dpad_and_media_controls_are_complete():
@@ -85,3 +87,45 @@ def test_navigation_is_a_dpad_and_media_controls_are_complete():
         assert f".household-lg-nav-{command}" in css
     for command in ("play", "pause", "stop", "rewind", "fast_forward"):
         assert command in REMOTE
+
+
+def test_compact_desktop_grid_matches_control_group_order():
+    css = (ROOT / "frontend/assets/dashboard_lg_remote.css").read_text()
+    assert '"power navigation playback"' in css
+    assert '"volume applications applications"' in css
+    assert '"inputs inputs inputs"' in css
+    for class_name in (
+        "household-lg-power", "household-lg-navigation-section",
+        "household-lg-playback", "household-lg-volume",
+        "household-lg-applications", "household-lg-inputs",
+    ):
+        assert class_name in REMOTE
+        assert f".{class_name}" in css
+
+
+def test_volume_slider_is_debounced_without_set_button():
+    assert "data-lg-set-volume" not in REMOTE
+    assert "label:'Set'" not in REMOTE
+    assert "queuedVolume = Number(slider.value)" in REMOTE
+    assert "clearTimeout(volumeTimer)" in REMOTE
+    assert "setTimeout(sendQueuedVolume, 400)" in REMOTE
+    assert "if (volumeSending || queuedVolume === null) return" in REMOTE
+    assert "volumeDragging = true" in REMOTE
+    assert "if (!volumeDragging) scheduleVolume()" in REMOTE
+
+
+def test_dpad_and_footer_buttons_have_balanced_explicit_positions():
+    css = (ROOT / "frontend/assets/dashboard_lg_remote.css").read_text()
+    positions = {
+        "up": "grid-column: 3 / 5",
+        "left": "grid-column: 1 / 3",
+        "ok": "grid-column: 3 / 5",
+        "right": "grid-column: 5 / 7",
+        "down": "grid-column: 3 / 5",
+        "back": "grid-column: 1 / 4",
+        "home": "grid-column: 4 / 7",
+    }
+    for command, position in positions.items():
+        block = css[css.rindex(f".household-lg-nav-{command}"):]
+        block = block[:block.index("}")]
+        assert position in block

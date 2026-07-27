@@ -163,6 +163,8 @@ def test_frontend_debounces_duplicate_submissions_and_only_disables_clicked_cont
     assert "element.dataset.lgPending === 'true'" in remote_source
     assert "element.disabled = true" in remote_source
     assert "host.disabled" not in remote_source
+    assert "volumeSending" in remote_source
+    assert "setTimeout(sendQueuedVolume, 400)" in remote_source
 
 
 def test_wol_path_remains_isolated_from_persistent_command_connection():
