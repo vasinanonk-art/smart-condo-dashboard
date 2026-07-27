@@ -1,94 +1,81 @@
-# Smart Condo Dashboard v2.2.0 Stable
+# Smart Condo Dashboard
 
-Smart Condo Dashboard runtime for port 8090.
+Production dashboard for the condo automation system. The canonical version is
+stored in [`VERSION`](VERSION); the proposed stable release is **v1.0.0**.
 
-## Production runtime note
+## Production layout
 
-Port 8090 is the only supported Smart Condo Dashboard runtime.
+The Git checkout and running application are deliberately separate:
 
-Do not reference, copy, merge, or modify anything from the separate 8080 project. Keep the 8090 dashboard isolated from any 8080 runtime, service, reverse proxy, or codebase.
+- source checkout: `/opt/smart-condo-dashboard`
+- managed runtime: `/opt/smart-condo-dashboard-run`
+- Python environment: `/opt/smart-condo-dashboard-run/venv`
+- persistent configuration and state: `/root/.smart-condo-dashboard`
+- service: `smart-condo-dashboard.service`, port `8090`
 
-## Target topology
+Never run the service from the Git checkout and never copy the persistent root
+into Git. `install.sh` snapshots committed `HEAD`, takes the deployment lock,
+preserves `config/*.local.json`, replaces only managed runtime files, verifies
+checksums, and leaves the virtual environment unchanged in runtime-only mode.
 
-Browser/Mobile -> FastAPI Dashboard -> MQTT -> Tinker Board LG TV Gateway -> LG TV
+## Production deployment
 
-## Install on Tinker Board / Debian / Armbian
-
-```bash
-cd /root
-unzip smart_condo_dashboard_v1.zip
-cd smart_condo_dashboard
-python3 -m venv venv
-source venv/bin/activate
-pip install -r backend/requirements.txt
-MQTT_HOST=127.0.0.1 uvicorn backend.app:app --host 0.0.0.0 --port 8090
+```sh
+ssh tinkerboard
+cd /opt/smart-condo-dashboard
+git pull --ff-only
+sudo ./install.sh --dry-run
+sudo ./install.sh --runtime-only
+sudo systemctl status smart-condo-dashboard.service --no-pager -l
 ```
 
-Open:
+Run tests before the final command. A dirty checkout is not deployed:
+`install.sh` always archives committed `HEAD`. Concurrent deployments fail
+before runtime files are touched. An interrupted replacement restores the
+previous managed runtime and preserved local configuration.
+
+## Required authentication settings
+
+Configure these in `/etc/default/smart-condo-dashboard`:
+
+- `DASHBOARD_AUTH_USERNAME`
+- `DASHBOARD_AUTH_PASSWORD_HASH` (bcrypt)
+- `DASHBOARD_SESSION_SECRET`
+- `DASHBOARD_COOKIE_SECURE=1` when served exclusively over HTTPS
+
+Persistent provider paths should be explicit:
 
 ```text
-http://TINKER_IP:8090
+CAMERA_CONFIG_FILE=/root/.smart-condo-dashboard/cameras.local.json
+EWELINK_CONFIG_FILE=/root/.smart-condo-dashboard/ewelink.local.json
 ```
 
-For your current Tinker Board:
+Other integration settings are documented in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Never commit passwords, tokens,
+local keys, vendor account identifiers, camera URLs, or device IDs.
 
-```text
-http://192.168.1.60:8090
-http://172.23.250.43:8090
+## Verification
+
+```sh
+/opt/smart-condo-dashboard-run/venv/bin/python -m pytest -q
+find backend -name '*.py' -print0 | xargs -0 /opt/smart-condo-dashboard-run/venv/bin/python -m py_compile
+find frontend -name '*.js' -print0 | xargs -0 -n1 node --check
+sh -n install.sh scripts/*.sh
+git diff --check
 ```
 
-## Install as systemd
+See [`docs/PRODUCTION_CHECKLIST.md`](docs/PRODUCTION_CHECKLIST.md) for release,
+backup, restore, troubleshooting, and rollback steps.
 
-```bash
-cp systemd/smart-condo-dashboard.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable smart-condo-dashboard
-systemctl start smart-condo-dashboard
-systemctl status smart-condo-dashboard --no-pager
+## Troubleshooting
+
+```sh
+sudo systemctl status smart-condo-dashboard.service --no-pager -l
+sudo journalctl -u smart-condo-dashboard.service -n 200 --no-pager
+sudo systemctl show smart-condo-dashboard.service \
+  -p MainPID -p MemoryCurrent -p TasksCurrent -p NRestarts
+sudo ./install.sh --dry-run
 ```
 
-## MQTT topics
-
-Command:
-
-```text
-home/lgtv/cmd
-```
-
-State:
-
-```text
-home/lgtv/state
-```
-
-## Supported commands
-
-```text
-power_on
-power_off
-youtube
-netflix
-disney
-prime
-appletv
-browser
-livetv
-home
-viu
-hbo
-hdmi1
-hdmi2
-hdmi3
-hdmi4
-volume_up
-volume_down
-mute
-unmute
-up
-down
-left
-right
-ok
-back
-home_key
-```
+Do not delete the runtime directory to repair a failed deployment. Resolve the
+reported guard failure, retain its backup path, and follow the restore checklist.
