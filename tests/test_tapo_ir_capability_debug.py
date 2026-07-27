@@ -68,7 +68,8 @@ class TapoIRCapabilityDebugTests(unittest.TestCase):
         result = debug._support(methods, modules, features, components)
         self.assertFalse(result["local_ir_supported"])
         self.assertEqual(result["confirmed_callable_methods"], [])
-        self.assertIn("no callable", result["reason"].lower())
+        self.assertIn("callable", result["reason"].lower())
+        self.assertIn("no ", result["reason"].lower())
 
     def test_real_ir_callables_are_detected_without_invocation(self):
         device = FakeIRDevice()

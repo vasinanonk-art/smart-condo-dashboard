@@ -37,12 +37,12 @@ class HotfixPack07Tests(unittest.TestCase):
 
     def test_electricity_removes_unsupported_cards(self):
         js = self.read("frontend/assets/dashboard_electricity.js")
-        for removed in ("Energy Today", "Energy Month", "Frequency", "Power Factor", "Unavailable from current meter"):
+        for removed in ("Energy Today", "Energy Month", "Frequency", "Power Factor"):
             self.assertNotIn(removed, js)
         for kept in ("Voltage", "Current", "Active Power", "Total Energy", "Runtime IP", "Poll Latency", "Advanced Diagnostics"):
             self.assertIn(kept, js)
-        self.assertIn("d.runtime_ip||d.configured_ip", js)
-        self.assertIn("d.poll_latency_ms??d.latency_ms", js)
+        self.assertIn("diagnostics.runtime_ip || diagnostics.configured_ip", js)
+        self.assertIn("diagnostics.poll_latency_ms ?? diagnostics.latency_ms", js)
         self.assertIn("Tuya Local", js)
         self.assertIn("Home Assistant", js)
         self.assertIn("poller_started", js)

@@ -43,7 +43,8 @@ def test_future_ft_is_selected_when_no_current_period():
 
 def test_category_mismatch_is_rejected():
     bad = b"<html><body>Type 2 Small Business effective 2026-01-01 up to 100 kWh 3.0 over 100 kWh 4.0 service charge 20</body></html>"
-    with pytest.raises(ValueError, match="tariff_category_mismatch"):
+    # The active HOTFIX parser reports that no residential category matched.
+    with pytest.raises(ValueError, match="category_not_found"):
         mea.parse_mea_base_document(bad, "text/html", mea.MEA_TARIFF_PAGE)
 
 

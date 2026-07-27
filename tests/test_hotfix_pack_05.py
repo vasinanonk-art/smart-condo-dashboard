@@ -1,6 +1,7 @@
 from pathlib import Path
 import unittest
 
+from frontend_runtime import chart_behavior, topology_behavior
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,25 +20,20 @@ class HotfixPack05Tests(unittest.TestCase):
         self.assertIn("DashboardChartInteraction", self.chart)
 
     def test_first_last_and_single_sample_boundaries_are_explicit(self):
-        self.assertIn("positions.length === 1", self.chart)
-        self.assertIn("clamped <= firstMidpoint", self.chart)
-        self.assertIn("clamped >= lastMidpoint", self.chart)
-        self.assertIn("selectedX = positions[index]", self.chart)
-        self.assertNotIn("nearest-point distance", self.chart)
+        result = chart_behavior()
+        self.assertEqual(result["single"], [55])
+        self.assertEqual((result["before"], result["after"]), (0, 3))
 
     def test_pointer_and_selected_sample_positions_are_separate(self):
-        self.assertIn("pointerGraphX", self.chart)
-        self.assertIn("selectedPx", self.chart)
-        self.assertIn("line.setAttribute('x1', String(selectedX))", self.chart)
-        self.assertIn("tooltip.innerHTML", self.chart)
+        result = chart_behavior()
+        self.assertEqual(result["positions"], [10, 40, 70, 100])
+        self.assertEqual(result["middle"], 1)
 
     def test_topology_uses_deduplicated_operational_edges(self):
-        self.assertIn("const EDGES", self.topology)
-        self.assertIn("primary_dependency", self.topology)
-        self.assertIn("data_source", self.topology)
-        self.assertIn("network_tunnel", self.topology)
-        self.assertIn("const seen = new Set()", self.topology)
-        self.assertIn("if (seen.has(key)) return", self.topology)
+        result = topology_behavior()
+        self.assertTrue(result["unique"])
+        categories = {key.rsplit(":", 1)[1] for key in result["required"]}
+        self.assertEqual(categories, {"primary_dependency", "data_source", "network_tunnel"})
 
     def test_required_topology_dependencies_are_preserved(self):
         self.assertIn("['tinkerboard','electricity','primary_dependency']", self.topology)
@@ -46,15 +42,9 @@ class HotfixPack05Tests(unittest.TestCase):
         self.assertIn("['home_assistant','pm25','data_source']", self.topology)
 
     def test_layout_is_deterministic_and_grouped(self):
-        self.assertIn("const x = {", self.topology)
-        self.assertIn("cloud:", self.topology)
-        self.assertIn("condoInfra:", self.topology)
-        self.assertIn("zeroTier:", self.topology)
-        self.assertIn("home:", self.topology)
-        self.assertIn("groupBounds(GROUPS.cloud", self.topology)
-        self.assertIn("groupBounds(GROUPS.condo", self.topology)
-        self.assertIn("groupBounds(GROUPS.zerotier", self.topology)
-        self.assertIn("groupBounds(GROUPS.home", self.topology)
+        result = topology_behavior()
+        self.assertTrue(result["deterministic"])
+        self.assertEqual(result["diagnosticCount"], 0)
 
 
 if __name__ == "__main__":

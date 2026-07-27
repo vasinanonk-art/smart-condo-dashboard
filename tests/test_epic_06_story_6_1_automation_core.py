@@ -15,7 +15,7 @@ class AutomationCoreTests(unittest.TestCase):
             "description": "",
             "enabled": True,
             "mode": "single",
-            "trigger": {},
+            "trigger": {"type": "manual"},
             "condition": condition,
             "actions": [],
             "cooldown_sec": 0,

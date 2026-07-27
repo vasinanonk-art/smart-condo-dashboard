@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from backend import frontend_asset_version
 from backend import topology_hotfix
+from frontend_runtime import chart_behavior
 
 
 class HotfixPack04Tests(unittest.TestCase):
@@ -50,11 +51,12 @@ class HotfixPack04Tests(unittest.TestCase):
         self.assertIn("dashboard_pm25_hotfix.js", body)
 
     def test_pm25_hotfix_contains_edge_clamping_and_nearest_sample(self):
-        source = Path("frontend/assets/dashboard_pm25_hotfix.js").read_text(encoding="utf-8")
-        self.assertIn("Math.round(ratio * (valid.length - 1))", source)
-        self.assertIn("Math.max(8, Math.min(rect.width - tipWidth - 8, left))", source)
-        self.assertIn("line.setAttribute('y1'", source)
-        self.assertIn("hideInteraction(id)", source)
+        result = chart_behavior()
+        self.assertEqual(result["single"], [55])
+        self.assertEqual(result["before"], 0)
+        self.assertEqual(result["firstBoundary"], 0)
+        self.assertEqual(result["middle"], 1)
+        self.assertEqual(result["after"], 3)
 
 
 if __name__ == "__main__":

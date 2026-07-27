@@ -63,12 +63,14 @@ class HotfixPack10Tests(unittest.TestCase):
             "Analyze History",
             "Import History",
             "Run Maintenance",
-            "Dismiss All",
             "Bangkok (UTC+7)",
         ):
             self.assertIn(text, js)
         self.assertIn("data-nav=\"history\"", js)
-        self.assertIn("relative(item.created_ts)", js)
+        notifications = (ROOT / "frontend" / "assets" / "dashboard_notifications.js").read_text(encoding="utf-8")
+        self.assertIn("Mark all read", notifications)
+        self.assertIn("Clear all", notifications)
+        self.assertIn("relative(item.created_ts)", notifications)
 
     def test_no_forbidden_integration_changes(self):
         changed = {

@@ -114,7 +114,7 @@ def test_volume_slider_is_debounced_without_set_button():
     assert "if (!volumeDragging) scheduleVolume()" in REMOTE
 
 
-def test_dpad_is_a_literal_three_by_three_grid_without_positioning_hacks():
+def test_dpad_keeps_directions_around_ok_and_back_home_in_footer():
     css = (ROOT / "frontend/assets/dashboard_lg_remote.css").read_text()
     navigation = REMOTE[REMOTE.index('class="household-lg-nav-empty"'):]
     expected_order = (
@@ -124,8 +124,10 @@ def test_dpad_is_a_literal_three_by_three_grid_without_positioning_hacks():
         'household-lg-nav-left',
         'household-lg-nav-ok',
         'household-lg-nav-right',
-        'household-lg-nav-back',
         'household-lg-nav-down',
+        'household-lg-nav-empty',
+        'household-lg-navigation-footer',
+        'household-lg-nav-back',
         'household-lg-nav-home',
     )
     offsets = []
@@ -135,7 +137,7 @@ def test_dpad_is_a_literal_three_by_three_grid_without_positioning_hacks():
         offsets.append(cursor)
         cursor += len(class_name)
     assert offsets == sorted(offsets)
-    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
+    assert "grid-template-columns: repeat(3, 48px)" in css
     assert "grid-template-rows: repeat(3, 40px)" in css
     for forbidden in ("position: absolute", "transform:", "translate", "float:", "margin: -"):
         assert forbidden not in css

@@ -80,7 +80,7 @@ def test_notification_panel_escapes_values_and_has_one_initial_unread_load():
     assert "setInterval" not in source
 
 
-def test_live_enumeration_returns_safe_tokens_and_closes(monkeypatch):
+def test_live_enumeration_returns_safe_tokens_and_reuses_connection(monkeypatch):
     class Item:
         def __init__(self, data):
             self.data = data
@@ -96,12 +96,25 @@ def test_live_enumeration_returns_safe_tokens_and_closes(monkeypatch):
         def list_apps(self, **kwargs): return [Item({"id": "vendor-app", "title": "Video app"})]
 
     client = Client()
+    inventory = {
+        "inputs": [], "applications": [], "inputs_available": False,
+        "applications_available": False, "last_success_at": None,
+        "last_attempt_at": None, "refreshing": False, "last_error": None,
+    }
+    monkeypatch.setattr(control, "_INVENTORY", inventory)
+    monkeypatch.setattr(control, "_CLIENT", None)
+    monkeypatch.setattr(control, "_CLIENT_KEY", None)
+    monkeypatch.setattr(control, "_POINTER_CONTROL", None)
     monkeypatch.setattr(control.pairing, "_current_key", lambda: ("key", "source"))
     monkeypatch.setattr(control, "_open_client", lambda key: client)
     monkeypatch.setattr("pywebostv.controls.SourceControl", Sources)
     monkeypatch.setattr("pywebostv.controls.ApplicationControl", Apps)
-    result = control.capabilities()
+    control._refresh_inventory()
+    result = control.capabilities(enumerate_live=False)
     assert result["enumeration_available"] is True
     assert result["inputs"][0] == {"id": control._option_token("input", "vendor-input"), "label": "Game console"}
     assert "vendor-input" not in json.dumps(result)
+    assert control._CLIENT is client
+    assert client.closed is False
+    control._discard_persistent_client()
     assert client.closed is True
