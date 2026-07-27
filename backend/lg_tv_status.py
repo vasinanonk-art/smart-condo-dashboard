@@ -311,8 +311,10 @@ def _poll_once() -> Dict[str, Any]:
         _RUNTIME["last_connection_error"] = code; _transition("LG_RECONNECTING"); result = code
     finally:
         completed = int(time.time())
+        duration_ms = int((time.monotonic() - started) * 1000)
         _RUNTIME.update({"refresh_running": False, "last_poll_completed": completed,
-                         "last_poll_duration_ms": int((time.monotonic()-started)*1000), "last_poll_result": result})
+                         "last_poll_duration_ms": duration_ms, "last_poll_result": result})
+        log.info("LG timing status_refresh_ms=%d result=%s", duration_ms, result)
         POLL_LOCK.release()
     return {"started": True, "state": result}
 

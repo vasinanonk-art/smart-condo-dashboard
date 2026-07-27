@@ -71,12 +71,11 @@ def test_live_applications_render_at_most_six_common_installed_buttons():
     assert 'data-lg-option="launch_app"' not in REMOTE
 
 
-def test_inputs_are_separate_filtered_and_switch_immediately():
-    assert "const allowedInputs" in REMOTE
-    for label in ("HDMI", "Live TV", "AV"):
-        assert label in REMOTE
+def test_inputs_are_separate_live_inventory_and_switch_immediately():
+    assert "const allowedInputs" not in REMOTE
+    assert "items.filter(item => item && item.id && item.label)" in REMOTE
     assert 'data-lg-option="set_input"' in REMOTE
-    assert "window.tv('set_input', event.target.value)" in REMOTE
+    assert "await window.tv('set_input', value)" in REMOTE
 
 
 def test_navigation_is_a_dpad_and_media_controls_are_complete():

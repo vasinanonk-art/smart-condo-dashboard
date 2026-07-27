@@ -16,7 +16,6 @@
     /netflix/i, /youtube/i, /disney/i, /prime video|amazon prime/i,
     /apple tv/i, /plex/i,
   ];
-  const allowedInputs = /^(HDMI\s*[1-4]|Live TV|AV)$/i;
   const escape = UI.safe;
 
   function button(command, label, disabled = false, reason = '', attributes = '', className = '') {
@@ -27,7 +26,7 @@
   }
 
   function renderInputs(host, items, available) {
-    const inputs = items.filter(item => allowedInputs.test(String(item.label || '').trim()));
+    const inputs = items.filter(item => item && item.id && item.label);
     const section = document.createElement('section');
     section.className = 'household-lg-section';
     if (!available) {
@@ -36,9 +35,19 @@
       section.innerHTML = '<h3>Inputs</h3><p class="household-lg-option-unavailable">No supported inputs were reported by the TV.</p>';
     } else {
       section.innerHTML = `<h3>Inputs</h3><select data-lg-option="set_input" aria-label="Inputs"><option value="">Select…</option>${inputs.map(item => `<option value="${escape(item.id)}">${escape(item.label)}</option>`).join('')}</select>`;
-      section.querySelector('select').addEventListener('change', event => {
-        if (event.target.value) window.tv('set_input', event.target.value);
-        event.target.value = '';
+      section.querySelector('select').addEventListener('change', async event => {
+        const select = event.currentTarget;
+        const value = select.value;
+        if (!value || select.dataset.lgPending === 'true') return;
+        select.dataset.lgPending = 'true';
+        select.disabled = true;
+        try {
+          await window.tv('set_input', value);
+        } finally {
+          select.value = '';
+          select.disabled = false;
+          delete select.dataset.lgPending;
+        }
       });
     }
     host.appendChild(section);
@@ -84,11 +93,40 @@
           ${['play','pause','stop','rewind','fast_forward'].map(name => button(name, commands.find(item => item[0] === name)[1], !supported.has(name))).join('')}
         </div></section>
       </div>`;
-    renderInputs(host.querySelector('.household-lg-controls'), capabilities.inputs || [], capabilities.enumeration_available === true);
-    renderApplications(host.querySelector('.household-lg-controls'), capabilities.applications || [], capabilities.enumeration_available === true);
-    host.querySelectorAll('[data-lg-command]').forEach(element => element.addEventListener('click', () => window.tv(element.dataset.lgCommand, element.dataset.lgValue)));
+    const controls = host.querySelector('.household-lg-controls');
+    if (capabilities.inventory_refreshing === true) {
+      controls.insertAdjacentHTML('beforeend', '<p class="household-lg-option-refreshing" role="status">Refreshing applications and inputs…</p>');
+    }
+    renderInputs(controls, capabilities.inputs || [], capabilities.inputs_available === true || capabilities.enumeration_available === true);
+    renderApplications(controls, capabilities.applications || [], capabilities.applications_available === true || capabilities.enumeration_available === true);
+    host.querySelectorAll('[data-lg-command]').forEach(element => element.addEventListener('click', async () => {
+      if (element.dataset.lgPending === 'true') return;
+      element.dataset.lgPending = 'true';
+      element.disabled = true;
+      try {
+        await window.tv(element.dataset.lgCommand, element.dataset.lgValue);
+      } finally {
+        if (element.isConnected) {
+          element.disabled = false;
+          delete element.dataset.lgPending;
+        }
+      }
+    }));
     const slider = host.querySelector('[data-lg-volume]');
     slider?.addEventListener('input', () => { slider.nextElementSibling.value = slider.value; });
-    host.querySelector('[data-lg-set-volume]')?.addEventListener('click', () => window.tv('set_volume', Number(slider.value)));
+    host.querySelector('[data-lg-set-volume]')?.addEventListener('click', async event => {
+      const element = event.currentTarget;
+      if (element.dataset.lgPending === 'true') return;
+      element.dataset.lgPending = 'true';
+      element.disabled = true;
+      try {
+        await window.tv('set_volume', Number(slider.value));
+      } finally {
+        if (element.isConnected) {
+          element.disabled = false;
+          delete element.dataset.lgPending;
+        }
+      }
+    });
   };
 })();

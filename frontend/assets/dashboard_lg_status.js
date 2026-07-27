@@ -4,7 +4,11 @@
   window.__lgTvStatusInstalled = true;
 
   const UI = window.HouseholdUI;
-  const state = {status:null, capabilities:null, timer:null, busy:false, detailsLoaded:false, detailsLoading:false, pairing:null, diagnostics:null};
+  const state = {
+    status:null, capabilities:null, timer:null, inventoryTimer:null, busy:false,
+    detailsLoaded:false, detailsLoading:false, pairing:null, diagnostics:null,
+    pendingCommands:new Set(),
+  };
   const safe = UI.safe;
   const request = async (url, method='GET', body) => {
     const options = {method, headers:{}};
@@ -139,12 +143,29 @@
       state.status = status;
       state.capabilities = capabilities;
       render();
+      clearTimeout(state.inventoryTimer);
+      if (capabilities.inventory_refreshing === true) {
+        state.inventoryTimer = setTimeout(refreshInventory, 500);
+      }
     } catch (error) {
       UI.toast(error.message || 'LG TV status unavailable', 'error');
     } finally {
       state.busy = false;
       clearTimeout(state.timer);
       state.timer = setTimeout(refresh, 15000);
+    }
+  }
+
+  async function refreshInventory() {
+    try {
+      state.capabilities = await request('/api/lg-tv/capabilities');
+      render();
+      if (state.capabilities.inventory_refreshing === true) {
+        clearTimeout(state.inventoryTimer);
+        state.inventoryTimer = setTimeout(refreshInventory, 500);
+      }
+    } catch (_) {
+      // Preserve and continue rendering the last successful inventory.
     }
   }
 
@@ -173,6 +194,9 @@
   }
 
   window.tv = async function compactLgCommand(command, value) {
+    const requestKey = `${command}:${value ?? ''}`;
+    if (state.pendingCommands.has(requestKey)) return {ok:false, duplicate_ignored:true};
+    state.pendingCommands.add(requestKey);
     try {
       const output = await request('/api/lg-tv/command', 'POST', {command, value});
       if (output.state) {
@@ -184,6 +208,8 @@
     } catch (error) {
       UI.toast(error.message || 'Command failed', 'error');
       throw error;
+    } finally {
+      state.pendingCommands.delete(requestKey);
     }
   };
 

@@ -49,27 +49,31 @@ def test_lg_command_requires_authentication_and_csrf(monkeypatch):
     assert response.status_code == 422
 
 
-def test_successful_command_closes_client_and_returns_refreshed_state(monkeypatch):
+def test_successful_command_reuses_client_without_full_refresh(monkeypatch):
     client = FakeClient()
+    control._discard_persistent_client()
     monkeypatch.setattr(control.pairing, "_current_key", lambda: ("key", "test"))
-    monkeypatch.setattr(control.status, "_reachable", lambda *args, **kwargs: True)
     monkeypatch.setattr(control, "_open_client", lambda key: client)
     executed = []
     monkeypatch.setattr(control, "_execute", lambda opened, command, value: executed.append((opened, command, value)))
-    monkeypatch.setattr(control, "_refresh", lambda key: ({"online": True, "audio": {"volume": 12}}, True))
+    monkeypatch.setattr(control, "_refresh", lambda key: (_ for _ in ()).throw(AssertionError("full refresh")))
     monkeypatch.setattr(control.status, "_public_status", lambda: {"online": True, "audio": {"volume": 12}})
 
-    result = control.lg_tv_command(control.TvCommand(command="volume_up"))
+    first = control.lg_tv_command(control.TvCommand(command="volume_up"))
+    second = control.lg_tv_command(control.TvCommand(command="volume_down"))
 
-    assert result["ok"] is True
-    assert result["state_refreshed"] is True
-    assert result["state"]["audio"]["volume"] == 12
-    assert executed == [(client, "volume_up", None)]
+    assert first["ok"] is True and second["ok"] is True
+    assert first["state_refreshed"] is False
+    assert second["connection_reused"] is True
+    assert executed == [(client, "volume_up", None), (client, "volume_down", None)]
+    assert client.closed is False
+    control._discard_persistent_client()
     assert client.closed is True
 
 
 def test_timeout_is_bounded_and_client_is_closed(monkeypatch):
     client = FakeClient()
+    control._discard_persistent_client()
     monkeypatch.setattr(control.pairing, "_current_key", lambda: ("key", "test"))
     monkeypatch.setattr(control.status, "_reachable", lambda *args, **kwargs: True)
     monkeypatch.setattr(control, "_open_client", lambda key: client)
@@ -94,13 +98,14 @@ def test_library_timeout_message_is_reported_as_timeout(monkeypatch):
     assert result.status_code == 504
 
 
-def test_unreachable_and_unsupported_are_explicit(monkeypatch):
+def test_failed_connection_and_unsupported_are_explicit(monkeypatch):
+    control._discard_persistent_client()
     monkeypatch.setattr(control.pairing, "_current_key", lambda: ("key", "test"))
-    monkeypatch.setattr(control.status, "_reachable", lambda *args, **kwargs: False)
-    unreachable = control.lg_tv_command(control.TvCommand(command="mute"))
+    monkeypatch.setattr(control, "_open_client", lambda key: (_ for _ in ()).throw(OSError("offline")))
+    unavailable = control.lg_tv_command(control.TvCommand(command="mute"))
     unsupported = control.lg_tv_command(control.TvCommand(command="teleport"))
 
-    assert unreachable.status_code == 503
+    assert unavailable.status_code == 502
     assert unsupported.status_code == 422
 
 
@@ -119,7 +124,8 @@ def test_frontend_consumes_post_state_without_duplicate_refresh():
     assert "/api/lg-tv/status/refresh" not in command_handler
 
 
-def test_navigation_cursor_commands_use_pointer_socket_and_close_it(monkeypatch):
+def test_navigation_cursor_commands_reuse_pointer_socket(monkeypatch):
+    control._discard_persistent_client()
     calls = []
 
     class Pointer:
@@ -155,8 +161,10 @@ def test_navigation_cursor_commands_use_pointer_socket_and_close_it(monkeypatch)
     assert [value for value in calls if value in {"up", "down", "left", "right", "ok", "back", "home"}] == [
         "up", "down", "left", "right", "ok", "back", "home",
     ]
-    assert len(pointers) == 7
-    assert all(pointer.closed for pointer in pointers)
+    assert len(pointers) == 1
+    assert pointers[0].closed is False
+    control._discard_persistent_client()
+    assert pointers[0].closed is True
 
 
 def test_rewind_and_fast_forward_use_supported_pointer_key_names(monkeypatch):
@@ -183,6 +191,13 @@ def test_rewind_and_fast_forward_use_supported_pointer_key_names(monkeypatch):
 
 def test_live_application_and_input_enumeration_populates_capabilities(monkeypatch):
     client = FakeClient()
+    control._discard_persistent_client()
+    with control.ENUMERATION_LOCK:
+        control._INVENTORY.update(
+            inputs=[], applications=[], inputs_available=False,
+            applications_available=False, last_success_at=None,
+            last_attempt_at=None, refreshing=True, last_error=None,
+        )
     sources = [SimpleNamespace(data={"id": "hdmi-live", "label": "Game Console"})]
     applications = [SimpleNamespace(data={"id": "app-live", "title": "Streaming App"})]
 
@@ -207,10 +222,13 @@ def test_live_application_and_input_enumeration_populates_capabilities(monkeypat
     )
     monkeypatch.setattr(control.pairing, "_current_key", lambda: ("key", "secure"))
     monkeypatch.setattr(control, "_open_client", lambda key: client)
+    control._refresh_inventory()
     payload = control.capabilities()
     assert payload["enumeration_available"] is True
     assert payload["inputs"] == [{"id": control._option_token("input", "hdmi-live"), "label": "Game Console"}]
     assert payload["applications"] == [{"id": control._option_token("app", "app-live"), "label": "Streaming App"}]
+    assert client.closed is False
+    control._discard_persistent_client()
     assert client.closed is True
 
 
@@ -218,7 +236,7 @@ def test_capability_response_keeps_commands_and_live_options(monkeypatch):
     monkeypatch.setenv("LG_TV_MAC", "58:96:0A:9D:1C:0F")
     monkeypatch.setattr(
         control,
-        "_enumerated_options",
+        "_inventory_snapshot",
         lambda: {
             "inputs": [{"id": "input-safe", "label": "Console"}],
             "applications": [{"id": "app-safe", "label": "Video"}],
@@ -226,7 +244,7 @@ def test_capability_response_keeps_commands_and_live_options(monkeypatch):
             "enumeration_reason": None,
         },
     )
-    payload = control.lg_tv_capabilities()
+    payload = control.lg_tv_capabilities(SimpleNamespace(add_task=lambda *args: None))
     for command in (
         "power_on", "up", "down", "left", "right", "ok", "back", "home",
         "play", "pause", "stop", "rewind", "fast_forward", "set_input", "launch_app",
