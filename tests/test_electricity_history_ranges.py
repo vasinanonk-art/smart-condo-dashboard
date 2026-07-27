@@ -4,9 +4,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+import bcrypt
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 from backend import electricity_history as history
+from backend.app_entry import app
 
 
 @pytest.fixture
@@ -139,6 +142,50 @@ def test_cumulative_meter_reset_never_creates_negative_consumption():
     assert all(point["energy_kwh"] >= 0 for point in points)
 
 
+@pytest.mark.parametrize(
+    ("duration", "expected"),
+    (
+        (timedelta(hours=48), "30m"),
+        (timedelta(hours=48, seconds=1), "3h"),
+        (timedelta(days=14), "3h"),
+        (timedelta(days=14, seconds=1), "day"),
+    ),
+)
+def test_auto_bucket_boundaries(duration, expected):
+    start = datetime(2026, 1, 1, tzinfo=history.BANGKOK)
+    assert history._resolved_bucket("auto", start, start + duration) == expected
+
+
+def test_subhour_bucket_sums_energy_and_preserves_missing_gap(history_store):
+    start = datetime(2026, 7, 20, tzinfo=history.BANGKOK)
+    rows = _write_rows(history_store, start, 2)
+    points = history._aggregate_history(rows, "30m")
+    assert points[0]["energy_kwh"] == pytest.approx(0.12)
+    assert sum(point["energy_kwh"] for point in points) == pytest.approx(0.48)
+
+    gap_rows = rows[:7] + rows[18:]
+    gap_points = history._aggregate_history(gap_rows, "15m")
+    timestamps = {point["timestamp"] for point in gap_points}
+    assert (start + timedelta(minutes=45)).isoformat() not in timestamps
+    assert all(point["energy_kwh"] >= 0 for point in gap_points)
+
+
+def test_bucket_costs_remain_additive(monkeypatch):
+    points = [
+        {"energy_kwh": 1.0, "cost_thb": None},
+        {"energy_kwh": 2.0, "cost_thb": None},
+    ]
+    monkeypatch.setattr(
+        history,
+        "calculate_bill",
+        lambda energy: {"configured": True, "total": energy},
+    )
+
+    history._apply_point_costs(points)
+
+    assert sum(point["cost_thb"] for point in points) == pytest.approx(3.0)
+
+
 def test_frontend_range_switching_has_loading_empty_and_stale_response_guards():
     source = (
         Path(__file__).resolve().parents[1] / "frontend/assets/dashboard_electricity.js"
@@ -160,7 +207,7 @@ def test_frontend_uses_explicit_contract_and_one_request_per_selection():
         Path(__file__).resolve().parents[1] / "frontend/assets/dashboard_electricity.js"
     ).read_text(encoding="utf-8")
     handler = source[source.index("document.querySelectorAll('[data-electricity-range]"):]
-    handler = handler[:handler.index("document.querySelector('[data-electricity-custom]')")]
+    handler = handler[:handler.index("document.querySelectorAll('[data-electricity-comparison]')")]
     assert handler.count("loadHistory(") == 1
     assert "URLSearchParams" in source
     assert "start:" in source and "end:" in source and "bucket," in source
@@ -253,6 +300,41 @@ def test_csv_export_has_bom_safe_columns_and_date_filename(history_store):
     )
 
 
+def test_authenticated_csv_endpoint_preserves_contract(history_store, monkeypatch):
+    start = datetime(2026, 7, 20, tzinfo=history.BANGKOK)
+    end = start + timedelta(hours=2)
+    _write_rows(history_store, start, 2)
+    monkeypatch.setenv("DASHBOARD_AUTH_USERNAME", "csv-test")
+    monkeypatch.setenv(
+        "DASHBOARD_AUTH_PASSWORD_HASH",
+        bcrypt.hashpw(b"csv-password", bcrypt.gensalt(rounds=4)).decode(),
+    )
+    monkeypatch.setenv("DASHBOARD_SESSION_SECRET", "csv-test-session-secret-long-enough")
+    client = TestClient(app, base_url="http://testserver")
+    assert client.post(
+        "/api/auth/login",
+        json={"username": "csv-test", "password": "csv-password"},
+    ).status_code == 200
+
+    response = client.get(
+        "/api/electricity/history",
+        params={
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "bucket": "30m",
+            "format": "csv",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/csv; charset=utf-8"
+    assert response.headers["content-disposition"].startswith(
+        'attachment; filename="electricity-history-'
+    )
+    assert response.content.startswith(b"\xef\xbb\xbf")
+    assert b",30m," in response.content
+
+
 def test_frontend_has_comparison_metrics_server_csv_and_distinct_states():
     source = (
         Path(__file__).resolve().parents[1] / "frontend/assets/dashboard_electricity.js"
@@ -268,3 +350,7 @@ def test_frontend_has_comparison_metrics_server_csv_and_distinct_states():
     assert "Available history:" in source
     assert "No history samples for this range." in source
     assert "electricity-history-message error" in source
+    assert "Actual:" in source
+    assert "state.exportLoading" in source
+    assert "document.body.appendChild(anchor)" in source
+    assert "URL.revokeObjectURL(url)" in source

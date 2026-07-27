@@ -26,6 +26,13 @@ from backend import app as app_module
 
 app = app_module.app
 BANGKOK = ZoneInfo("Asia/Bangkok")
+BUCKET_SECONDS = {
+    "15m": 15 * 60,
+    "30m": 30 * 60,
+    "hour": 60 * 60,
+    "3h": 3 * 60 * 60,
+    "day": 24 * 60 * 60,
+}
 RETENTION_DAYS = max(1, int(os.getenv("ELECTRICITY_HISTORY_RETENTION_DAYS", "400")))
 DEFAULT_PATH = Path.home() / ".smart-condo-dashboard" / "electricity_history.jsonl"
 HISTORY_PATH = Path(os.getenv("ELECTRICITY_HISTORY_PATH", str(DEFAULT_PATH))).expanduser()
@@ -483,13 +490,27 @@ def _bucket_start(timestamp: int, bucket: str) -> int:
     value = datetime.fromtimestamp(timestamp, BANGKOK)
     if bucket == "day":
         value = value.replace(hour=0, minute=0, second=0, microsecond=0)
-    else:
-        value = value.replace(minute=0, second=0, microsecond=0)
-    return int(value.timestamp())
+        return int(value.timestamp())
+    seconds = BUCKET_SECONDS[bucket]
+    bangkok_offset = 7 * 3600
+    return ((timestamp + bangkok_offset) // seconds) * seconds - bangkok_offset
+
+
+def _resolved_bucket(bucket: str, start: datetime, end: datetime) -> str:
+    if bucket != "auto":
+        if bucket not in BUCKET_SECONDS:
+            raise HTTPException(status_code=422, detail="invalid_bucket")
+        return bucket
+    duration = end - start
+    if duration <= timedelta(hours=48):
+        return "30m"
+    if duration <= timedelta(days=14):
+        return "3h"
+    return "day"
 
 
 def _indexed_aggregation(start_ts: int, end_ts: int, bucket: str) -> tuple[list[Dict[str, Any]], int]:
-    bucket_seconds = 3600 if bucket == "hour" else 86400
+    bucket_seconds = BUCKET_SECONDS[bucket]
     bangkok_offset = 7 * 3600
     with _lock:
         with _database() as connection:
@@ -504,14 +525,20 @@ def _indexed_aggregation(start_ts: int, end_ts: int, bucket: str) -> tuple[list[
                 """
                 WITH ordered AS (
                     SELECT
-                        ts,
-                        total_energy,
-                        power,
-                        LAG(ts) OVER (ORDER BY ts) AS previous_ts,
-                        LAG(total_energy) OVER (ORDER BY ts) AS previous_total,
-                        LAG(power) OVER (ORDER BY ts) AS previous_power
-                    FROM samples
-                    WHERE ts >= ? AND ts <= ?
+                        current.ts,
+                        current.total_energy,
+                        current.power,
+                        previous.ts AS previous_ts,
+                        previous.total_energy AS previous_total,
+                        previous.power AS previous_power
+                    FROM samples AS current
+                    LEFT JOIN samples AS previous
+                      ON previous.ts = (
+                          SELECT MAX(candidate.ts)
+                          FROM samples AS candidate
+                          WHERE candidate.ts < current.ts AND candidate.ts >= ?
+                      )
+                    WHERE current.ts >= ? AND current.ts <= ?
                 ),
                 intervals AS (
                     SELECT
@@ -537,6 +564,7 @@ def _indexed_aggregation(start_ts: int, end_ts: int, bucket: str) -> tuple[list[
                 """,
                 (
                     start_ts,
+                    start_ts,
                     end_ts,
                     bangkok_offset,
                     bucket_seconds,
@@ -545,7 +573,7 @@ def _indexed_aggregation(start_ts: int, end_ts: int, bucket: str) -> tuple[list[
                     MAX_INTEGRATION_GAP_SEC,
                 ),
             ).fetchall()
-    interval = timedelta(hours=1) if bucket == "hour" else timedelta(days=1)
+    interval = timedelta(seconds=bucket_seconds)
     requested_start = datetime.fromtimestamp(start_ts, BANGKOK)
     requested_end = datetime.fromtimestamp(end_ts, BANGKOK)
     points = []
@@ -615,7 +643,7 @@ def _aggregate_history(rows: list[Mapping[str, Any]], bucket: str) -> list[Dict[
         entry = buckets.setdefault(key, {"energy_kwh": 0.0, "interval_count": 0})
         entry["energy_kwh"] += max(0.0, consumption)
         entry["interval_count"] += 1
-    interval = timedelta(hours=1) if bucket == "hour" else timedelta(days=1)
+    interval = timedelta(seconds=BUCKET_SECONDS[bucket])
     points = []
     for timestamp, values in sorted(buckets.items()):
         if not values["interval_count"]:
@@ -676,10 +704,9 @@ def _series_summary(points: list[Mapping[str, Any]], sample_count: int) -> Dict[
 
 
 def history_series_payload(start_value: str, end_value: str, bucket: str) -> Dict[str, Any]:
-    if bucket not in {"hour", "day"}:
-        raise HTTPException(status_code=422, detail="invalid_bucket")
     start = _api_datetime(start_value, "start")
     end = _api_datetime(end_value, "end")
+    actual_bucket = _resolved_bucket(bucket, start, end)
     now = datetime.now(BANGKOK)
     if start > end:
         raise HTTPException(status_code=422, detail="start_after_end")
@@ -688,18 +715,19 @@ def history_series_payload(start_value: str, end_value: str, bucket: str) -> Dic
     if end - start > timedelta(days=min(MAX_QUERY_DAYS, RETENTION_DAYS)):
         raise HTTPException(status_code=422, detail="range_too_large")
     start_ts, end_ts = int(start.timestamp()), int(end.timestamp())
-    points, sample_count = _indexed_aggregation(start_ts, end_ts, bucket)
+    points, sample_count = _indexed_aggregation(start_ts, end_ts, actual_bucket)
     _apply_point_costs(points)
     return {
         "start": start.isoformat(),
         "end": end.isoformat(),
         "timezone": "Asia/Bangkok",
-        "bucket": bucket,
+        "bucket": actual_bucket,
+        "requested_bucket": bucket,
         "energy_semantics": "interval_consumption",
         "points": points,
         "summary": _series_summary(points, sample_count),
         "available_range": _available_history_range(),
-        "max_gap_sec": 5400 if bucket == "hour" else 129600,
+        "max_gap_sec": int(BUCKET_SECONDS[actual_bucket] * 1.5),
     }
 
 
