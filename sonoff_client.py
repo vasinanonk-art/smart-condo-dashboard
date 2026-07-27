@@ -432,8 +432,19 @@ def _initialize_presence_state(label="startup"):
         print(f"presence initialize error: source={label} error={repr(exc)}", flush=True)
 
 
+_presence_initialization_lock = threading.Lock()
+_presence_initialization_complete = False
+
+
 def _schedule_presence_initialization():
-    _initialize_presence_state("startup")
+    global _presence_initialization_complete
+    if _presence_initialization_complete:
+        return
+    with _presence_initialization_lock:
+        if _presence_initialization_complete:
+            return
+        _initialize_presence_state("startup")
+        _presence_initialization_complete = True
 
 
 def _dashboard_index_handler():
@@ -441,7 +452,8 @@ def _dashboard_index_handler():
     path = os.path.join(base_dir, "frontend", "index.html")
     with open(path, encoding="utf-8") as f:
         html = f.read()
-    html = html.replace("Smart Condo Dashboard V2", "Smart Condo Dashboard v2.2.0 Stable")
+    from backend.version import __version__
+    html = html.replace("Smart Condo Dashboard V2", f"Smart Condo Dashboard v{__version__}")
     html = html.replace("console.log(device.deviceid,device.state,device.channel_states);", "")
     scripts = [
         '<script src="/assets/sonoff_bulk.js"></script>',

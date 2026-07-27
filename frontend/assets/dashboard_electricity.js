@@ -562,7 +562,10 @@
     if (page === 'electricity') render();
   };
   document.querySelectorAll('[data-nav]').forEach(button => button.onclick = () => window.nav(button.dataset.nav));
-  Promise.allSettled([loadStatus(), loadSummary(), loadBillingCycleStatus(), loadBilling(), loadTariff(), loadTariffSync()])
+  const initialData = document.readyState === 'loading'
+    ? Promise.resolve()
+    : Promise.allSettled([loadStatus(), loadSummary(), loadBillingCycleStatus(), loadBilling(), loadTariff(), loadTariffSync()]);
+  initialData
     .then(() => Promise.allSettled([loadHistory(), loadComparison()]))
     .then(() => { if (window.currentPage() === 'electricity') render(); });
 })();

@@ -257,6 +257,7 @@
     if(page==='settings'){
       if(!state.mounted)mount();
       startPolling();
+      refreshData();
     } else stopPolling();
   };
   const previousRefresh=window.refresh;
@@ -264,5 +265,5 @@
   document.querySelectorAll('[data-nav]').forEach(button=>button.onclick=()=>window.nav(button.dataset.nav));
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&window.currentPage()==='settings'){startPolling();refreshData();}else if(document.visibilityState==='hidden')stopPolling();});
   window.addEventListener('beforeunload',stopPolling);
-  refreshData({initial:true}).then(()=>{if(window.currentPage()==='settings'){mount();startPolling();}});
+  if(window.currentPage()==='settings') refreshData({initial:true}).then(()=>{mount();startPolling();});
 })();

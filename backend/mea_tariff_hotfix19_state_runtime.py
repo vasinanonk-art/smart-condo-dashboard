@@ -78,7 +78,6 @@ def _debug_object_snapshot(location: str) -> Dict[str, Any]:
         "keys": sorted(str(key) for key in debug.keys()),
         "key_count": len(debug),
     }
-    print(f"HOTFIX19.2 debug object {snapshot}", flush=True)
     return snapshot
 
 
