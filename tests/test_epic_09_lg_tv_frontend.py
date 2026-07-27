@@ -82,9 +82,9 @@ def test_inputs_are_separate_live_inventory_and_switch_immediately():
 
 def test_navigation_is_a_dpad_and_media_controls_are_complete():
     css = (ROOT / "frontend/assets/dashboard_lg_remote.css").read_text()
-    assert "`household-lg-nav-${name}`" in REMOTE
+    assert 'class="household-lg-nav-empty"' in REMOTE
     for command in ("up", "left", "ok", "right", "down", "back", "home"):
-        assert f".household-lg-nav-{command}" in css
+        assert f"'household-lg-nav-{command}'" in REMOTE
     for command in ("play", "pause", "stop", "rewind", "fast_forward"):
         assert command in REMOTE
 
@@ -114,18 +114,44 @@ def test_volume_slider_is_debounced_without_set_button():
     assert "if (!volumeDragging) scheduleVolume()" in REMOTE
 
 
-def test_dpad_and_footer_buttons_have_balanced_explicit_positions():
+def test_dpad_is_a_literal_three_by_three_grid_without_positioning_hacks():
     css = (ROOT / "frontend/assets/dashboard_lg_remote.css").read_text()
-    positions = {
-        "up": "grid-column: 3 / 5",
-        "left": "grid-column: 1 / 3",
-        "ok": "grid-column: 3 / 5",
-        "right": "grid-column: 5 / 7",
-        "down": "grid-column: 3 / 5",
-        "back": "grid-column: 1 / 4",
-        "home": "grid-column: 4 / 7",
-    }
-    for command, position in positions.items():
-        block = css[css.rindex(f".household-lg-nav-{command}"):]
+    navigation = REMOTE[REMOTE.index('class="household-lg-nav-empty"'):]
+    expected_order = (
+        'household-lg-nav-empty',
+        'household-lg-nav-up',
+        'household-lg-nav-empty',
+        'household-lg-nav-left',
+        'household-lg-nav-ok',
+        'household-lg-nav-right',
+        'household-lg-nav-back',
+        'household-lg-nav-down',
+        'household-lg-nav-home',
+    )
+    offsets = []
+    cursor = 0
+    for class_name in expected_order:
+        cursor = navigation.index(class_name, cursor)
+        offsets.append(cursor)
+        cursor += len(class_name)
+    assert offsets == sorted(offsets)
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
+    assert "grid-template-rows: repeat(3, 40px)" in css
+    for forbidden in ("position: absolute", "transform:", "translate", "float:", "margin: -"):
+        assert forbidden not in css
+
+
+def test_compact_groups_have_required_column_contracts():
+    css = (ROOT / "frontend/assets/dashboard_lg_remote.css").read_text()
+    for selector in (".household-lg-playback-grid", ".household-lg-app-grid", ".household-lg-volume-grid"):
+        block = css[css.rindex(selector):]
         block = block[:block.index("}")]
-        assert position in block
+        assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in block
+    assert ".slice(0, 6)" in REMOTE
+    assert "<select" not in REMOTE
+
+
+def test_visual_regression_covers_required_desktop_viewports():
+    spec = (ROOT / "tests/browser/lg_remote_layout.spec.js").read_text()
+    for dimensions in ("1920, height: 1080", "1440, height: 900", "1366, height: 768"):
+        assert dimensions in spec

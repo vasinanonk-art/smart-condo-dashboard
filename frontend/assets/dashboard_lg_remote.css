@@ -37,32 +37,39 @@
     "power navigation playback"
     "volume applications applications"
     "inputs inputs inputs";
-  grid-template-columns: minmax(180px, .75fr) minmax(250px, 1fr) minmax(250px, 1fr);
-  gap: 10px;
-  align-items: start;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: stretch;
   min-width: 0;
 }
 
 .household-lg-section {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
   min-width: 0;
-  padding: 11px;
+  height: auto;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 11px;
 }
 
 .household-lg-section h3 {
-  margin: 0 0 8px;
+  margin: 0;
   color: var(--text);
   font-size: 12px;
 }
 
 .household-lg-section .household-action-button {
-  min-height: 38px;
-  height: 38px;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  height: 40px;
   padding: 7px 9px;
   border-radius: 9px;
   font-size: 12px;
   line-height: 1.1;
+  overflow-wrap: anywhere;
 }
 
 .household-lg-power {
@@ -71,8 +78,6 @@
 
 .household-lg-navigation-section {
   grid-area: navigation;
-  justify-self: center;
-  width: min(100%, 280px);
 }
 
 .household-lg-playback {
@@ -95,93 +100,57 @@
 .household-lg-volume-grid,
 .household-lg-playback-grid,
 .household-lg-app-grid,
-.household-lg-input-grid {
-  margin-top: 0;
-  gap: 7px;
+.household-lg-input-grid,
+.household-lg-navigation {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
 }
 
 .household-lg-button-row {
-  grid-template-columns: repeat(2, minmax(70px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+}
+
+.household-lg-navigation {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(3, 40px);
+  width: 100%;
+  max-width: 208px;
+  justify-self: center;
+  align-self: start;
+}
+
+.household-lg-navigation .household-action-button {
+  height: 40px;
+  min-height: 40px;
+  padding: 5px;
+}
+
+.household-lg-nav-empty {
+  min-width: 0;
+  min-height: 40px;
 }
 
 .household-lg-volume-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.household-lg-volume-grid > .household-action-button {
-  padding-inline: 4px;
-  font-size: 11px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
 }
 
 .household-lg-playback-grid {
-  grid-template-columns: repeat(3, minmax(72px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
 }
 
 .household-lg-app-grid {
-  grid-template-columns: repeat(3, minmax(100px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
 }
 
 .household-lg-input-grid {
   grid-template-columns: repeat(auto-fit, minmax(110px, 160px));
   justify-content: start;
-}
-
-.household-lg-navigation {
-  grid-template-columns: repeat(6, 20px);
-  grid-template-rows: repeat(3, 44px) 38px;
-  gap: 4px;
-  justify-content: center;
-  margin-top: 0;
-}
-
-.household-lg-navigation .household-action-button {
-  width: 44px;
-  height: 44px;
-  min-height: 44px;
-  padding: 0;
-}
-
-.household-lg-nav-up {
-  grid-column: 3 / 5;
-  grid-row: 1;
-}
-
-.household-lg-nav-left {
-  grid-column: 1 / 3;
-  grid-row: 2;
-}
-
-.household-lg-nav-ok {
-  grid-column: 3 / 5;
-  grid-row: 2;
-}
-
-.household-lg-nav-right {
-  grid-column: 5 / 7;
-  grid-row: 2;
-}
-
-.household-lg-nav-down {
-  grid-column: 3 / 5;
-  grid-row: 3;
-}
-
-.household-lg-navigation .household-lg-nav-back,
-.household-lg-navigation .household-lg-nav-home {
-  width: auto;
-  height: 38px;
-  min-height: 38px;
-  padding: 6px 10px;
-}
-
-.household-lg-nav-back {
-  grid-column: 1 / 4;
-  grid-row: 4;
-}
-
-.household-lg-nav-home {
-  grid-column: 4 / 7;
-  grid-row: 4;
 }
 
 .household-lg-volume-set {
@@ -190,13 +159,13 @@
   grid-template-columns: auto minmax(100px, 1fr) 30px;
   gap: 8px;
   align-items: center;
-  margin-top: 2px;
   color: var(--muted);
   font-size: 11px;
 }
 
 .household-lg-volume-set input {
   width: 100%;
+  min-width: 0;
 }
 
 .household-lg-volume-set output {
@@ -231,10 +200,6 @@
       "inputs inputs";
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-
-  .household-lg-app-grid {
-    grid-template-columns: repeat(2, minmax(100px, 1fr));
-  }
 }
 
 @media (max-width: 760px) {
@@ -246,25 +211,20 @@
     grid-template-areas:
       "power"
       "navigation"
-      "volume"
       "playback"
+      "volume"
       "applications"
       "inputs";
     grid-template-columns: minmax(0, 1fr);
   }
-
-  .household-lg-navigation-section {
-    width: 100%;
-  }
 }
 
 @media (max-width: 390px) {
-  .household-lg-app-grid,
-  .household-lg-playback-grid {
-    grid-template-columns: repeat(2, minmax(90px, 1fr));
+  .household-lg-section {
+    padding: 10px;
   }
 
   .household-lg-input-grid {
-    grid-template-columns: repeat(2, minmax(90px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
