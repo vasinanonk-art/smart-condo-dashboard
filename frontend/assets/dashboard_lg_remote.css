@@ -14,9 +14,10 @@
 
 .household-lg-summary-item {
   min-width: 0;
-  padding: 9px 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, .13);
+  border-radius: 12px;
+  background: #101721;
 }
 
 .household-lg-summary-item span,
@@ -29,6 +30,8 @@
   margin-bottom: 3px;
   color: var(--muted);
   font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .05em;
 }
 
 .household-lg-controls {
@@ -37,39 +40,78 @@
     "power navigation playback"
     "volume applications applications"
     "inputs inputs inputs";
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(180px, .82fr) minmax(250px, 1.08fr) minmax(220px, 1fr);
+  gap: 14px;
   align-items: stretch;
   min-width: 0;
+  padding: 2px;
 }
 
 .household-lg-section {
   display: grid;
   grid-template-rows: auto 1fr;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
   height: auto;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, .16);
+  border-radius: 16px;
+  background: #0e151f;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .16);
 }
 
-.household-lg-section h3 {
+.household-lg-section-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.household-lg-section-head h3 {
   margin: 0;
-  color: var(--text);
-  font-size: 12px;
+  color: #f2f6fb;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: .01em;
+}
+
+.household-lg-section-head span {
+  color: #718096;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: .08em;
 }
 
 .household-lg-section .household-action-button {
   width: 100%;
   min-width: 0;
-  min-height: 40px;
-  height: 40px;
-  padding: 7px 9px;
-  border-radius: 9px;
+  min-height: 42px;
+  height: 42px;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, .17);
+  border-radius: 11px;
+  background: #151f2b;
+  color: #e8eef6;
   font-size: 12px;
+  font-weight: 750;
   line-height: 1.1;
   overflow-wrap: anywhere;
+  box-shadow: none;
+}
+
+.household-lg-section .household-action-button:hover:not(:disabled) {
+  border-color: rgba(91, 167, 255, .62);
+  background: #1a2939;
+}
+
+.household-lg-section .household-action-button:active:not(:disabled) {
+  background: #20344a;
+}
+
+.household-lg-section .household-action-button:disabled {
+  border-color: rgba(148, 163, 184, .08);
+  background: #111821;
+  color: #647184;
 }
 
 .household-lg-power {
@@ -103,34 +145,73 @@
 .household-lg-input-grid,
 .household-lg-navigation {
   display: grid;
-  gap: 8px;
+  gap: 9px;
   min-width: 0;
   margin: 0;
 }
 
 .household-lg-button-row {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
+}
+
+.household-lg-button-row .household-action-button {
+  min-height: 48px;
+  height: 48px;
+}
+
+.household-lg-power-on {
+  border-color: rgba(53, 208, 127, .34);
+  color: #8de8b5;
+}
+
+.household-lg-power-off {
+  border-color: rgba(255, 100, 100, .25);
+  color: #ffaaaa;
 }
 
 .household-lg-navigation {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   grid-template-rows: repeat(3, 40px);
-  width: 100%;
-  max-width: 208px;
+  width: min(100%, 208px);
+  aspect-ratio: 1;
   justify-self: center;
   align-self: start;
+  align-content: center;
+  gap: 7px;
+  padding: 22px;
+  border: 1px solid rgba(148, 163, 184, .15);
+  border-radius: 50%;
+  background: #0a1018;
+  box-shadow:
+    inset 0 0 0 7px rgba(255, 255, 255, .018),
+    0 12px 28px rgba(0, 0, 0, .24);
 }
 
 .household-lg-navigation .household-action-button {
   height: 40px;
   min-height: 40px;
-  padding: 5px;
+  padding: 4px;
+  border-radius: 50%;
+  background: #172331;
+  font-size: 14px;
+}
+
+.household-lg-navigation .household-lg-nav-ok {
+  border-color: rgba(91, 167, 255, .5);
+  background: #24486c;
+  color: #fff;
+  font-size: 11px;
+}
+
+.household-lg-navigation .household-lg-nav-back,
+.household-lg-navigation .household-lg-nav-home {
+  font-size: 9px;
 }
 
 .household-lg-nav-empty {
   min-width: 0;
-  min-height: 40px;
+  min-height: 0;
 }
 
 .household-lg-volume-grid {
@@ -148,46 +229,64 @@
   align-content: start;
 }
 
-.household-lg-input-grid {
-  grid-template-columns: repeat(auto-fit, minmax(110px, 160px));
+.household-lg-applications .household-action-button {
+  min-height: 46px;
+  height: 46px;
   justify-content: start;
+  text-align: left;
+}
+
+.household-lg-input-grid {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 170px));
+  justify-content: start;
+}
+
+.household-lg-input-grid .household-action-button {
+  border-color: rgba(91, 167, 255, .22);
+  background: #111c28;
 }
 
 .household-lg-volume-set {
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: auto minmax(100px, 1fr) 30px;
-  gap: 8px;
+  grid-template-columns: auto minmax(100px, 1fr) 32px;
+  gap: 10px;
   align-items: center;
-  color: var(--muted);
-  font-size: 11px;
+  padding-top: 4px;
+  color: #8996a8;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
 }
 
 .household-lg-volume-set input {
   width: 100%;
   min-width: 0;
+  accent-color: #5ba7ff;
 }
 
 .household-lg-volume-set output {
-  color: var(--text);
+  color: #dce6f2;
+  font-size: 12px;
   text-align: right;
 }
 
 .household-lg-option-unavailable,
 .household-lg-option-refreshing {
   margin: 0;
-  color: var(--muted);
+  color: #8794a7;
   font-size: 11px;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .household-lg-option-refreshing {
   grid-column: 1 / -1;
+  padding: 2px 4px;
 }
 
 .household-lg-volume-set input:focus-visible,
 .household-lg-section .household-action-button:focus-visible {
-  outline: 3px solid rgba(78, 161, 255, .8);
+  outline: 3px solid rgba(91, 167, 255, .75);
   outline-offset: 2px;
 }
 
@@ -217,11 +316,24 @@
       "inputs";
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .household-lg-button-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 390px) {
   .household-lg-section {
-    padding: 10px;
+    padding: 13px;
+  }
+
+  .household-lg-section-head span {
+    display: none;
+  }
+
+  .household-lg-navigation {
+    width: min(100%, 208px);
+    padding: 20px;
   }
 
   .household-lg-input-grid {

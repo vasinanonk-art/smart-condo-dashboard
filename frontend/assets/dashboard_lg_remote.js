@@ -38,11 +38,11 @@
     const section = document.createElement('section');
     section.className = 'household-lg-section household-lg-inputs';
     if (!available) {
-      section.innerHTML = '<h3>Inputs</h3><p class="household-lg-option-unavailable">Live input enumeration is unavailable.</p>';
+      section.innerHTML = '<header class="household-lg-section-head"><h3>Inputs</h3><span>Sources</span></header><p class="household-lg-option-unavailable">Live input enumeration is unavailable.</p>';
     } else if (!inputs.length) {
-      section.innerHTML = '<h3>Inputs</h3><p class="household-lg-option-unavailable">No supported inputs were reported by the TV.</p>';
+      section.innerHTML = '<header class="household-lg-section-head"><h3>Inputs</h3><span>Sources</span></header><p class="household-lg-option-unavailable">No supported inputs were reported by the TV.</p>';
     } else {
-      section.innerHTML = `<h3>Inputs</h3><div class="household-action-grid household-lg-input-grid">${inputs.map(item => button('set_input', item.label, false, '', `data-lg-value="${escape(item.id)}"`)).join('')}</div>`;
+      section.innerHTML = `<header class="household-lg-section-head"><h3>Inputs</h3><span>Sources</span></header><div class="household-action-grid household-lg-input-grid">${inputs.map(item => button('set_input', item.label, false, '', `data-lg-value="${escape(item.id)}"`)).join('')}</div>`;
     }
     host.appendChild(section);
   }
@@ -58,11 +58,11 @@
     const section = document.createElement('section');
     section.className = 'household-lg-section household-lg-applications';
     if (!available) {
-      section.innerHTML = '<h3>Applications</h3><p class="household-lg-option-unavailable">Live application enumeration is unavailable.</p>';
+      section.innerHTML = '<header class="household-lg-section-head"><h3>Applications</h3><span>Quick launch</span></header><p class="household-lg-option-unavailable">Live application enumeration is unavailable.</p>';
     } else if (!applications.length) {
-      section.innerHTML = '<h3>Applications</h3><p class="household-lg-option-unavailable">No common applications were reported by the TV.</p>';
+      section.innerHTML = '<header class="household-lg-section-head"><h3>Applications</h3><span>Quick launch</span></header><p class="household-lg-option-unavailable">No common applications were reported by the TV.</p>';
     } else {
-      section.innerHTML = `<h3>Applications</h3><div class="household-action-grid household-lg-app-grid">${applications.map(item => button('launch_app', item.compactLabel, false, '', `data-lg-value="${escape(item.id)}"`)).join('')}</div>`;
+      section.innerHTML = `<header class="household-lg-section-head"><h3>Applications</h3><span>Quick launch</span></header><div class="household-action-grid household-lg-app-grid">${applications.map(item => button('launch_app', item.compactLabel, false, '', `data-lg-value="${escape(item.id)}"`)).join('')}</div>`;
     }
     host.appendChild(section);
   }
@@ -74,11 +74,11 @@
     const wolReason = 'Wake-on-LAN is not configured. Add the TV MAC address to enable Power On.';
     host.innerHTML = `
       <div class="household-lg-controls">
-        <section class="household-lg-section household-lg-power"><h3>Power</h3><div class="household-action-grid household-lg-button-row">
-          ${button('power_on', 'Power On', !supported.has('power_on'), supported.has('power_on') ? '' : wolReason)}
-          ${button('power_off', 'Power Off', !supported.has('power_off'), 'Power Off is unavailable.')}
+        <section class="household-lg-section household-lg-power"><header class="household-lg-section-head"><h3>Power</h3><span>TV control</span></header><div class="household-action-grid household-lg-button-row">
+          ${button('power_on', 'Power On', !supported.has('power_on'), supported.has('power_on') ? '' : wolReason, '', 'household-lg-power-on')}
+          ${button('power_off', 'Power Off', !supported.has('power_off'), 'Power Off is unavailable.', '', 'household-lg-power-off')}
         </div>${supported.has('power_on') ? '' : UI.warningBox(wolReason, 'lg-power-on-reason')}</section>
-        <section class="household-lg-section household-lg-navigation-section"><h3>Navigation</h3><div class="household-action-grid household-lg-navigation">
+        <section class="household-lg-section household-lg-navigation-section"><header class="household-lg-section-head"><h3>Navigation</h3><span>Remote wheel</span></header><div class="household-action-grid household-lg-navigation">
           <span class="household-lg-nav-empty" aria-hidden="true"></span>
           ${button('up', '▲', !supported.has('up'), '', '', 'household-lg-nav-up')}
           <span class="household-lg-nav-empty" aria-hidden="true"></span>
@@ -89,10 +89,10 @@
           ${button('down', '▼', !supported.has('down'), '', '', 'household-lg-nav-down')}
           ${button('home', 'Home', !supported.has('home'), '', '', 'household-lg-nav-home')}
         </div></section>
-        <section class="household-lg-section household-lg-playback"><h3>Playback</h3><div class="household-action-grid household-lg-playback-grid">
+        <section class="household-lg-section household-lg-playback"><header class="household-lg-section-head"><h3>Playback</h3><span>Media</span></header><div class="household-action-grid household-lg-playback-grid">
           ${['play','pause','stop','rewind','fast_forward'].map(name => button(name, commands.find(item => item[0] === name)[1], !supported.has(name))).join('')}
         </div></section>
-        <section class="household-lg-section household-lg-volume"><h3>Volume</h3><div class="household-action-grid household-lg-volume-grid">
+        <section class="household-lg-section household-lg-volume"><header class="household-lg-section-head"><h3>Volume</h3><span>Audio</span></header><div class="household-action-grid household-lg-volume-grid">
           ${['volume_up','volume_down','mute','unmute'].map(name => button(name, commands.find(item => item[0] === name)[1], !supported.has(name))).join('')}
           <label class="household-lg-volume-set">Volume <input type="range" min="0" max="100" value="20" data-lg-volume ${supported.has('set_volume') ? '' : 'disabled'} aria-label="LG TV volume"><output>20</output></label>
         </div></section>
