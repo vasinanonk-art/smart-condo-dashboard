@@ -7,15 +7,19 @@ DESIGN = (ROOT / "frontend/assets/dashboard_household_design_system.js").read_te
 
 
 def test_real_entertainment_and_climate_devices_are_visible():
+    from backend import household_device_registry
+
+    devices = household_device_registry._ir_devices()
+    identifiers = {device["id"] for device in devices}
     for identifier in (
         "living-room-samsung-soundbar",
         "living-room-air-conditioner",
         "living-room-fan",
         "bed-room-air-conditioner",
     ):
-        assert identifier in SOURCE
-    for label in ("Power", "Volume +", "Source", "Temperature", "Oscillation", "Timer"):
-        assert label in SOURCE
+        assert identifier in identifiers
+    assert "device.capabilities?.ir" in SOURCE
+    assert "capability.type" in SOURCE
     assert "renderLgTvCompact" not in SOURCE
 
 

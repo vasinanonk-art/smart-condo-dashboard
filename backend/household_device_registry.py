@@ -9,7 +9,7 @@ import copy
 from typing import Any, Dict
 
 from backend import app as app_module
-from backend import camera_read_providers, lg_tv_control, lg_tv_status, tapo_ir_local_bridge
+from backend import camera_read_providers, ir_framework, lg_tv_control, lg_tv_status, tapo_ir_local_bridge
 
 app = app_module.app
 _SAFE_FIELDS = {
@@ -86,32 +86,47 @@ def _tapo_detected() -> bool:
 
 def _ir_devices() -> list[Dict[str, Any]]:
     tapo = _tapo_detected()
-    tapo_reason = (
-        "Tapo H110 detected; command mapping is not configured."
-        if tapo else "Tapo H110 configuration is unavailable."
-    )
-    return [
-        _device(
-            "living-room-samsung-soundbar", "living_room", "Samsung Soundbar", "soundbar",
-            online=None, health="degraded" if tapo else "unavailable",
-            reason=tapo_reason,
-        ),
-        _device(
-            "living-room-air-conditioner", "living_room", "Living Room Air Conditioner", "climate",
-            online=None, health="degraded" if tapo else "unavailable",
-            reason=tapo_reason,
-        ),
-        _device(
-            "living-room-fan", "living_room", "Fan", "fan",
-            online=None, health="degraded" if tapo else "unavailable",
-            reason=tapo_reason,
-        ),
-        _device(
-            "bed-room-air-conditioner", "bed_room", "Bed Room Air Conditioner", "climate",
-            online=None, health="unavailable",
-            reason="T3 IR device detected by household inventory; control path is not verified.",
-        ),
-    ]
+    categories = {
+        "television": "tv",
+        "soundbar": "soundbar",
+        "air_conditioner": "climate",
+        "fan": "fan",
+    }
+    devices = []
+    for item in ir_framework.public_devices():
+        identity = item.get("device") or {}
+        metadata = copy.deepcopy(item.get("capabilities") or [])
+        commands = [
+            command
+            for capability in metadata
+            for command in capability.get("commands") or []
+        ]
+        capabilities = {"ir": metadata} if commands else {}
+        is_t3 = identity.get("id") == "bed-room-air-conditioner"
+        runtime_status = item.get("runtime_status") or {}
+        reason = item.get("unavailable_reason")
+        if not commands:
+            reason = (
+                "T3 IR device detected by household inventory; control path is not verified."
+                if is_t3 else
+                "Tapo H110 detected; command mapping is not configured."
+                if tapo else "Tapo H110 configuration is unavailable."
+            )
+        devices.append(_device(
+            identity["id"],
+            identity["room"],
+            identity["friendly_name"],
+            categories.get(identity["type"], identity["type"]),
+            online=runtime_status.get("online"),
+            health=(
+                "healthy" if runtime_status.get("healthy") is True else
+                "degraded" if commands or (tapo and not is_t3) else "unavailable"
+            ),
+            capabilities=capabilities,
+            state_quality=(item.get("runtime_status") or {}).get("state_quality") or "unknown",
+            reason=reason,
+        ))
+    return devices
 
 
 def _camera_placeholders() -> list[Dict[str, Any]]:

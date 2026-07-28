@@ -24,9 +24,81 @@
       if (device.unavailable_reason === 'Configuration unavailable') return 'Configuration unavailable.';
       return cameraReasons[device.unavailable_reason] || 'Camera capability is unavailable.';
     }
-    if (device.id === 'bed-room-air-conditioner') return 'Control path is not verified.';
     return 'Controls are not configured yet.';
   };
+
+  function irCommandButton(device, capability, command) {
+    return UI.actionButton({
+      label:command.label,
+      attributes:`data-household-ir-device="${safe(device.id)}" data-household-ir-command="${safe(command.id)}" data-household-ir-confirm="${capability.confirm ? 'true' : 'false'}" data-household-ir-icon="${safe(command.icon || capability.icon || '')}" aria-label="${safe(`${device.display_name}: ${command.label}`)}"`,
+    });
+  }
+
+  function irCapabilityControl(device, capability) {
+    const commands = Array.isArray(capability.commands) ? capability.commands : [];
+    if (!commands.length) return '';
+    if (capability.type === 'select') {
+      const available = (capability.values || []).filter(value => commands.some(command => command.value === value));
+      if (!available.length) return '';
+      return `<label class="household-ir-field"><span>${safe(capability.label)}</span><select data-household-ir-device="${safe(device.id)}" data-household-ir-capability="${safe(capability.id)}" data-household-ir-confirm="${capability.confirm ? 'true' : 'false'}"><option value="">Select</option>${available.map(value => `<option value="${safe(value)}">${safe(value)}</option>`).join('')}</select></label>`;
+    }
+    if (capability.type === 'range') {
+      const expected = Math.floor((Number(capability.max) - Number(capability.min)) / Number(capability.step)) + 1;
+      const available = commands.filter(command => Number.isFinite(Number(command.value)));
+      if (available.length !== expected) return '';
+      return `<label class="household-ir-field"><span>${safe(capability.label)} <output>${safe(capability.min)}${safe(capability.unit || '')}</output></span><input type="range" min="${safe(capability.min)}" max="${safe(capability.max)}" step="${safe(capability.step)}" value="${safe(capability.min)}" data-household-ir-device="${safe(device.id)}" data-household-ir-capability="${safe(capability.id)}" data-household-ir-unit="${safe(capability.unit || '')}" data-household-ir-confirm="${capability.confirm ? 'true' : 'false'}"></label>`;
+    }
+    return commands.map(command => irCommandButton(device, capability, command)).join('');
+  }
+
+  function irActions(device) {
+    const capabilities = Array.isArray(device.capabilities?.ir) ? device.capabilities.ir : [];
+    const groups = new Map();
+    capabilities.forEach(capability => {
+      const controls = irCapabilityControl(device, capability);
+      if (!controls) return;
+      const group = capability.group || 'main';
+      groups.set(group, `${groups.get(group) || ''}<div class="household-ir-capability" data-ir-capability-type="${safe(capability.type)}">${controls}</div>`);
+    });
+    return [...groups.entries()].map(([group, controls]) => `<section class="household-ir-group" data-ir-group="${safe(group)}">${controls}</section>`).join('');
+  }
+
+  function bindIrCommands(host) {
+    const send = async (control, body) => {
+      if (control.dataset.householdIrConfirm === 'true' && !window.confirm('Send this IR command?')) return;
+      control.disabled = true;
+      try {
+        const response = await fetch(`/api/ir/${encodeURIComponent(control.dataset.householdIrDevice)}/command`, {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(body),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.detail || 'IR command failed');
+        UI.toast('IR command sent', 'success');
+      } catch (error) {
+        UI.toast(error.message, 'error');
+      } finally {
+        control.disabled = false;
+      }
+    };
+    host?.querySelectorAll('[data-household-ir-command]').forEach(button => button.addEventListener('click', () => {
+      send(button, {command:button.dataset.householdIrCommand});
+    }));
+    host?.querySelectorAll('select[data-household-ir-capability]').forEach(select => select.addEventListener('change', () => {
+      if (select.value !== '') send(select, {capability:select.dataset.householdIrCapability, value:select.value});
+    }));
+    host?.querySelectorAll('input[type="range"][data-household-ir-capability]').forEach(input => {
+      input.addEventListener('input', () => {
+        const output = input.closest('label')?.querySelector('output');
+        if (output) output.textContent = `${input.value}${input.dataset.householdIrUnit || ''}`;
+      });
+      input.addEventListener('change', () => send(input, {
+        capability:input.dataset.householdIrCapability,
+        value:Number(input.value),
+      }));
+    });
+  }
 
   async function load() {
     if (state.loading) return;
@@ -72,24 +144,18 @@
       host.className = 'household-grid household-entertainment-grid';
       grid.appendChild(host);
     }
-    const device = state.devices.find(item => item.id === 'living-room-samsung-soundbar');
-    if (!device) return;
-    const reason = userReason(device) || 'Controls are unavailable.';
-    host.innerHTML = card(device, ['Power','Volume +','Volume -','Mute','Source'].map(label => disabledButton(label, reason)).join(''));
+    const devices = state.devices.filter(item => item.category === 'soundbar');
+    host.innerHTML = devices.map(device => card(device, irActions(device))).join('');
+    bindIrCommands(host);
   }
 
   function renderClimate() {
     const host = document.getElementById('climateControls');
     if (!host) return;
     host.className = 'household-grid';
-    const devices = state.devices.filter(item => ['living-room-air-conditioner','living-room-fan','bed-room-air-conditioner'].includes(item.id));
-    host.innerHTML = devices.map(device => {
-      const reason = userReason(device) || 'Controls are unavailable.';
-      const labels = device.category === 'fan'
-        ? ['Power','Speed','Oscillation','Timer']
-        : ['Power','Mode','Temperature','Fan speed','Swing'];
-      return card(device, labels.map(label => disabledButton(label, reason)).join(''));
-    }).join('');
+    const devices = state.devices.filter(item => ['climate', 'fan'].includes(item.category));
+    host.innerHTML = devices.map(device => card(device, irActions(device))).join('');
+    bindIrCommands(host);
   }
 
   function renderCameras() {

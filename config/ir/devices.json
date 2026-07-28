@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "devices": [
+    {
+      "id": "living-room-samsung-soundbar",
+      "display_name": "Samsung Soundbar",
+      "room": "living_room",
+      "type": "soundbar",
+      "driver": "tapo_ir",
+      "profile": "unconfigured",
+      "capabilities": [],
+      "enabled": true
+    },
+    {
+      "id": "living-room-air-conditioner",
+      "display_name": "Living Room Air Conditioner",
+      "room": "living_room",
+      "type": "air_conditioner",
+      "driver": "tapo_ir",
+      "profile": "unconfigured",
+      "capabilities": [],
+      "enabled": true
+    },
+    {
+      "id": "living-room-fan",
+      "display_name": "Fan",
+      "room": "living_room",
+      "type": "fan",
+      "driver": "tapo_ir",
+      "profile": "unconfigured",
+      "capabilities": [],
+      "enabled": true
+    },
+    {
+      "id": "bed-room-air-conditioner",
+      "display_name": "Bed Room Air Conditioner",
+      "room": "bed_room",
+      "type": "air_conditioner",
+      "driver": "t3_ir",
+      "profile": "unconfigured",
+      "capabilities": [],
+      "enabled": true
+    }
+  ]
+}

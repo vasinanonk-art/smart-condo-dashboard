@@ -66,14 +66,18 @@ def test_verified_camera_projects_safe_status_and_capabilities(monkeypatch):
 
 
 def test_camera_ui_is_capability_driven_and_has_no_write_commands():
+    camera_source = SOURCE[
+        SOURCE.index("function renderCameras()"):
+        SOURCE.index("function render()", SOURCE.index("function renderCameras()"))
+    ]
     assert "if (capabilities.snapshot)" in SOURCE
     assert "if (capabilities.live_stream)" in SOURCE
     assert "capabilities.presets" in SOURCE
     assert "household-camera-preview" in SOURCE
     assert "Configuration unavailable." in SOURCE
     assert "Location unknown" in SOURCE
-    assert "/command" not in SOURCE
-    assert "method:'POST'" not in SOURCE
+    assert "/command" not in camera_source
+    assert "method:'POST'" not in camera_source
     assert "data-camera-action=\"move\"" not in SOURCE
     assert "data-camera-action=\"zoom\"" not in SOURCE
 

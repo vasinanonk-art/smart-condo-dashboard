@@ -42,6 +42,8 @@ from backend import camera_control as _camera_control  # noqa: F401,E402
 from backend import camera_read_providers as _camera_read_providers  # noqa: F401,E402
 # SMART CONTROL 01C exposes provider-based climate control without assuming IR support.
 from backend import climate_control as _climate_control  # noqa: F401,E402
+# EPIC 11 adds the generic profile/driver IR pipeline without enabling unverified codes.
+from backend import ir_framework as _ir_framework  # noqa: F401,E402
 
 # Register the read-only electricity provider and status endpoint.
 from backend import electricity_provider as _electricity_provider  # noqa: F401,E402

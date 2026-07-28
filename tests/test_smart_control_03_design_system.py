@@ -36,7 +36,7 @@ def test_household_and_lg_consume_shared_components():
 def test_normal_cards_use_device_language_and_collapse_provider_reason():
     assert "warning:userReason(device)" in HOUSEHOLD_JS
     assert "Controls are not configured yet." in HOUSEHOLD_JS
-    assert "Control path is not verified." in HOUSEHOLD_JS
+    assert "device.unavailable_reason" in HOUSEHOLD_JS
     assert "<span>Technical status</span>" in HOUSEHOLD_JS
 
 
