@@ -245,6 +245,75 @@ class TapoIRLocalBridgeTests(unittest.TestCase):
 
         assert sanitized == {"display_name": "Power", "nested": {}}
 
+    def test_ac_metadata_normalization_preserves_only_reported_state(self):
+        normalized = bridge._normalize_ac_remote_metadata({
+            "on": 1,
+            "ac_mode": 0,
+            "current_temp": 24,
+            "ac_status": "P1_M0_T24_S0_D0",
+            "hexData": "must-not-be-retained",
+        }, bridge_firmware="1.4.4")
+
+        assert normalized["state"] == {
+            "power": True,
+            "mode": 0,
+            "temperature": 24,
+            "combined_state": "P1_M0_T24_S0_D0",
+        }
+        assert normalized["combined_state_present"] is True
+        assert normalized["discovered_fields"]["hexData"] == "opaque_ir_metadata"
+        assert "must-not-be-retained" not in str(normalized)
+
+    def test_ac_metadata_field_discovery_classifies_without_inference(self):
+        normalized = bridge._normalize_ac_remote_metadata({
+            "on": False,
+            "attributes": {"reported": True},
+            "modes": ["cool", "dry"],
+            "temperature_min": 16.0,
+            "swing": None,
+        })
+
+        assert normalized["discovered_fields"] == {
+            "on": "boolean",
+            "attributes": "state_object",
+            "modes": "array",
+            "temperature_min": "number",
+            "swing": "null",
+        }
+        assert normalized["state"] == {"power": False}
+
+    def test_ac_metadata_missing_input_is_empty(self):
+        normalized = bridge._normalize_ac_remote_metadata(None)
+
+        assert normalized == {
+            "metadata_present": False,
+            "bridge_firmware": None,
+            "state": {},
+            "discovered_fields": {},
+            "combined_state_present": False,
+        }
+
+    def test_ac_metadata_unknown_firmware_does_not_change_observed_fields(self):
+        normalized = bridge._normalize_ac_remote_metadata(
+            {"on": 0, "current_temp": 25},
+            bridge_firmware="unknown-future-firmware",
+        )
+
+        assert normalized["bridge_firmware"] == "unknown-future-firmware"
+        assert normalized["state"] == {"power": False, "temperature": 25}
+
+    def test_ac_metadata_null_fields_are_discovered_but_not_invented(self):
+        normalized = bridge._normalize_ac_remote_metadata({
+            "on": None,
+            "ac_mode": None,
+            "current_temp": None,
+            "ac_status": None,
+        })
+
+        assert normalized["state"] == {}
+        assert set(normalized["discovered_fields"].values()) == {"null"}
+        assert normalized["combined_state_present"] is False
+
     def test_existing_inventory_reports_bridge_offline_and_authentication_failure(self):
         fixture = {
             "configured": True,

@@ -95,6 +95,21 @@ opaque IR fields, stored command references, credentials, and raw child records
 remain private. Discovered remotes remain non-controllable until an exact
 transmit method and schema pass the verification gate.
 
+### H110 AC metadata (EPIC 12.4)
+
+Read-only inspection of the configured Air Conditioner remote on H110 firmware
+1.4.4 found three independently named state scalars: `on`, `ac_mode`, and
+`current_temp`. The child also reports `ac_status` as one tokenized combined
+state string. An opaque `hexData` field is present but is never retained,
+decoded, logged, or returned.
+
+The device reports no capability descriptor, supported-value enumeration,
+temperature range, fan-mode list, swing/eco/turbo/sleep/timer flags, presets, or
+defaults. Consequently the current metadata supports displaying power, the raw
+numeric mode, and temperature as read-only state. It does not justify enabling
+any command control. The normalizer is private and firmware-agnostic; it records
+observed field types without interpreting unknown firmware fields.
+
 All verified send attempts are serialized by one bridge lock. Device queues
 remain independent, but two commands can never transmit through the physical
 bridge simultaneously.

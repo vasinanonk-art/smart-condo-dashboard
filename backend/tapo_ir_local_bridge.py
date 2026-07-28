@@ -32,6 +32,59 @@ _IR_REMOTE_CATEGORY = "ir.remote"
 _IR_SAFE_STATE_FIELDS = (
     "on", "muted", "ac_status", "ac_mode", "current_temp", "speed_level",
 )
+_AC_OPAQUE_FIELDS = ("hexData",)
+
+
+def _metadata_value_type(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, Mapping):
+        return "state_object"
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return "array"
+    return "unknown"
+
+
+def _normalize_ac_remote_metadata(
+    info: Optional[Mapping[str, Any]],
+    *,
+    bridge_firmware: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Normalize only directly reported AC metadata without interpreting IR data."""
+    source = info if isinstance(info, Mapping) else {}
+    discovered_fields = {
+        str(name): (
+            "opaque_ir_metadata"
+            if str(name) in _AC_OPAQUE_FIELDS
+            else _metadata_value_type(value)
+        )
+        for name, value in source.items()
+    }
+    state: Dict[str, Any] = {}
+    if isinstance(source.get("on"), bool) or source.get("on") in (0, 1):
+        state["power"] = bool(source["on"])
+    if isinstance(source.get("ac_mode"), (str, int)) and not isinstance(source.get("ac_mode"), bool):
+        state["mode"] = source["ac_mode"]
+    temperature = source.get("current_temp")
+    if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
+        state["temperature"] = temperature
+    if isinstance(source.get("ac_status"), str) and source["ac_status"]:
+        state["combined_state"] = source["ac_status"]
+    return {
+        "metadata_present": bool(source),
+        "bridge_firmware": str(bridge_firmware) if bridge_firmware else None,
+        "state": state,
+        "discovered_fields": discovered_fields,
+        "combined_state_present": "combined_state" in state,
+    }
 
 
 def invalidate_cache() -> None:
