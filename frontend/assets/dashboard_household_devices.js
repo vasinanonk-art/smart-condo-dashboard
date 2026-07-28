@@ -24,6 +24,9 @@
       if (device.unavailable_reason === 'Configuration unavailable') return 'Configuration unavailable.';
       return cameraReasons[device.unavailable_reason] || 'Camera capability is unavailable.';
     }
+    if (device.unavailable_reason === 'Configured Tapo IR remote discovered; transmit interface is not verified.') {
+      return device.unavailable_reason;
+    }
     return 'Controls are not configured yet.';
   };
 
@@ -126,6 +129,9 @@
         <div class="household-detail-item"><span>Last Command</span><strong>${safe(ir.last_command || 'None')}</strong></div>
         <div class="household-detail-item"><span>Last Result</span><strong>${safe(ir.last_response || ir.last_error || 'None')}</strong></div>
         <div class="household-detail-item"><span>Latency</span><strong>${safe(Number.isFinite(ir.latency_ms) ? `${ir.latency_ms} ms` : 'Not available')}</strong></div>
+        ${ir.remote_discovered ? `<div class="household-detail-item"><span>Configured Remote</span><strong>${safe(ir.configured_remote_name || 'Discovered')}</strong></div>` : ''}
+        ${ir.remote_discovered ? `<div class="household-detail-item"><span>Stored Commands</span><strong>${safe(ir.stored_commands_present ? 'Present but unavailable' : 'Not reported')}</strong></div>` : ''}
+        ${ir.remote_discovered ? '<div class="household-detail-item"><span>Control Available</span><strong>No</strong></div>' : ''}
       ` : '';
     const details = UI.deviceDetails({
       content: `<div class="household-detail-grid">
@@ -154,7 +160,9 @@
       host.className = 'household-grid household-entertainment-grid';
       grid.appendChild(host);
     }
-    const devices = state.devices.filter(item => item.category === 'soundbar');
+    const devices = state.devices.filter(item => (
+      item.category === 'soundbar' || item.id === 'living-room-configured-tv-ir'
+    ));
     host.innerHTML = devices.map(device => card(device, irActions(device))).join('');
     bindIrCommands(host);
   }

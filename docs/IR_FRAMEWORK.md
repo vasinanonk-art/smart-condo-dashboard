@@ -87,6 +87,14 @@ transport and command format are verified. No sender is registered by the
 default installation, no checked-in profile contains IR codes, and learning
 remains disabled.
 
+The authenticated read-only endpoint `/api/tapo-ir/existing-remotes` projects
+the H110's already-configured `SMART.TAPOREMOTE` children. It exposes only a
+dashboard-local identifier, friendly name, category/type, safe reported state,
+and whether stored command metadata exists. Vendor child IDs, remote IDs,
+opaque IR fields, stored command references, credentials, and raw child records
+remain private. Discovered remotes remain non-controllable until an exact
+transmit method and schema pass the verification gate.
+
 All verified send attempts are serialized by one bridge lock. Device queues
 remain independent, but two commands can never transmit through the physical
 bridge simultaneously.

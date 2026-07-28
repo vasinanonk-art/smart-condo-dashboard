@@ -73,6 +73,12 @@ class DashboardAuthTests(unittest.TestCase):
             self.assertEqual(response.status_code, 401)
             self.assertEqual(response.json(), {"detail": "authentication required"})
 
+    def test_existing_ir_remote_inventory_requires_authentication(self):
+        with patch.dict(os.environ, self._env(), clear=True):
+            response = TestClient(app).get("/api/tapo-ir/existing-remotes")
+            self.assertEqual(response.status_code, 401)
+            self.assertEqual(response.json(), {"detail": "authentication required"})
+
 
 if __name__ == "__main__":
     unittest.main()

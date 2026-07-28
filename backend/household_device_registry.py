@@ -86,6 +86,29 @@ def _tapo_detected() -> bool:
 
 def _ir_devices() -> list[Dict[str, Any]]:
     tapo = _tapo_detected()
+    try:
+        inventory = tapo_ir_local_bridge.existing_ir_remote_inventory()
+    except Exception:
+        inventory = {"bridge_online": None, "remotes": []}
+    discovered = inventory.get("remotes") if isinstance(inventory.get("remotes"), list) else []
+
+    def remote_kind(remote: Dict[str, Any]) -> str | None:
+        name = str(remote.get("display_name") or "").casefold()
+        if "sound" in name:
+            return "soundbar"
+        if "air" in name and "condition" in name:
+            return "air_conditioner"
+        if "fan" in name:
+            return "fan"
+        if "tv" in name or "television" in name:
+            return "television"
+        return None
+
+    remote_by_kind = {
+        kind: remote
+        for remote in discovered
+        if isinstance(remote, dict) and (kind := remote_kind(remote))
+    }
     categories = {
         "television": "tv",
         "soundbar": "soundbar",
@@ -104,14 +127,33 @@ def _ir_devices() -> list[Dict[str, Any]]:
         capabilities = {"ir": metadata} if commands else {}
         is_t3 = identity.get("id") == "bed-room-air-conditioner"
         runtime_status = item.get("runtime_status") or {}
+        remote = remote_by_kind.get(identity["type"])
         reason = item.get("unavailable_reason")
         if not commands:
             reason = (
                 "T3 IR device detected by household inventory; control path is not verified."
                 if is_t3 else
-                "Tapo H110 detected; command mapping is not configured."
+                "Configured Tapo IR remote discovered; transmit interface is not verified."
+                if remote else
+                "Tapo H110 detected; configured remote was not matched."
                 if tapo else "Tapo H110 configuration is unavailable."
             )
+        ir_diagnostics = {
+            key: copy.deepcopy(runtime_status.get(key))
+            for key in (
+                "online", "authenticated", "healthy", "firmware_version",
+                "model", "latency_ms", "last_command", "last_response",
+                "last_error", "pending_queue", "retry_count",
+            )
+        }
+        if remote:
+            ir_diagnostics.update({
+                "remote_discovered": True,
+                "configured_remote_name": remote.get("display_name"),
+                "reported_state": copy.deepcopy(remote.get("reported_state") or {}),
+                "stored_commands_present": remote.get("stored_commands_present") is True,
+                "verified_controls": [],
+            })
         devices.append(_device(
             identity["id"],
             identity["room"],
@@ -123,18 +165,36 @@ def _ir_devices() -> list[Dict[str, Any]]:
                 "degraded" if commands or (tapo and not is_t3) else "unavailable"
             ),
             capabilities=capabilities,
-            state={
-                "ir_diagnostics": {
-                    key: copy.deepcopy(runtime_status.get(key))
-                    for key in (
-                        "online", "authenticated", "healthy", "firmware_version",
-                        "model", "latency_ms", "last_command", "last_response",
-                        "last_error", "pending_queue", "retry_count",
-                    )
-                }
-            },
+            state={"ir_diagnostics": ir_diagnostics},
             state_quality=(item.get("runtime_status") or {}).get("state_quality") or "unknown",
             reason=reason,
+        ))
+    tv_remote = remote_by_kind.get("television")
+    if tv_remote:
+        devices.append(_device(
+            "living-room-configured-tv-ir",
+            "living_room",
+            str(tv_remote.get("display_name") or "Configured TV Remote"),
+            "tv",
+            online=inventory.get("bridge_online"),
+            health="degraded",
+            capabilities={},
+            state={
+                "ir_diagnostics": {
+                    "online": inventory.get("bridge_online"),
+                    "authenticated": inventory.get("authenticated") is True,
+                    "healthy": False,
+                    "remote_discovered": True,
+                    "configured_remote_name": tv_remote.get("display_name"),
+                    "reported_state": copy.deepcopy(tv_remote.get("reported_state") or {}),
+                    "stored_commands_present": tv_remote.get("stored_commands_present") is True,
+                    "verified_controls": [],
+                    "pending_queue": 0,
+                    "retry_count": 0,
+                }
+            },
+            state_quality="unknown",
+            reason="Configured Tapo IR remote discovered; transmit interface is not verified.",
         ))
     return devices
 

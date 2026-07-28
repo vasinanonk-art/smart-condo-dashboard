@@ -62,8 +62,59 @@ def test_registry_never_exposes_provider_secrets(monkeypatch):
 
 def test_unsupported_devices_have_unknown_state_and_clear_reason(monkeypatch):
     monkeypatch.setattr(registry, "_tapo_detected", lambda: True)
+    monkeypatch.setattr(
+        registry.tapo_ir_local_bridge,
+        "existing_ir_remote_inventory",
+        lambda: {
+            "bridge_online": True,
+            "authenticated": True,
+            "remotes": [
+                {"display_name": "Sound Bar", "reported_state": {}, "stored_commands_present": True},
+                {"display_name": "Air Conditioner Remote Control", "reported_state": {"on": 1}, "stored_commands_present": True},
+                {"display_name": "Fan Remote Control", "reported_state": {"on": 1}, "stored_commands_present": True},
+                {"display_name": "TV Remote Control", "reported_state": {"on": 1}, "stored_commands_present": True},
+            ],
+        },
+    )
     devices = registry._ir_devices()
     assert all(item["state_quality"] == "unknown" for item in devices)
     assert all(item["capabilities"] == {} for item in devices)
-    assert "command mapping is not configured" in devices[0]["unavailable_reason"]
-    assert "control path is not verified" in devices[-1]["unavailable_reason"]
+    soundbar = next(item for item in devices if item["id"] == "living-room-samsung-soundbar")
+    bedroom = next(item for item in devices if item["id"] == "bed-room-air-conditioner")
+    television = next(item for item in devices if item["id"] == "living-room-configured-tv-ir")
+    assert "transmit interface is not verified" in soundbar["unavailable_reason"]
+    assert "control path is not verified" in bedroom["unavailable_reason"]
+    assert television["online"] is True
+    assert television["state"]["ir_diagnostics"]["remote_discovered"] is True
+    assert television["state"]["ir_diagnostics"]["verified_controls"] == []
+
+
+def test_discovered_remote_projection_contains_no_vendor_ids_or_private_ir_data(monkeypatch):
+    monkeypatch.setattr(registry, "_tapo_detected", lambda: True)
+    monkeypatch.setattr(
+        registry.tapo_ir_local_bridge,
+        "existing_ir_remote_inventory",
+        lambda: {
+            "bridge_online": True,
+            "authenticated": True,
+            "remotes": [{
+                "id": "configured-ir-remote-1",
+                "display_name": "Fan Remote Control",
+                "reported_state": {"on": 1, "speed_level": 2},
+                "stored_commands_present": True,
+                "verified_controls": [],
+                "control_available": False,
+            }],
+        },
+    )
+
+    payload = registry._ir_devices()
+    fan = next(item for item in payload if item["id"] == "living-room-fan")
+    serialized = json.dumps(fan)
+
+    assert fan["capabilities"] == {}
+    assert fan["state"]["ir_diagnostics"]["reported_state"] == {"on": 1, "speed_level": 2}
+    assert fan["state"]["ir_diagnostics"]["verified_controls"] == []
+    assert "configured-ir-remote-1" not in serialized
+    for forbidden in ("child_id", "remote_id", "hexData", "ir_code", "password", "token"):
+        assert forbidden not in serialized

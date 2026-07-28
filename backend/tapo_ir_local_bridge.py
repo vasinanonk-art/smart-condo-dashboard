@@ -26,6 +26,11 @@ _cache: Dict[str, Any] = {"ts": 0, "payload": None}
 _SENSITIVE_PARTS = (
     "username", "password", "token", "secret", "credential", "cookie",
     "session", "auth", "key", "encrypt", "decrypt", "payload",
+    "hexdata", "pwm", "remote_id", "oemid",
+)
+_IR_REMOTE_CATEGORY = "ir.remote"
+_IR_SAFE_STATE_FIELDS = (
+    "on", "muted", "ac_status", "ac_mode", "current_temp", "speed_level",
 )
 
 
@@ -215,6 +220,77 @@ def _capability_snapshot(device: Any, identity: Mapping[str, Optional[str]]) -> 
         "supported_actions": [],
         "local_control_supported": exposes_ir and any(name in {"send_command", "transmit", "play"} for name in feature_names),
     }
+
+
+def _existing_ir_remotes(device: Any) -> list[Dict[str, Any]]:
+    children = _read_attr(device, "children", "child_devices") or []
+    if not isinstance(children, Sequence) or isinstance(children, (str, bytes, bytearray)):
+        return []
+    result = []
+    for child in children:
+        info = _device_info(child)
+        if str(_mapping_value(info, "category") or "").lower() != _IR_REMOTE_CATEGORY:
+            continue
+        child_id = _read_attr(child, "device_id", "id") or _mapping_value(info, "device_id", "deviceId")
+        display_name = _read_attr(child, "alias") or _mapping_value(info, "alias", "nickname")
+        if not child_id or not display_name:
+            continue
+        key_list = info.get("key_list")
+        if isinstance(key_list, Sequence) and not isinstance(key_list, (str, bytes, bytearray)):
+            stored_reference_count = len(key_list)
+        elif isinstance(key_list, Mapping):
+            stored_reference_count = len(key_list)
+        else:
+            stored_reference_count = 0
+        state = {
+            key: _safe_scalar(info.get(key))
+            for key in _IR_SAFE_STATE_FIELDS
+            if key in info and isinstance(info.get(key), (str, int, float, bool, type(None)))
+        }
+        result.append({
+            "child_id": str(child_id),
+            "display_name": str(display_name)[:80],
+            "category": _IR_REMOTE_CATEGORY,
+            "device_type": str(_mapping_value(info, "type", "device_type") or "SMART.TAPOREMOTE")[:40],
+            "remote_type": _safe_scalar(info.get("remote_type")),
+            "reported_state": state,
+            "stored_command_references_present": bool(
+                stored_reference_count
+                or info.get("key_sum")
+                or info.get("downloaded_key_sum")
+                or info.get("customize_key_sum")
+                or "hexData" in info
+            ),
+            "stored_command_reference_count": stored_reference_count,
+            "opaque_ir_metadata_present": "hexData" in info,
+            "verified_command_methods": [],
+        })
+    return result
+
+
+def _public_existing_ir_remotes(payload: Mapping[str, Any]) -> list[Dict[str, Any]]:
+    private = payload.get("_existing_ir_remotes")
+    if not isinstance(private, list):
+        return []
+    ordered = sorted(
+        (item for item in private if isinstance(item, Mapping)),
+        key=lambda item: (str(item.get("display_name") or "").casefold(), str(item.get("child_id") or "")),
+    )
+    return [
+        {
+            "id": f"configured-ir-remote-{index}",
+            "display_name": str(item.get("display_name") or "Configured IR Remote")[:80],
+            "category": item.get("category"),
+            "device_type": item.get("device_type"),
+            "remote_type": item.get("remote_type"),
+            "reported_state": _safe_value(item.get("reported_state") or {}),
+            "stored_commands_present": item.get("stored_command_references_present") is True,
+            "verified_controls": [],
+            "control_available": False,
+            "unavailable_reason": "existing_ir_transmit_interface_unverified",
+        }
+        for index, item in enumerate(ordered, 1)
+    ]
 
 
 def _identity_comparison(identity: Mapping[str, Optional[str]], config: Mapping[str, Optional[str]], *, targeted: bool) -> Dict[str, Any]:
@@ -506,6 +582,7 @@ def _snapshot_uncached() -> Dict[str, Any]:
             **comparison,
         },
         "debug": debug,
+        "_existing_ir_remotes": _existing_ir_remotes(device),
     }
     try:
         asyncio.run(_close_device(device))
@@ -552,7 +629,27 @@ def local_tapo_ir_provider() -> Iterable[UnifiedDevice]:
 @app.get("/api/tapo-ir/local/status")
 def get_local_tapo_ir_status() -> Dict[str, Any]:
     payload = local_tapo_ir_status()
-    return {key: value for key, value in payload.items() if key != "debug"}
+    return {key: value for key, value in payload.items() if key != "debug" and not key.startswith("_")}
+
+
+def existing_ir_remote_inventory(force: bool = False) -> Dict[str, Any]:
+    payload = local_tapo_ir_status(force=force)
+    diagnostics = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), Mapping) else {}
+    remotes = _public_existing_ir_remotes(payload)
+    return {
+        "bridge_online": payload.get("online") if isinstance(payload.get("online"), bool) else None,
+        "authenticated": payload.get("configured") is True and payload.get("online") is True,
+        "remotes": remotes,
+        "count": len(remotes),
+        "control_available": False,
+        "unavailable_reason": "existing_ir_transmit_interface_unverified",
+        "last_error": diagnostics.get("last_error"),
+    }
+
+
+@app.get("/api/tapo-ir/existing-remotes")
+def get_existing_ir_remotes() -> Dict[str, Any]:
+    return existing_ir_remote_inventory()
 
 
 @app.get("/api/tapo-ir/debug")

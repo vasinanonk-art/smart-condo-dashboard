@@ -36,6 +36,25 @@ class FakeDevice:
         return None
 
 
+class FakeIRChild:
+    def __init__(self, identifier, alias, remote_type, **state):
+        self.device_id = identifier
+        self.alias = alias
+        self.sys_info = {
+            "device_id": identifier,
+            "alias": alias,
+            "category": "ir.remote",
+            "type": "SMART.TAPOREMOTE",
+            "remote_type": remote_type,
+            "key_list": [{"private": "stored-reference"}],
+            "key_sum": 1,
+            "hexData": "opaque-ir-data",
+            **state,
+        }
+        self.features = {"device_id": object(), "reboot": object(), "unpair": object()}
+        self.modules = {"DeviceModule": object()}
+
+
 class TapoIRLocalBridgeTests(unittest.TestCase):
     def setUp(self):
         bridge.invalidate_cache()
@@ -161,6 +180,85 @@ class TapoIRLocalBridgeTests(unittest.TestCase):
         self.assertEqual(device.id, "tapo_ir:condo")
         self.assertEqual(device.actions, ())
         self.assertEqual(device.metadata["source"], "tapo_local")
+
+    def test_existing_child_inventory_normalizes_private_metadata(self):
+        device = FakeDevice()
+        device.child_devices = [
+            FakeIRChild("vendor-child-2", "Living Room Fan", 1, on=1, speed_level=2),
+            FakeIRChild("vendor-child-1", "Living Room AC", 2, on=1, current_temp=24),
+        ]
+
+        remotes = bridge._existing_ir_remotes(device)
+
+        assert [item["display_name"] for item in remotes] == ["Living Room Fan", "Living Room AC"]
+        assert remotes[0]["child_id"] == "vendor-child-2"
+        assert remotes[0]["reported_state"] == {"on": 1, "speed_level": 2}
+        assert remotes[0]["stored_command_references_present"] is True
+        assert remotes[0]["opaque_ir_metadata_present"] is True
+        assert remotes[0]["verified_command_methods"] == []
+
+    def test_public_existing_inventory_excludes_ids_codes_and_private_metadata(self):
+        private = {
+            "online": True,
+            "configured": True,
+            "diagnostics": {"last_error": None},
+            "_existing_ir_remotes": [
+                {
+                    "child_id": "vendor-secret-child-id",
+                    "display_name": "Configured Fan",
+                    "category": "ir.remote",
+                    "device_type": "SMART.TAPOREMOTE",
+                    "remote_type": 1,
+                    "reported_state": {"on": 1},
+                    "stored_command_references_present": True,
+                    "stored_command_reference_count": 4,
+                    "opaque_ir_metadata_present": True,
+                    "verified_command_methods": [],
+                    "password": "must-not-leak",
+                    "hexData": "must-not-leak-code",
+                }
+            ],
+        }
+        with patch.object(bridge, "local_tapo_ir_status", return_value=private):
+            payload = bridge.existing_ir_remote_inventory()
+
+        assert payload["bridge_online"] is True
+        assert payload["authenticated"] is True
+        assert payload["count"] == 1
+        assert payload["control_available"] is False
+        assert payload["remotes"][0]["verified_controls"] == []
+        serialized = str(payload)
+        for forbidden in (
+            "vendor-secret-child-id", "must-not-leak", "must-not-leak-code",
+            "child_id", "hexData", "password",
+        ):
+            assert forbidden not in serialized
+
+    def test_debug_sanitizer_removes_h110_ir_payload_fields(self):
+        sanitized = bridge._safe_value({
+            "display_name": "Power",
+            "hexData": "opaque-ac-state",
+            "pwm": "opaque-waveform",
+            "remote_id": "private-remote-reference",
+            "nested": {"oemId": "private-oem-reference"},
+        })
+
+        assert sanitized == {"display_name": "Power", "nested": {}}
+
+    def test_existing_inventory_reports_bridge_offline_and_authentication_failure(self):
+        fixture = {
+            "configured": True,
+            "online": False,
+            "diagnostics": {"last_error": "AuthenticationError"},
+            "_existing_ir_remotes": [],
+        }
+        with patch.object(bridge, "local_tapo_ir_status", return_value=fixture):
+            payload = bridge.existing_ir_remote_inventory()
+
+        assert payload["bridge_online"] is False
+        assert payload["authenticated"] is False
+        assert payload["remotes"] == []
+        assert payload["last_error"] == "AuthenticationError"
 
 
 if __name__ == "__main__":
