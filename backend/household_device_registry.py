@@ -123,6 +123,16 @@ def _ir_devices() -> list[Dict[str, Any]]:
                 "degraded" if commands or (tapo and not is_t3) else "unavailable"
             ),
             capabilities=capabilities,
+            state={
+                "ir_diagnostics": {
+                    key: copy.deepcopy(runtime_status.get(key))
+                    for key in (
+                        "online", "authenticated", "healthy", "firmware_version",
+                        "model", "latency_ms", "last_command", "last_response",
+                        "last_error", "pending_queue", "retry_count",
+                    )
+                }
+            },
             state_quality=(item.get("runtime_status") or {}).get("state_quality") or "unknown",
             reason=reason,
         ))

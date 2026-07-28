@@ -207,10 +207,16 @@ def test_driver_health_failure_degrades_safely():
 
     assert health == {
         "online": None,
+        "authenticated": False,
         "ready": False,
         "last_error": "RuntimeError",
         "driver_version": None,
         "firmware_version": None,
+        "model": None,
+        "latency_ms": None,
+        "last_command": None,
+        "last_response": None,
+        "last_command_latency_ms": None,
     }
     assert "private detail" not in repr(health)
 
@@ -225,11 +231,13 @@ def test_runtime_registry_tracks_required_internal_and_public_fields(tmp_path, m
     assert set(internal) >= {
         "enabled", "online", "healthy", "driver", "profile", "firmware_version",
         "last_seen", "last_command", "last_success", "last_failure",
-        "pending_queue", "retry_count",
+        "pending_queue", "retry_count", "authenticated", "model", "latency_ms",
+        "last_response", "last_error",
     }
     assert set(public["runtime_status"]) == {
         "enabled", "online", "healthy", "firmware_version", "last_seen",
         "last_command", "last_success", "last_failure", "pending_queue", "retry_count",
+        "authenticated", "model", "latency_ms", "last_response", "last_error",
     }
     assert public["runtime_status"]["online"] is True
     assert public["runtime_status"]["healthy"] is True

@@ -4,6 +4,7 @@ from __future__ import annotations
 import atexit
 import copy
 import json
+import logging
 import os
 import re
 import threading
@@ -38,6 +39,7 @@ _DEVICE_QUEUES: Dict[str, "DeviceCommandQueue"] = {}
 _DEVICE_QUEUES_GUARD = threading.Lock()
 _RUNTIME_LOCK = threading.RLock()
 _RUNTIME: Dict[str, Dict[str, Any]] = {}
+_COMMAND_LOG = logging.getLogger("smart_condo.ir.command")
 
 
 class IRConfigurationError(ValueError):
@@ -102,16 +104,29 @@ class IRDriver(ABC):
 
 
 class TapoIRDriver(IRDriver):
-    """Adapter boundary for a future verified Tapo IR bridge sender."""
+    """Production H110 lifecycle and health adapter.
 
-    driver_version = "1"
+    Production discovery currently verifies bridge authentication and metadata,
+    but not an IR transmit callable. A sender can only be registered by an
+    audited adapter after its command format is verified.
+    """
 
-    def __init__(self) -> None:
-        self._sender: Callable[[str, float], None] | None = None
+    driver_version = "2"
+
+    def __init__(
+        self,
+        status_loader: Callable[[], Mapping[str, Any]] | None = None,
+    ) -> None:
+        self._status_loader = status_loader
+        self._sender: Callable[[str, float], Any] | None = None
         self._initialized = False
         self._last_error: str | None = None
+        self._last_command: str | None = None
+        self._last_response: str | None = None
+        self._last_latency_ms: float | None = None
+        self._bridge_lock = threading.Lock()
 
-    def register_sender(self, sender: Callable[[str, float], None] | None) -> None:
+    def register_verified_sender(self, sender: Callable[[str, float], Any] | None) -> None:
         self._sender = sender
 
     def initialize(self) -> None:
@@ -119,29 +134,66 @@ class TapoIRDriver(IRDriver):
 
     def shutdown(self) -> None:
         self._initialized = False
+        self._sender = None
+
+    def _status(self) -> Mapping[str, Any]:
+        if self._status_loader is not None:
+            return self._status_loader()
+        from backend import tapo_ir_local_bridge
+
+        return tapo_ir_local_bridge.local_tapo_ir_status()
 
     def health(self) -> Dict[str, Any]:
-        ready = bool(self._initialized and self._sender)
+        try:
+            payload = self._status() if self._initialized else {}
+        except Exception as exc:
+            self._last_error = type(exc).__name__
+            payload = {}
+        diagnostics = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), Mapping) else {}
+        online = payload.get("online") if isinstance(payload.get("online"), bool) else None
+        authenticated = bool(payload.get("configured") is True and online is True)
+        bridge_error = diagnostics.get("last_error")
+        error = self._last_error or (str(bridge_error)[:80] if bridge_error else None)
+        ready = bool(self._initialized and authenticated and self._sender)
+        if authenticated and not self._sender and error is None:
+            error = "tapo_ir_send_unsupported"
         return {
-            "online": None,
+            "online": online,
+            "authenticated": authenticated,
             "ready": ready,
-            "last_error": self._last_error,
+            "last_error": error,
             "driver_version": self.driver_version,
+            "firmware_version": str(payload.get("firmware"))[:40] if payload.get("firmware") else None,
+            "model": str(payload.get("model"))[:40] if payload.get("model") else None,
+            "latency_ms": diagnostics.get("latency_ms") if isinstance(diagnostics.get("latency_ms"), (int, float)) else None,
+            "last_command": self._last_command,
+            "last_response": self._last_response,
+            "last_command_latency_ms": self._last_latency_ms,
         }
 
     def supports(self, profile: "IRProfile") -> bool:
-        return bool(profile.commands)
+        return bool(profile.commands and self.health()["ready"])
 
     def send(self, command: IRDispatchCommand) -> None:
-        if not self._initialized or not self._sender:
-            self._last_error = "tapo_ir_sender_not_verified"
+        health = self.health()
+        if not health["ready"] or not self._sender:
+            self._last_error = str(health.get("last_error") or "tapo_ir_sender_not_verified")
+            self._last_command = command.command_id
+            self._last_response = "rejected"
             raise IRDriverUnavailable(self._last_error)
+        started = time.monotonic()
+        self._last_command = command.command_id
         try:
-            self._sender(command.code, command.timeout)
+            with self._bridge_lock:
+                self._sender(command.code, command.timeout)
             self._last_error = None
+            self._last_response = "sent"
         except Exception as exc:
             self._last_error = type(exc).__name__
+            self._last_response = "failed"
             raise
+        finally:
+            self._last_latency_ms = round((time.monotonic() - started) * 1000, 1)
 
 
 @dataclass(frozen=True)
@@ -216,6 +268,7 @@ class DeviceCommandQueue:
                 status_code=429,
             )
             dropped.done.set()
+            _log_dispatch(dropped.dispatch, 0.0, "dropped", "ir_queue_overflow")
         self._publish_pending()
         return owner, dropped
 
@@ -507,6 +560,11 @@ def _runtime_status(device: IRDevice, driver: IRDriver | None, profile: IRProfil
             "last_failure": None,
             "pending_queue": 0,
             "retry_count": 0,
+            "authenticated": False,
+            "model": None,
+            "latency_ms": None,
+            "last_response": None,
+            "last_error": None,
         })
         status.update({
             "enabled": device.enabled,
@@ -518,6 +576,11 @@ def _runtime_status(device: IRDevice, driver: IRDriver | None, profile: IRProfil
             "driver_version": health.get("driver_version"),
             "last_seen": now if health.get("online") is True else status.get("last_seen"),
             "pending_queue": _queue(device.id).pending,
+            "authenticated": health.get("authenticated") is True,
+            "model": health.get("model"),
+            "latency_ms": health.get("last_command_latency_ms") or health.get("latency_ms"),
+            "last_response": health.get("last_response"),
+            "last_error": health.get("last_error"),
         })
     return copy.deepcopy(status)
 
@@ -526,6 +589,7 @@ def _driver_health(driver: IRDriver | None) -> Dict[str, Any]:
     if driver is None:
         return {
             "online": None,
+            "authenticated": False,
             "ready": False,
             "last_error": "driver_not_found",
             "driver_version": None,
@@ -536,18 +600,33 @@ def _driver_health(driver: IRDriver | None) -> Dict[str, Any]:
             raise TypeError("invalid_driver_health")
         return {
             "online": value.get("online") if isinstance(value.get("online"), bool) else None,
+            "authenticated": value.get("authenticated") is True,
             "ready": value.get("ready") is True,
             "last_error": str(value.get("last_error"))[:80] if value.get("last_error") else None,
             "driver_version": str(value.get("driver_version"))[:40] if value.get("driver_version") else None,
             "firmware_version": str(value.get("firmware_version"))[:40] if value.get("firmware_version") else None,
+            "model": str(value.get("model"))[:40] if value.get("model") else None,
+            "latency_ms": value.get("latency_ms") if isinstance(value.get("latency_ms"), (int, float)) else None,
+            "last_command": str(value.get("last_command"))[:64] if value.get("last_command") else None,
+            "last_response": str(value.get("last_response"))[:40] if value.get("last_response") else None,
+            "last_command_latency_ms": (
+                value.get("last_command_latency_ms")
+                if isinstance(value.get("last_command_latency_ms"), (int, float)) else None
+            ),
         }
     except Exception as exc:
         return {
             "online": None,
+            "authenticated": False,
             "ready": False,
             "last_error": type(exc).__name__,
             "driver_version": None,
             "firmware_version": None,
+            "model": None,
+            "latency_ms": None,
+            "last_command": None,
+            "last_response": None,
+            "last_command_latency_ms": None,
         }
 
 
@@ -557,6 +636,7 @@ def _public_status(status: Mapping[str, Any]) -> Dict[str, Any]:
         for key in (
             "enabled", "online", "healthy", "firmware_version", "last_seen",
             "last_command", "last_success", "last_failure", "pending_queue", "retry_count",
+            "authenticated", "model", "latency_ms", "last_response", "last_error",
         )
     }
 
@@ -631,9 +711,44 @@ def _resolve_command(profile: IRProfile, request: IRCommandRequest) -> IRCommand
     return None
 
 
+def _log_dispatch(
+    dispatch: IRDispatchCommand,
+    duration_ms: float,
+    result: str,
+    error_reason: str | None,
+) -> None:
+    _COMMAND_LOG.info(
+        "ir_command timestamp=%d device=%s command=%s duration_ms=%.1f result=%s error_reason=%s",
+        int(time.time()),
+        dispatch.device_id,
+        dispatch.command_id,
+        duration_ms,
+        result,
+        error_reason or "none",
+    )
+
+
+def _log_rejection(
+    device_id: str,
+    command_id: str | None,
+    started: float,
+    error_reason: str,
+) -> None:
+    safe_device = device_id if IDENTIFIER.fullmatch(device_id) else "invalid_device"
+    safe_command = command_id if command_id and IDENTIFIER.fullmatch(command_id) else "invalid_command"
+    dispatch = IRDispatchCommand(safe_device, safe_command, "custom", "", 0)
+    _log_dispatch(
+        dispatch,
+        (time.monotonic() - started) * 1000,
+        "rejected",
+        error_reason,
+    )
+
+
 def _execute_job(driver: IRDriver, job: QueuedCommand) -> Any:
     device_id = job.dispatch.device_id
     attempts = 0
+    started = time.monotonic()
     with _RUNTIME_LOCK:
         _RUNTIME[device_id]["last_command"] = job.dispatch.command_id
     for attempts in (1, 2):
@@ -645,7 +760,10 @@ def _execute_job(driver: IRDriver, job: QueuedCommand) -> Any:
                 status.update({
                     "last_success": now,
                     "last_failure": None,
+                    "last_response": "sent",
+                    "last_error": None,
                 })
+            _log_dispatch(job.dispatch, (time.monotonic() - started) * 1000, "sent", None)
             return {
                 "ok": True,
                 "device_id": device_id,
@@ -661,14 +779,34 @@ def _execute_job(driver: IRDriver, job: QueuedCommand) -> Any:
                     _RUNTIME[device_id]["retry_count"] += 1
                 continue
             with _RUNTIME_LOCK:
-                _RUNTIME[device_id]["last_failure"] = int(time.time())
+                _RUNTIME[device_id].update({
+                    "last_failure": int(time.time()),
+                    "last_response": "timeout",
+                    "last_error": "ir_command_timeout",
+                })
+            _log_dispatch(
+                job.dispatch,
+                (time.monotonic() - started) * 1000,
+                "timeout",
+                "ir_command_timeout",
+            )
             return JSONResponse(
                 {"detail": "ir_command_timeout", "attempts": attempts, "state_quality": "unknown"},
                 status_code=504,
             )
         except Exception:
             with _RUNTIME_LOCK:
-                _RUNTIME[device_id]["last_failure"] = int(time.time())
+                _RUNTIME[device_id].update({
+                    "last_failure": int(time.time()),
+                    "last_response": "failed",
+                    "last_error": "ir_command_failed",
+                })
+            _log_dispatch(
+                job.dispatch,
+                (time.monotonic() - started) * 1000,
+                "failed",
+                "ir_command_failed",
+            )
             return JSONResponse(
                 {"detail": "ir_command_failed", "attempts": attempts, "state_quality": "unknown"},
                 status_code=502,
@@ -681,12 +819,20 @@ def execute_command(
     command_or_request: str | IRCommandRequest,
     timeout: float | None = None,
 ):
+    started = time.monotonic()
+    requested_id = (
+        command_or_request
+        if isinstance(command_or_request, str)
+        else command_or_request.command or command_or_request.capability
+    )
     device = _device(device_id)
     if device is None:
+        _log_rejection(device_id, requested_id, started, "ir_device_not_found")
         return JSONResponse({"detail": "ir_device_not_found"}, status_code=404)
     try:
         profile = load_profile(device.profile)
     except IRConfigurationError:
+        _log_rejection(device_id, requested_id, started, "ir_profile_missing")
         return JSONResponse({"detail": "ir_profile_missing"}, status_code=422)
     request = (
         IRCommandRequest(command=command_or_request)
@@ -694,12 +840,15 @@ def execute_command(
     )
     command = _resolve_command(profile, request)
     if command is None:
+        _log_rejection(device_id, requested_id, started, "ir_command_unknown")
         return JSONResponse({"detail": "ir_command_unknown"}, status_code=422)
     if command.capability not in device.capabilities:
+        _log_rejection(device_id, command.id, started, "ir_capability_unsupported")
         return JSONResponse({"detail": "ir_capability_unsupported"}, status_code=422)
     driver = DRIVERS.get(device.driver)
     status = _runtime_status(device, driver, profile)
     if not device.enabled or not driver or not status["healthy"]:
+        _log_rejection(device_id, command.id, started, "ir_driver_unavailable")
         return JSONResponse({"detail": "ir_driver_unavailable"}, status_code=422)
     dispatch = IRDispatchCommand(
         device.id,

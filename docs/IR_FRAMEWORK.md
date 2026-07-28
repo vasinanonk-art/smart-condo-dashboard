@@ -21,7 +21,7 @@ Per-device bounded FIFO
 IR driver lifecycle
     │ bounded send
     ▼
-Verified IR bridge adapter (future Tapo sender)
+Verified IR bridge adapter
 ```
 
 `IR_DEVICE_REGISTRY_FILE` may point to a persistent registry. When unset,
@@ -75,8 +75,21 @@ must honor the timeout carried by each dispatch command. Registration initialize
 the driver, replacement shuts down the previous driver, and process exit shuts
 down all registered drivers.
 
-The Tapo driver intentionally has no sender until a verified bridge adapter is
-registered.
+The production Tapo driver reads the verified H110 bridge status through the
+existing local `python-kasa` discovery path. This confirms bridge reachability,
+authentication, model, firmware, and discovery latency. The deployed
+`python-kasa 0.10.2` API does not expose an IR transmit callable or a verified
+command format, so the driver remains not ready for sends and reports
+`tapo_ir_send_unsupported`.
+
+An audited adapter may call `register_verified_sender()` only after its
+transport and command format are verified. No sender is registered by the
+default installation, no checked-in profile contains IR codes, and learning
+remains disabled.
+
+All verified send attempts are serialized by one bridge lock. Device queues
+remain independent, but two commands can never transmit through the physical
+bridge simultaneously.
 
 ## Queue and runtime registry
 
@@ -90,8 +103,14 @@ not retry.
 
 Runtime state tracks enabled, online and healthy state, internal driver/profile
 ownership, firmware version, last seen/command/success/failure, pending depth,
-and retry count. Driver/profile ownership remains private; the other safe fields
-are returned under `runtime_status`.
+retry count, authentication state, bridge model, latency, last response, and a
+safe last-error reason. Driver/profile ownership remains private; the other safe
+fields are returned under `runtime_status`.
+
+Each dispatched command produces one structured log record with timestamp,
+safe device and command IDs, duration, result, and safe error reason. IR codes,
+credentials, bridge addresses, tokens, and raw bridge responses are never
+logged.
 
 ## Profile schema
 

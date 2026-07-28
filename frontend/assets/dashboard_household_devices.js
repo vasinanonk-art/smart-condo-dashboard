@@ -118,11 +118,21 @@
 
   function card(device, controls) {
     const stateText = device.state_quality === 'assumed' ? 'IR has no device feedback.' : '';
+    const ir = device.state?.ir_diagnostics;
+    const irDetails = ir && typeof ir === 'object' ? `
+        <div class="household-detail-item"><span>Bridge Status</span><strong>${safe(ir.online === true ? 'Online' : ir.online === false ? 'Offline' : 'Unknown')}</strong></div>
+        <div class="household-detail-item"><span>Driver Status</span><strong>${safe(ir.healthy === true ? 'Ready' : ir.authenticated === true ? 'Sender unavailable' : 'Unavailable')}</strong></div>
+        <div class="household-detail-item"><span>Queue</span><strong>${safe(ir.pending_queue ?? 0)}</strong></div>
+        <div class="household-detail-item"><span>Last Command</span><strong>${safe(ir.last_command || 'None')}</strong></div>
+        <div class="household-detail-item"><span>Last Result</span><strong>${safe(ir.last_response || ir.last_error || 'None')}</strong></div>
+        <div class="household-detail-item"><span>Latency</span><strong>${safe(Number.isFinite(ir.latency_ms) ? `${ir.latency_ms} ms` : 'Not available')}</strong></div>
+      ` : '';
     const details = UI.deviceDetails({
       content: `<div class="household-detail-grid">
         <div class="household-detail-item"><span>Category</span><strong>${safe(device.category)}</strong></div>
         <div class="household-detail-item"><span>Health</span><strong>${safe(device.health)}</strong></div>
         ${device.unavailable_reason ? `<div class="household-detail-item"><span>Technical status</span><strong>${safe(device.unavailable_reason)}</strong></div>` : ''}
+        ${irDetails}
       </div>`,
     });
     return UI.deviceCard({
