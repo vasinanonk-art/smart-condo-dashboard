@@ -45,6 +45,82 @@ process.stdout.write(JSON.stringify({{
     )
 
 
+def chart_scrub_behavior():
+    source = json.dumps(str(ROOT / "frontend/assets/dashboard_pm25_hotfix.js"))
+    return run_node(
+        f"""
+const fs=require('fs'),vm=require('vm');
+let renderedRows=[];
+const window={{
+  DASHBOARD_CHART_DEBUG:false,
+  drawChart:(id,rows)=>{{renderedRows=rows;}}
+}};
+const document={{getElementById:()=>null}};
+const context={{window,document,console}}; vm.createContext(context);
+vm.runInContext(fs.readFileSync({source},'utf8'),context);
+const api=window.DashboardChartInteraction;
+const series=[{{key:'temperature'}},{{key:'pm25'}}];
+const raw=[
+  {{ts:3,temperature:23,pm25:13}},
+  {{ts:1,temperature:21,pm25:11}},
+  {{ts:2,temperature:22,pm25:12}},
+  {{ts:2,temperature:24,pm25:null}},
+  {{ts:4,temperature:null,pm25:null}},
+  {{ts:5,temperature:'bad',pm25:''}}
+];
+const canonical=api.canonicalRows(raw,series);
+const visible=api.buildVisibleSamples('overviewChart',raw,series);
+window.drawChart('overviewChart',raw,series);
+
+let rect={{left:100,top:20,width:450,height:155}};
+const svg={{
+  viewBox:{{baseVal:{{x:0,y:0,width:900,height:310}}}},
+  getBoundingClientRect:()=>rect
+}};
+const plot={{left:48,right:882,top:18,bottom:275}};
+const positions=api.samplePositions(visible.length,plot.left,plot.right);
+const temperature=api.createSelectionModel(svg,plot,visible,positions);
+const pm25=api.createSelectionModel(svg,plot,visible,positions);
+const clientAtSvgX=x=>rect.left+x/900*rect.width;
+const sweep=[-100,48,180,400,600,882,1200].map(x=>temperature.select(clientAtSvgX(x),60).index);
+const marginLeft=temperature.select(rect.left,60).index;
+const marginRight=temperature.select(rect.left+rect.width,60).index;
+const pmSelection=pm25.select(clientAtSvgX(48),60).index;
+const independentBefore=temperature.selectedIndex();
+pm25.select(clientAtSvgX(882),60);
+const independentAfter=temperature.selectedIndex();
+
+rect={{left:40,top:10,width:900,height:310}};
+const resized=temperature.select(40+441,60).index;
+const singleRows=[{{ts:1,temperature:20}}];
+const single=api.createSelectionModel(
+  svg,plot,singleRows,api.samplePositions(1,plot.left,plot.right)
+);
+const singleSelections=[40,490,940].map(x=>single.select(x,60).index);
+window.visibleRows=(id,rows)=>rows.filter((row,index)=>index%2===0);
+const downsampled=api.buildVisibleSamples('overviewChart',[
+  {{ts:1,temperature:10}},{{ts:2,temperature:20}},
+  {{ts:3,temperature:30}},{{ts:4,temperature:40}},
+  {{ts:5,temperature:50}}
+],[{{key:'temperature'}}]);
+const mouse=api.pointerCoordinates({{clientX:123,clientY:45}});
+const touch=api.pointerCoordinates({{touches:[{{clientX:123,clientY:45}}]}});
+process.stdout.write(JSON.stringify({{
+  canonicalTs:canonical.map(row=>row.ts),
+  duplicateValue:canonical.find(row=>row.ts===2).temperature,
+  visibleTs:visible.map(row=>row.ts),
+  renderedTs:renderedRows.map(row=>row.ts),
+  nullNumeric:api.numeric(null),
+  emptyNumeric:api.numeric(''),
+  sweep,marginLeft,marginRight,resized,singleSelections,
+  independent:independentBefore===independentAfter && pmSelection===0,
+  downsampledTs:downsampled.map(row=>row.ts),
+  mouseTouchParity:JSON.stringify(mouse)===JSON.stringify(touch)
+}}));
+"""
+    )
+
+
 def topology_behavior():
     source = json.dumps(str(ROOT / "frontend/assets/dashboard_topology.js"))
     return run_node(

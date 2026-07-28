@@ -8,9 +8,41 @@
   const CHART_IDS = new Set(['overviewChart', 'overviewPmChart', 'airChart']);
   const state = new Map();
   const DEBUG = window.DASHBOARD_CHART_DEBUG === true;
-  const numeric = value => { const number = Number(value); return Number.isFinite(number) ? number : null; };
+  const numeric = value => {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  };
   const visibleRowsFor = (id, rows) => typeof window.visibleRows === 'function' ? window.visibleRows(id, rows) : (rows || []);
   const samplePositions = (count, left, right) => count === 1 ? [(left + right) / 2] : count > 1 ? Array.from({length: count}, (_, index) => left + index / (count - 1) * (right - left)) : [];
+
+  function canonicalRows(rows, series) {
+    const byTimestamp = new Map();
+    (rows || []).forEach((source, sourceIndex) => {
+      if (!source || typeof source !== 'object') return;
+      const timestamp = numeric(source.ts);
+      if (timestamp === null) return;
+      const previous = byTimestamp.get(timestamp);
+      const row = {...(previous?.row || {}), ...source, ts: timestamp};
+      if (previous) {
+        series.forEach(item => {
+          if (numeric(source[item.key]) === null && numeric(previous.row[item.key]) !== null) {
+            row[item.key] = previous.row[item.key];
+          }
+        });
+      }
+      byTimestamp.set(timestamp, {row, sourceIndex});
+    });
+    return Array.from(byTimestamp.values())
+      .sort((left, right) => left.row.ts - right.row.ts || left.sourceIndex - right.sourceIndex)
+      .map(item => item.row);
+  }
+
+  function buildVisibleSamples(id, rows, series) {
+    const ordered = canonicalRows(rows, series);
+    return (visibleRowsFor(id, ordered) || [])
+      .filter(row => series.some(item => numeric(row[item.key]) !== null));
+  }
 
   function selectSampleIndex(pointerX, positions) {
     if (!positions.length) return -1;
@@ -30,21 +62,51 @@
   }
 
   function clientToSvg(svg, clientX, clientY) {
-    const matrix = svg.getScreenCTM();
-    if (!matrix) return null;
-    const point = svg.createSVGPoint();
-    point.x = clientX;
-    point.y = clientY;
-    return point.matrixTransform(matrix.inverse());
+    const rect = svg.getBoundingClientRect();
+    const viewBox = svg.viewBox?.baseVal;
+    if (!rect || rect.width <= 0 || rect.height <= 0 || !viewBox) return null;
+    const width = viewBox.width || rect.width;
+    const height = viewBox.height || rect.height;
+    return {
+      x: (viewBox.x || 0) + (clientX - rect.left) / rect.width * width,
+      y: (viewBox.y || 0) + (clientY - rect.top) / rect.height * height
+    };
   }
 
   function svgToClient(svg, x, y) {
-    const matrix = svg.getScreenCTM();
-    if (!matrix) return null;
-    const point = svg.createSVGPoint();
-    point.x = x;
-    point.y = y;
-    return point.matrixTransform(matrix);
+    const rect = svg.getBoundingClientRect();
+    const viewBox = svg.viewBox?.baseVal;
+    if (!rect || rect.width <= 0 || rect.height <= 0 || !viewBox) return null;
+    const width = viewBox.width || rect.width;
+    const height = viewBox.height || rect.height;
+    return {
+      x: rect.left + (x - (viewBox.x || 0)) / width * rect.width,
+      y: rect.top + (y - (viewBox.y || 0)) / height * rect.height
+    };
+  }
+
+  function createSelectionModel(svg, plot, rows, positions) {
+    let selectedIndex = -1;
+    return {
+      select(clientX, clientY = 0) {
+        const point = clientToSvg(svg, clientX, clientY);
+        if (!point) return null;
+        const pointerX = Math.max(plot.left, Math.min(plot.right, point.x));
+        const pointerY = Math.max(plot.top, Math.min(plot.bottom, point.y));
+        const index = selectSampleIndex(pointerX, positions);
+        if (index < 0) return null;
+        selectedIndex = index;
+        return {row: rows[index], index, sampleX: positions[index], pointerX, pointerY};
+      },
+      selectedIndex: () => selectedIndex
+    };
+  }
+
+  function pointerCoordinates(event) {
+    const pointer = event?.touches?.[0] || event?.changedTouches?.[0] || event;
+    return pointer && Number.isFinite(pointer.clientX)
+      ? {clientX: pointer.clientX, clientY: Number.isFinite(pointer.clientY) ? pointer.clientY : 0}
+      : null;
   }
 
   function hide(id) {
@@ -77,6 +139,7 @@
     hit.style.fill = 'transparent';
     hit.style.cursor = 'crosshair';
     svg.appendChild(hit);
+    const selection = createSelectionModel(svg, plot, rows, positions);
 
     const hideCurrent = () => {
       layer.style.display = 'none';
@@ -87,15 +150,11 @@
     };
 
     const move = event => {
-      const pointer = event.touches?.[0] || event.changedTouches?.[0] || event;
-      const svgPoint = clientToSvg(svg, pointer.clientX, pointer.clientY);
-      if (!svgPoint) return;
-      const pointerX = Math.max(plot.left, Math.min(plot.right, svgPoint.x));
-      const pointerY = Math.max(plot.top, Math.min(plot.bottom, svgPoint.y));
-      const index = selectSampleIndex(pointerX, positions);
-      if (index < 0) return;
-      const sampleX = positions[index];
-      const row = rows[index];
+      const pointer = pointerCoordinates(event);
+      if (!pointer) return;
+      const selected = selection.select(pointer.clientX, pointer.clientY);
+      if (!selected) return;
+      const {row, index, sampleX, pointerX, pointerY} = selected;
       crosshair.setAttribute('x1', sampleX);
       crosshair.setAttribute('x2', sampleX);
       points.innerHTML = '';
@@ -153,8 +212,7 @@
     const svg = document.getElementById(id);
     const wrap = svg?.parentElement;
     if (!svg || !wrap) return;
-    const visible = visibleRowsFor(id, rows);
-    const valid = (visible || []).filter(row => series.some(item => numeric(row[item.key]) !== null));
+    const valid = buildVisibleSamples(id, rows, series);
     const hit = svg.querySelector('.hit');
     const layer = svg.querySelector('.hover-layer');
     const line = layer?.querySelector('.crosshair');
@@ -196,8 +254,9 @@
 
   if (typeof originalDrawChart === 'function') {
     window.drawChart = function sharedChartDraw(id, rows, series) {
-      originalDrawChart(id, rows, series);
-      try { install(id, rows, series); }
+      const ordered = CHART_IDS.has(id) ? canonicalRows(rows, series) : rows;
+      originalDrawChart(id, ordered, series);
+      try { install(id, ordered, series); }
       catch (error) { console.error('Chart interaction diagnostics', {name: error?.name || 'Error', message: error?.message || 'interaction setup failed'}); }
     };
   }
@@ -205,5 +264,8 @@
     if (typeof originalChartReset === 'function') originalChartReset(id);
     hide(id);
   };
-  window.DashboardChartInteraction = Object.freeze({selectSampleIndex, samplePositions, visibleRowsFor, clientToSvg, svgToClient, attach});
+  window.DashboardChartInteraction = Object.freeze({
+    numeric, canonicalRows, buildVisibleSamples, selectSampleIndex, samplePositions,
+    visibleRowsFor, clientToSvg, svgToClient, createSelectionModel, pointerCoordinates, attach
+  });
 })();
