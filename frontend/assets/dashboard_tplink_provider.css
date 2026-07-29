@@ -1,0 +1,85 @@
+.tplink-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--sc-space-4);
+}
+
+.tplink-provider-card {
+  min-width: 0;
+  padding: var(--sc-space-4);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-md);
+  background: var(--sc-color-surface);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.tplink-provider-card h3 {
+  margin: 0 0 var(--sc-space-3);
+  color: var(--sc-color-text);
+}
+
+.tplink-provider-list,
+.tplink-capability-list {
+  display: grid;
+  gap: var(--sc-space-2);
+  margin: 0;
+}
+
+.tplink-provider-row,
+.tplink-capability-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sc-space-3);
+  align-items: center;
+}
+
+.tplink-provider-row dt,
+.tplink-provider-row dd {
+  margin: 0;
+}
+
+.tplink-provider-row dt {
+  color: var(--sc-color-text-secondary);
+}
+
+.tplink-capability-name {
+  overflow-wrap: anywhere;
+}
+
+.tplink-capability-status {
+  color: var(--green);
+  font-size: var(--sc-font-xs);
+  font-weight: 680;
+}
+
+.tplink-capability-status[data-supported="false"] {
+  color: var(--sc-color-text-secondary);
+}
+
+.tplink-camera-list {
+  display: grid;
+  gap: var(--sc-space-2);
+}
+
+.tplink-camera-item {
+  padding: var(--sc-space-3);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.tplink-provider-empty,
+.tplink-provider-error {
+  margin: 0;
+  color: var(--sc-color-text-secondary);
+}
+
+.tplink-provider-error {
+  color: var(--red);
+}
+
+@media (max-width: 600px) {
+  .tplink-provider-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

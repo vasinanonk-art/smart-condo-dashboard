@@ -275,9 +275,31 @@ provider = TPLinkCameraProvider(cameras=verified_observations)
 register_camera_provider(connector, provider)
 ```
 
-This example describes future composition only. No application module currently
-constructs these objects, and no runtime feature is activated by importing the
-provider.
+Importing the provider module alone remains inert. Application composition is
+explicit and is described below.
+
+## Read-only dashboard integration
+
+EPIC 17 explicitly composes one empty `TPLinkCameraProvider` for presentation in
+the authenticated dashboard. The application initializes and shuts down this
+transport-free provider with the existing application lifecycle. It does not
+load camera credentials or configuration and therefore reports an empty camera
+inventory until a separately approved inventory source is implemented.
+
+The authenticated read-only routes are:
+
+| Route | Content |
+|---|---|
+| `/api/tplink/providers/status` | Safe provider health |
+| `/api/tplink/providers/metadata` | Provider self-description |
+| `/api/tplink/providers/capabilities` | Explicit support matrix |
+| `/api/tplink/providers/diagnostics` | Safe lifecycle diagnostics |
+| `/api/tplink/cameras` | Safe connector camera inventory |
+
+All five routes use `GET`. There are no TP-Link write routes, command handlers,
+snapshot endpoints, streams, PTZ operations, scene execution, clients, login,
+cloud communication, or undocumented protocol calls. The dashboard shows
+`Not Supported` capability values rather than creating controls for them.
 
 ## Compatibility
 
