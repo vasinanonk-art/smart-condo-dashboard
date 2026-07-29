@@ -230,6 +230,55 @@ connector core. Adding a new built-in capability is reserved for a deliberate
 schema revision; provider-specific operations should normally use validated
 extension capability identifiers.
 
+## TP-Link camera provider: read-only infrastructure
+
+`backend.tplink_camera_provider.TPLinkCameraProvider` is the first concrete
+provider skeleton. It is intentionally transport-free: a future approved
+integration may supply camera observations, but this module does not discover
+devices, authenticate, log in, open a network connection, or register itself.
+
+Its only supported capabilities are:
+
+| Capability | Behavior |
+|---|---|
+| `inventory` | Map supplied camera observations to safe connector devices |
+| `health` | Report provider readiness and whether inventory was refreshed |
+
+Capability discovery describes `inventory`, `health`, `snapshot`, `livestream`,
+`recordings`, `motion`, `microphone`, `speaker`, and `ptz`. Only inventory and
+health are `Supported`. Every operational capability is explicitly
+`Not Supported`; discovery does not imply an implementation or fallback.
+
+Provider self-description exposes only:
+
+- provider name;
+- provider implementation version;
+- inventory API contract version;
+- `read_only_skeleton` implementation status.
+
+Provider diagnostics expose supported and unsupported capability counts,
+initialization timestamp, and monotonic provider uptime. Shutdown stops the
+uptime clock while retaining the last initialization timestamp. Diagnostics do
+not expose process, network, credential, device, or transport details.
+
+Camera inventory exposes the safe public ID, alias, model, device type,
+firmware, hardware version, online state, and a redacted serial hint. Full
+serials remain private input data and are never emitted by the connector model.
+No vendor device ID, credential, address, token, or stream URL is accepted as
+public provider metadata.
+
+Registration remains explicit:
+
+```python
+connector = TPLinkConnector()
+provider = TPLinkCameraProvider(cameras=verified_observations)
+register_camera_provider(connector, provider)
+```
+
+This example describes future composition only. No application module currently
+constructs these objects, and no runtime feature is activated by importing the
+provider.
+
 ## Compatibility
 
 `backend.tplink_connector` imports no dashboard application module and creates
