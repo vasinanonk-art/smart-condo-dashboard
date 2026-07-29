@@ -36,6 +36,12 @@ class ChartScrubInteractionTests(unittest.TestCase):
         self.assertEqual(self.result["sweep"][-1], 2)
         self.assertEqual(self.result["singleSelections"], [0, 0, 0])
 
+    def test_interaction_surface_includes_full_rendered_width(self):
+        self.assertEqual(
+            self.result["interactionBounds"],
+            {"left": 0, "right": 900, "top": 18, "bottom": 275},
+        )
+
     def test_selection_uses_downsampled_visible_series(self):
         self.assertEqual(self.result["downsampledTs"], [1, 3, 5])
 

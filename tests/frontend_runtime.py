@@ -97,6 +97,7 @@ const single=api.createSelectionModel(
   svg,plot,singleRows,api.samplePositions(1,plot.left,plot.right)
 );
 const singleSelections=[40,490,940].map(x=>single.select(x,60).index);
+const interactionBounds=api.interactionBounds(svg,plot);
 window.visibleRows=(id,rows)=>rows.filter((row,index)=>index%2===0);
 const downsampled=api.buildVisibleSamples('overviewChart',[
   {{ts:1,temperature:10}},{{ts:2,temperature:20}},
@@ -112,7 +113,7 @@ process.stdout.write(JSON.stringify({{
   renderedTs:renderedRows.map(row=>row.ts),
   nullNumeric:api.numeric(null),
   emptyNumeric:api.numeric(''),
-  sweep,marginLeft,marginRight,resized,singleSelections,
+  sweep,marginLeft,marginRight,resized,singleSelections,interactionBounds,
   independent:independentBefore===independentAfter && pmSelection===0,
   downsampledTs:downsampled.map(row=>row.ts),
   mouseTouchParity:JSON.stringify(mouse)===JSON.stringify(touch)

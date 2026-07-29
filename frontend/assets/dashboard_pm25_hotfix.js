@@ -109,6 +109,13 @@
       : null;
   }
 
+  function interactionBounds(svg, plot) {
+    const viewBox = svg.viewBox?.baseVal;
+    const left = viewBox?.x || 0;
+    const width = viewBox?.width || Math.max(0, plot.right - plot.left);
+    return {left, right:left + width, top:plot.top, bottom:plot.bottom};
+  }
+
   function hide(id) {
     const svg = document.getElementById(id);
     const layer = svg?.querySelector('.hover-layer');
@@ -129,12 +136,13 @@
     const wrap = svg?.parentElement;
     if (!svg || !wrap || !hit || !layer || !crosshair || !points || !tooltip || !rows.length || !positions.length) return null;
 
+    const bounds = interactionBounds(svg, plot);
     crosshair.setAttribute('y1', plot.top);
     crosshair.setAttribute('y2', plot.bottom);
-    hit.setAttribute('x', plot.left);
-    hit.setAttribute('y', plot.top);
-    hit.setAttribute('width', Math.max(0, plot.right - plot.left));
-    hit.setAttribute('height', Math.max(0, plot.bottom - plot.top));
+    hit.setAttribute('x', bounds.left);
+    hit.setAttribute('y', bounds.top);
+    hit.setAttribute('width', Math.max(0, bounds.right - bounds.left));
+    hit.setAttribute('height', Math.max(0, bounds.bottom - bounds.top));
     hit.style.pointerEvents = 'all';
     hit.style.fill = 'transparent';
     hit.style.cursor = 'crosshair';
@@ -266,6 +274,7 @@
   };
   window.DashboardChartInteraction = Object.freeze({
     numeric, canonicalRows, buildVisibleSamples, selectSampleIndex, samplePositions,
-    visibleRowsFor, clientToSvg, svgToClient, createSelectionModel, pointerCoordinates, attach
+    visibleRowsFor, clientToSvg, svgToClient, createSelectionModel, pointerCoordinates,
+    interactionBounds, attach
   });
 })();

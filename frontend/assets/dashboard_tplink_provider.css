@@ -21,16 +21,16 @@
 .tplink-provider-list,
 .tplink-capability-list {
   display: grid;
-  gap: var(--sc-space-2);
+  gap: var(--sc-space-3);
   margin: 0;
 }
 
 .tplink-provider-row,
 .tplink-capability-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(110px, 0.8fr) minmax(0, 1.2fr);
   gap: var(--sc-space-3);
-  align-items: center;
+  align-items: start;
 }
 
 .tplink-provider-row dt,
@@ -40,6 +40,14 @@
 
 .tplink-provider-row dt {
   color: var(--sc-color-text-secondary);
+}
+
+.tplink-provider-row dd {
+  min-width: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  text-align: right;
+  white-space: normal;
 }
 
 .tplink-capability-name {
@@ -81,5 +89,10 @@
 @media (max-width: 600px) {
   .tplink-provider-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tplink-provider-row,
+  .tplink-capability-row {
+    grid-template-columns: minmax(96px, 0.7fr) minmax(0, 1.3fr);
   }
 }

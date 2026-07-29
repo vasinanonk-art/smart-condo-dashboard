@@ -22,6 +22,43 @@
     .replaceAll('_', ' ')
     .replace(/\b\w/g, character => character.toUpperCase());
 
+  function localTimestamp(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : new Intl.DateTimeFormat('en-GB', {
+      timeZone:'Asia/Bangkok',
+      day:'2-digit',
+      month:'short',
+      year:'numeric',
+      hour:'2-digit',
+      minute:'2-digit',
+      second:'2-digit',
+      hour12:false,
+    }).format(date);
+  }
+
+  function displayValue(name, value) {
+    if (value === null || value === undefined || value === '') return 'Not available';
+    if (/(?:timestamp|_at|_time|last_seen|initialization)/i.test(name)) {
+      const formatted = localTimestamp(value);
+      if (formatted) return formatted;
+    }
+    if (typeof value === 'object') {
+      const meaningful = ['label', 'name', 'status', 'state', 'message', 'result']
+        .map(key => value?.[key])
+        .find(item => ['string', 'number', 'boolean'].includes(typeof item));
+      if (meaningful !== undefined) return String(meaningful);
+      try {
+        const serialized = JSON.stringify(value);
+        return serialized && serialized !== '{}' && serialized !== '[]'
+          ? serialized
+          : 'Not available';
+      } catch (_error) {
+        return 'Not available';
+      }
+    }
+    return String(value);
+  }
+
   function capabilityRows(capabilities) {
     return Object.entries(capabilities || {}).map(([name, status]) => ({
       name,
@@ -32,7 +69,7 @@
 
   function definitionRows(values) {
     return Object.entries(values || {}).map(([name, value]) => (
-      `<div class="tplink-provider-row"><dt>${safe(label(name))}</dt><dd>${safe(value ?? 'Not available')}</dd></div>`
+      `<div class="tplink-provider-row"><dt>${safe(label(name))}</dt><dd>${safe(displayValue(name, value))}</dd></div>`
     )).join('');
   }
 
@@ -99,6 +136,7 @@
 
   window.TPLinkProviderDashboard = Object.freeze({
     capabilityRows,
+    displayValue,
     render,
     load,
     endpoints:endpointNames,

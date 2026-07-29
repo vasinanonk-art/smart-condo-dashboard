@@ -21,10 +21,10 @@ const host={{
   removeAttribute(name){{delete this.attributes[name];}}
 }};
 const payloads={{
-  '/api/tplink/providers/status':{{providers:{{tplink_camera:{{status:'healthy',ready:true}}}}}},
+  '/api/tplink/providers/status':{{providers:{{tplink_camera:{{status:'healthy',ready:true,last_seen:'2026-07-29T14:15:16Z'}}}}}},
   '/api/tplink/providers/metadata':{{providers:{{tplink_camera:{{provider_name:'TP-Link Camera Provider',implementation_status:'read_only_skeleton'}}}}}},
   '/api/tplink/providers/capabilities':{{providers:{{tplink_camera:{{inventory:'Supported',health:'Supported',snapshot:'Not Supported',ptz:'Not Supported'}}}}}},
-  '/api/tplink/providers/diagnostics':{{providers:{{tplink_camera:{{supported_capability_count:2,unsupported_capability_count:7}}}}}},
+  '/api/tplink/providers/diagnostics':{{providers:{{tplink_camera:{{supported_capability_count:2,unsupported_capability_count:7,last_response:{{status:'Ready'}},empty_value:{{}}}}}}}},
   '/api/tplink/cameras':{{cameras:[{{display_name:'Living <Camera>',model:'Verified Model',online:true}}]}}
 }};
 const fetch=async (url,options)=>{{
@@ -95,3 +95,12 @@ def test_dashboard_has_no_operational_camera_controls():
     assert "<button" not in html
     assert "snapshot" in html
     assert "not supported" in html
+
+
+def test_diagnostics_format_objects_and_timestamps_for_people():
+    result = frontend_behavior()
+
+    assert "[object Object]" not in result["html"]
+    assert "Ready" in result["html"]
+    assert "Not available" in result["html"]
+    assert "29 Jul 2026" in result["html"]
