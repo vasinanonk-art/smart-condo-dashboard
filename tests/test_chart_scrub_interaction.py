@@ -42,6 +42,56 @@ class ChartScrubInteractionTests(unittest.TestCase):
             {"left": 0, "right": 900, "top": 18, "bottom": 275},
         )
 
+    def test_all_chart_configurations_reach_both_endpoints(self):
+        names = {
+            "temperature-portrait",
+            "humidity-landscape",
+            "pm25-landscape",
+            "electricity-portrait",
+        }
+        self.assertEqual(
+            {configuration["name"] for configuration in self.result["endpointConfigurations"]},
+            names,
+        )
+        for configuration in self.result["endpointConfigurations"]:
+            self.assertEqual(configuration["indices"], [0, 0, 47, 47])
+            self.assertEqual(configuration["timestamps"], [1, 1, 48, 48])
+            self.assertEqual(
+                configuration["markerPositions"][0],
+                configuration["markerPositions"][1],
+            )
+            self.assertEqual(
+                configuration["markerPositions"][2],
+                configuration["markerPositions"][3],
+            )
+            self.assertEqual(
+                configuration["touchIndices"],
+                configuration["indices"],
+            )
+
+    def test_aspect_ratio_letterbox_is_included_in_coordinate_conversion(self):
+        conversion = self.result["wideConversion"]
+
+        self.assertEqual(conversion["offsetX"], 100)
+        self.assertEqual(conversion["scaleX"], 1)
+        self.assertAlmostEqual(conversion["oldFirstX"], 121.09, places=2)
+        self.assertAlmostEqual(conversion["oldLastX"], 803.45, places=2)
+        self.assertEqual(conversion["convertedFirst"], 48)
+        self.assertEqual(conversion["convertedLast"], 882)
+
+    def test_endpoint_events_render_matching_marker_and_tooltip(self):
+        rendered = self.result["renderedEndpoints"]
+
+        self.assertTrue(rendered["rootPointerBound"])
+        self.assertEqual(
+            rendered["left"],
+            {"marker": "marker:48", "tooltip": "timestamp:1", "crosshair": 48},
+        )
+        self.assertEqual(
+            rendered["right"],
+            {"marker": "marker:882", "tooltip": "timestamp:3", "crosshair": 882},
+        )
+
     def test_selection_uses_downsampled_visible_series(self):
         self.assertEqual(self.result["downsampledTs"], [1, 3, 5])
 

@@ -61,27 +61,55 @@
     return pointerX - positions[low] <= positions[high] - pointerX ? low : high;
   }
 
-  function clientToSvg(svg, clientX, clientY) {
+  function svgViewportGeometry(svg) {
     const rect = svg.getBoundingClientRect();
     const viewBox = svg.viewBox?.baseVal;
     if (!rect || rect.width <= 0 || rect.height <= 0 || !viewBox) return null;
     const width = viewBox.width || rect.width;
     const height = viewBox.height || rect.height;
+    const raw = String(svg.getAttribute?.('preserveAspectRatio') || 'xMidYMid meet')
+      .trim()
+      .replace(/^defer\s+/, '');
+    if (raw === 'none') {
+      return {
+        rect, viewBox, scaleX:rect.width / width, scaleY:rect.height / height,
+        offsetX:0, offsetY:0,
+      };
+    }
+    const [alignment = 'xMidYMid', mode = 'meet'] = raw.split(/\s+/);
+    const scale = mode === 'slice'
+      ? Math.max(rect.width / width, rect.height / height)
+      : Math.min(rect.width / width, rect.height / height);
+    const remainingX = rect.width - width * scale;
+    const remainingY = rect.height - height * scale;
+    const offsetX = alignment.includes('xMax')
+      ? remainingX
+      : alignment.includes('xMid') ? remainingX / 2 : 0;
+    const offsetY = alignment.includes('YMax')
+      ? remainingY
+      : alignment.includes('YMid') ? remainingY / 2 : 0;
     return {
-      x: (viewBox.x || 0) + (clientX - rect.left) / rect.width * width,
-      y: (viewBox.y || 0) + (clientY - rect.top) / rect.height * height
+      rect, viewBox, scaleX:scale, scaleY:scale, offsetX, offsetY,
+    };
+  }
+
+  function clientToSvg(svg, clientX, clientY) {
+    const geometry = svgViewportGeometry(svg);
+    if (!geometry) return null;
+    const {rect, viewBox, scaleX, scaleY, offsetX, offsetY} = geometry;
+    return {
+      x: (viewBox.x || 0) + (clientX - rect.left - offsetX) / scaleX,
+      y: (viewBox.y || 0) + (clientY - rect.top - offsetY) / scaleY
     };
   }
 
   function svgToClient(svg, x, y) {
-    const rect = svg.getBoundingClientRect();
-    const viewBox = svg.viewBox?.baseVal;
-    if (!rect || rect.width <= 0 || rect.height <= 0 || !viewBox) return null;
-    const width = viewBox.width || rect.width;
-    const height = viewBox.height || rect.height;
+    const geometry = svgViewportGeometry(svg);
+    if (!geometry) return null;
+    const {rect, viewBox, scaleX, scaleY, offsetX, offsetY} = geometry;
     return {
-      x: rect.left + (x - (viewBox.x || 0)) / width * rect.width,
-      y: rect.top + (y - (viewBox.y || 0)) / height * rect.height
+      x: rect.left + offsetX + (x - (viewBox.x || 0)) * scaleX,
+      y: rect.top + offsetY + (y - (viewBox.y || 0)) * scaleY
     };
   }
 
@@ -203,15 +231,15 @@
       }
     };
 
-    hit.onmousemove = move;
-    hit.onpointermove = move;
-    hit.onpointerenter = move;
-    hit.onpointerdown = move;
-    hit.ontouchstart = event => { event.preventDefault(); move(event); };
-    hit.ontouchmove = event => { event.preventDefault(); move(event); };
-    hit.onmouseleave = hideCurrent;
-    hit.onpointerleave = hideCurrent;
-    hit.ontouchcancel = hideCurrent;
+    svg.onmousemove = move;
+    svg.onpointermove = move;
+    svg.onpointerenter = move;
+    svg.onpointerdown = move;
+    svg.ontouchstart = event => { event.preventDefault(); move(event); };
+    svg.ontouchmove = event => { event.preventDefault(); move(event); };
+    svg.onmouseleave = hideCurrent;
+    svg.onpointerleave = hideCurrent;
+    svg.ontouchcancel = hideCurrent;
     return {hide: hideCurrent, move};
   }
 
@@ -274,7 +302,7 @@
   };
   window.DashboardChartInteraction = Object.freeze({
     numeric, canonicalRows, buildVisibleSamples, selectSampleIndex, samplePositions,
-    visibleRowsFor, clientToSvg, svgToClient, createSelectionModel, pointerCoordinates,
-    interactionBounds, attach
+    visibleRowsFor, svgViewportGeometry, clientToSvg, svgToClient, createSelectionModel,
+    pointerCoordinates, interactionBounds, attach
   });
 })();

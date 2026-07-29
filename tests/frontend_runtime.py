@@ -98,6 +98,98 @@ const single=api.createSelectionModel(
 );
 const singleSelections=[40,490,940].map(x=>single.select(x,60).index);
 const interactionBounds=api.interactionBounds(svg,plot);
+const endpointConfigurations=[
+  ['temperature-portrait',{{left:20,top:10,width:700,height:310}},plot],
+  ['humidity-landscape',{{left:100,top:10,width:1100,height:310}},plot],
+  ['pm25-landscape',{{left:80,top:10,width:1024,height:300}},plot],
+  ['electricity-portrait',{{left:12,top:10,width:744,height:300}},{{left:58,right:880,top:18,bottom:222}}],
+].map(([name,configurationRect,configurationPlot])=>{{
+  const configuredSvg={{
+    viewBox:{{baseVal:{{x:0,y:0,width:900,height:name.startsWith('electricity')?260:310}}}},
+    getBoundingClientRect:()=>configurationRect,
+    getAttribute:()=>null
+  }};
+  const configuredRows=Array.from({{length:48}},(_,index)=>({{ts:index+1,temperature:index}}));
+  const configuredPositions=api.samplePositions(
+    configuredRows.length,configurationPlot.left,configurationPlot.right
+  );
+  const model=api.createSelectionModel(
+    configuredSvg,configurationPlot,configuredRows,configuredPositions
+  );
+  const coordinates=[
+    configurationRect.left-4,
+    configurationRect.left,
+    configurationRect.left+configurationRect.width,
+    configurationRect.left+configurationRect.width+4
+  ];
+  const mouse=coordinates.map(clientX=>model.select(clientX,80));
+  const touch=coordinates.map(clientX=>{{
+    const pointer=api.pointerCoordinates({{touches:[{{clientX,clientY:80}}]}});
+    return model.select(pointer.clientX,pointer.clientY);
+  }});
+  return {{
+    name,
+    indices:mouse.map(item=>item.index),
+    timestamps:mouse.map(item=>item.row.ts),
+    markerPositions:mouse.map(item=>item.sampleX),
+    touchIndices:touch.map(item=>item.index),
+    geometry:api.svgViewportGeometry(configuredSvg)
+  }};
+}});
+const wideRect={{left:100,top:10,width:1100,height:310}};
+const wideSvg={{
+  viewBox:{{baseVal:{{x:0,y:0,width:900,height:310}}}},
+  getBoundingClientRect:()=>wideRect,
+  getAttribute:()=>null
+}};
+const wideGeometry=api.svgViewportGeometry(wideSvg);
+const firstClient=wideRect.left+wideGeometry.offsetX+plot.left*wideGeometry.scaleX;
+const lastClient=wideRect.left+wideGeometry.offsetX+plot.right*wideGeometry.scaleX;
+const oldFirstX=(firstClient-wideRect.left)/wideRect.width*900;
+const oldLastX=(lastClient-wideRect.left)/wideRect.width*900;
+const convertedFirst=api.clientToSvg(wideSvg,firstClient,80).x;
+const convertedLast=api.clientToSvg(wideSvg,lastClient,80).x;
+const probeRows=[{{ts:1,temperature:10}},{{ts:2,temperature:20}},{{ts:3,temperature:30}}];
+const probePositions=api.samplePositions(probeRows.length,plot.left,plot.right);
+const probeWrap={{
+  getBoundingClientRect:()=>({{left:wideRect.left,top:wideRect.top,width:wideRect.width,height:wideRect.height}}),
+  querySelector:()=>null
+}};
+const probeSvg={{
+  viewBox:{{baseVal:{{x:0,y:0,width:900,height:310}}}},
+  getBoundingClientRect:()=>wideRect,
+  getAttribute:()=>null,
+  parentElement:probeWrap,
+  appendChild:()=>{{}}
+}};
+const probeHit={{style:{{}},setAttribute:()=>{{}}}};
+const probeLayer={{style:{{}}}};
+const probeCross={{
+  attributes:{{}},
+  setAttribute(name,value){{this.attributes[name]=Number(value);}}
+}};
+const probePoints={{innerHTML:''}};
+const probeTooltip={{style:{{}},innerHTML:'',offsetWidth:190,offsetHeight:72}};
+document.getElementById=id=>id==='endpointProbe'?probeSvg:null;
+api.attach({{
+  id:'endpointProbe',rows:probeRows,positions:probePositions,plot,
+  hit:probeHit,layer:probeLayer,crosshair:probeCross,points:probePoints,
+  tooltip:probeTooltip,
+  renderPoints:({{sampleX}})=>{{probePoints.innerHTML=`marker:${{sampleX}}`;}},
+  renderTooltip:({{row}})=>`timestamp:${{row.ts}}`
+}});
+probeSvg.onpointerdown({{clientX:wideRect.left,clientY:80}});
+const renderedLeft={{
+  marker:probePoints.innerHTML,
+  tooltip:probeTooltip.innerHTML,
+  crosshair:probeCross.attributes.x1
+}};
+probeSvg.onpointerdown({{clientX:wideRect.left+wideRect.width,clientY:80}});
+const renderedRight={{
+  marker:probePoints.innerHTML,
+  tooltip:probeTooltip.innerHTML,
+  crosshair:probeCross.attributes.x1
+}};
 window.visibleRows=(id,rows)=>rows.filter((row,index)=>index%2===0);
 const downsampled=api.buildVisibleSamples('overviewChart',[
   {{ts:1,temperature:10}},{{ts:2,temperature:20}},
@@ -114,6 +206,15 @@ process.stdout.write(JSON.stringify({{
   nullNumeric:api.numeric(null),
   emptyNumeric:api.numeric(''),
   sweep,marginLeft,marginRight,resized,singleSelections,interactionBounds,
+  endpointConfigurations,
+  wideConversion:{{
+    firstClient,lastClient,oldFirstX,oldLastX,convertedFirst,convertedLast,
+    offsetX:wideGeometry.offsetX,scaleX:wideGeometry.scaleX
+  }},
+  renderedEndpoints:{{
+    rootPointerBound:typeof probeSvg.onpointerdown==='function',
+    left:renderedLeft,right:renderedRight
+  }},
   independent:independentBefore===independentAfter && pmSelection===0,
   downsampledTs:downsampled.map(row=>row.ts),
   mouseTouchParity:JSON.stringify(mouse)===JSON.stringify(touch)
@@ -121,6 +222,78 @@ process.stdout.write(JSON.stringify({{
 """
     )
 
+
+def preview_chart_data_behavior():
+    source = json.dumps(str(ROOT / "frontend/assets/dashboard_preview_chart_data.js"))
+    return run_node(
+        f"""
+const fs=require('fs'),vm=require('vm');
+class Response {{
+  constructor(body,options={{}}){{this.body=body;this.status=options.status;this.headers=options.headers;}}
+  async json(){{return JSON.parse(this.body);}}
+}}
+const listeners={{}};
+const document={{
+  head:{{appendChild:()=>{{}}}},
+  documentElement:{{}},
+  createElement:()=>({{style:{{}},dataset:{{}},innerHTML:'',textContent:''}}),
+  addEventListener:(name,handler)=>{{listeners[name]=handler;}},
+  getElementById:()=>null
+}};
+class MutationObserver {{observe(){{}}}}
+const originalRequests=[];
+const location={{
+  search:'?previewChartData=1',
+  href:'http://127.0.0.1:8090/?previewChartData=1'
+}};
+const window={{
+  location,
+  fetch:async input=>{{originalRequests.push(input);return new Response('{{}}',{{status:404}});}}
+}};
+const context={{
+  window,location,document,MutationObserver,Response,URL,URLSearchParams,
+  Intl,Date,Map,JSON,Number,Promise,console
+}};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync({source},'utf8'),context);
+const productionFetch=async()=>new Response('{{}}',{{status:200}});
+const productionWindow={{
+  location:{{search:'',href:'https://dashboard.example/'}},
+  fetch:productionFetch
+}};
+const productionContext={{
+  window:productionWindow,location:productionWindow.location,
+  URL,URLSearchParams,console
+}};
+vm.createContext(productionContext);
+vm.runInContext(fs.readFileSync({source},'utf8'),productionContext);
+(async()=>{{
+  const api=window.DashboardPreviewChartData;
+  const condo=await window.fetch('/api/condo/history?range=24h').then(value=>value.json());
+  const electricity=await window.fetch('/api/electricity/history?bucket=30m').then(value=>value.json());
+  process.stdout.write(JSON.stringify({{
+    sensorCount:api.sensorRows.length,
+    electricityCount:api.electricityPoints.length,
+    sensorFirst:api.sensorRows[0],
+    sensorLast:api.sensorRows.at(-1),
+    electricityFirst:api.electricityPoints[0],
+    electricityLast:api.electricityPoints.at(-1),
+    sensorNulls:api.sensorRows.slice(1,-1).filter(row=>
+      row.temperature===null||row.humidity===null||row.pm25_living_room===null
+    ).length,
+    electricityNulls:api.electricityPoints.slice(1,-1).filter(row=>row.energy_kwh===null).length,
+    uniqueSensorTimestamps:new Set(api.sensorRows.map(row=>row.ts)).size,
+    uniqueElectricityTimestamps:new Set(api.electricityPoints.map(row=>row.timestamp)).size,
+    condoCount:condo.history.length,
+    historyCount:electricity.points.length,
+    originalRequestCount:originalRequests.length,
+    labels:api.labels,
+    productionApiInstalled:Boolean(productionWindow.DashboardPreviewChartData),
+    productionFetchUnchanged:productionWindow.fetch===productionFetch
+  }}));
+}})().catch(error=>{{console.error(error);process.exit(1);}});
+"""
+    )
 
 def topology_behavior():
     source = json.dumps(str(ROOT / "frontend/assets/dashboard_topology.js"))
