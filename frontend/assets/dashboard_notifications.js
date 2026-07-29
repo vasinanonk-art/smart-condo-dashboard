@@ -16,8 +16,15 @@
 
   async function request(url, method='GET') {
     const response = await fetch(url, {method});
+    const contentType = response.headers?.get?.('content-type') || '';
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.detail || 'notification_request_failed');
+    if (!response.ok) {
+      const error = new Error(payload.detail || 'notification_request_failed');
+      error.endpointUnavailable = method === 'GET'
+        && response.status === 404
+        && !contentType.includes('application/json');
+      throw error;
+    }
     return payload;
   }
 
@@ -143,7 +150,13 @@
         updateCount();
         if (renderPanel || !document.getElementById('notificationPanel')?.hidden) render();
       } catch (error) {
-        UI.toast(error.message, 'error');
+        if (error.endpointUnavailable) {
+          state.items = [];
+          state.loaded = true;
+          updateCount();
+        } else {
+          UI.toast(error.message, 'error');
+        }
       } finally {
         state.loading = false;
         state.loadPromise = null;

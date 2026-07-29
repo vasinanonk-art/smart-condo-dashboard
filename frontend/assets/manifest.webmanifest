@@ -1,0 +1,20 @@
+{
+  "name": "Smart Condo Dashboard",
+  "short_name": "Smart Condo",
+  "description": "Smart Condo Dashboard application shell",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#09090B",
+  "theme_color": "#09090B",
+  "icons": [
+    {
+      "src": "/assets/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,10 +1,16 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-dashboard-page="overview">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#09090B">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Smart Condo">
   <title>Smart Condo Dashboard</title>
   <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg?v=__ASSET_VERSION__">
+  <link rel="apple-touch-icon" href="/assets/favicon.svg?v=__ASSET_VERSION__">
+  <link rel="manifest" href="/assets/manifest.webmanifest?v=__ASSET_VERSION__">
   <link rel="stylesheet" href="/assets/dashboard_v3.css?v=__ASSET_VERSION__">
   <link rel="stylesheet" href="/assets/dashboard_v3_layout.css?v=__ASSET_VERSION__">
   <link rel="stylesheet" href="/assets/dashboard_polish.css?v=__ASSET_VERSION__">
@@ -28,12 +34,14 @@
   <link rel="stylesheet" href="/assets/dashboard_tariff_sync.css?v=__ASSET_VERSION__">
   <link rel="stylesheet" href="/assets/dashboard_mea_tariff.css?v=__ASSET_VERSION__">
   <link rel="stylesheet" href="/assets/dashboard_electricity_settings_hotfix17.css?v=__ASSET_VERSION__">
+  <link rel="stylesheet" href="/assets/dashboard_design_system.css?v=__ASSET_VERSION__">
+  <link rel="stylesheet" href="/assets/dashboard_home.css?v=__ASSET_VERSION__">
   <style>
     :root{--ui-radius:16px;--ui-gap:16px;--ui-pad:18px}*{box-sizing:border-box}body,.app,.main,.page{max-width:100%;overflow-x:hidden}.grid,.summary-grid,.automation-grid,.sonoff-grid{gap:var(--ui-gap);min-width:0}.card,.summary-card,.automation-card,.sonoff-card{border-radius:var(--ui-radius)}.card{padding:var(--ui-pad)}.card,.summary-card,.automation-card,.sonoff-card,.btn{transition:border-color 150ms ease,background-color 150ms ease,transform 150ms ease,box-shadow 150ms ease}.summary-grid{grid-auto-rows:1fr}.summary-card{display:flex;min-height:118px;height:100%;padding:var(--ui-pad);flex-direction:column;justify-content:space-between}.summary-label{min-height:28px}.summary-value{margin:8px 0}.summary-foot{margin-top:0}.automation-grid{grid-template-columns:repeat(auto-fit,minmax(360px,1fr));align-items:start}.automation-card{height:fit-content;padding:var(--ui-pad)}.automation-head{align-items:start}.automation-meta{grid-template-columns:minmax(0,1fr) auto;gap:5px 14px;margin-top:10px}.automation-meta span:first-child{grid-column:1/-1}.automation-actions{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}.automation-actions .btn{width:100%;min-width:0;padding:8px 10px}.chart-tools{display:inline-flex;flex-wrap:nowrap;justify-content:flex-end;gap:4px;margin-left:auto}.chart-tools .btn{min-width:auto;padding:5px 7px;font-size:10px;line-height:1.2}.sonoff-card{padding:8px}.relay{min-height:38px;padding:6px 8px}.relay-switch{margin-left:auto}@media(max-width:1200px){.automation-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.automation-grid{grid-template-columns:minmax(0,1fr)}.chart-tools{max-width:100%;overflow-x:auto}}@media(max-width:420px){.automation-meta{grid-template-columns:minmax(0,1fr)}.automation-meta span:first-child{grid-column:1}}
   </style>
 </head>
 <body>
-<div class="app">
+<div class="app sc-dashboard-shell">
   <aside class="sidebar">
     <div class="brand"><div class="brand-mark">SC</div><div><strong>Smart Condo</strong><small>Dashboard 8090</small></div></div>
     <nav class="nav">
@@ -41,14 +49,67 @@
     </nav>
     <div class="sidebar-foot">Smart Home · Dashboard</div>
   </aside>
-  <main class="main">
-    <header class="topbar"><div><h1 id="pageTitle">Overview</h1><p id="pageSubtitle">Live condo controls, climate, air quality and system health</p></div><div class="status-row"><span id="mqttBadge" class="badge">MQTT Checking</span><span id="haBadge" class="badge">HA Air Checking</span><button class="btn ghost" onclick="refresh()">Refresh</button><button id="dashboardLogout" class="btn ghost dashboard-logout" type="button" onclick="dashboardLogout()">Logout</button></div></header>
+  <main class="main sc-content-area">
+    <header class="topbar sc-top-bar">
+      <div class="home-page-identity"><h1 id="pageTitle">Overview</h1><p id="pageSubtitle">Live condo controls, climate, air quality and system health</p></div>
+      <div class="status-row home-utility-controls">
+        <span id="mqttBadge" hidden>MQTT Checking</span><span id="haBadge" hidden>HA Air Checking</span>
+        <button id="topHealthStatus" class="sc-status-chip home-top-health" type="button" data-nav="system">System checking</button>
+        <button class="sc-button sc-button-secondary home-top-action home-refresh-action" type="button" onclick="refresh()" aria-label="Refresh dashboard"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>Refresh</span></button>
+        <details id="homeUtilityOverflow" class="home-utility-overflow">
+          <summary class="sc-button sc-button-secondary" aria-label="More dashboard options"><i data-lucide="ellipsis" aria-hidden="true"></i><span>More</span></summary>
+          <div class="home-utility-menu">
+            <strong>Dashboard details</strong>
+            <div id="homeUtilityStatusDetails"></div>
+            <button id="dashboardLogout" class="sc-button sc-button-secondary dashboard-logout" type="button" onclick="dashboardLogout()" aria-label="Sign out"><i data-lucide="log-out" aria-hidden="true"></i><span>Logout</span></button>
+          </div>
+        </details>
+      </div>
+    </header>
     <section class="page active" data-page="overview">
-      <div id="overviewMetrics" class="summary-grid"></div><div id="overviewPresence" hidden></div><div id="deviceSummary" hidden></div>
-      <div class="grid" style="margin-top:14px">
-        <div class="card span-12"><div class="card-head"><h2>Temperature & Humidity</h2><div id="overviewRanges" class="range-controls"></div></div><div class="chart-wrap"><svg id="overviewChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--yellow)"></i>Temperature</span><span><i style="background:var(--cyan)"></i>Humidity</span></div></div>
-        <div class="card span-12"><div class="card-head"><h2>PM2.5 Living Room vs Bedroom</h2></div><div class="chart-wrap"><svg id="overviewPmChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--accent)"></i>Living Room</span><span><i style="background:var(--purple)"></i>Bedroom</span></div></div>
-        <div id="overviewStats" class="span-12 grid"></div><div class="card span-12"><div class="card-head"><h2>Cameras</h2></div><div id="cameraControls" class="grid"></div></div><div class="card span-12"><div class="card-head"><h2>Alerts & System Health</h2></div><div id="alerts" class="alert-list"></div></div>
+      <div class="sc-page-container sc-motion-fade">
+        <section id="homeHero" class="sc-hero-banner sc-motion-slide-up" aria-labelledby="homeHeroTitle"></section>
+        <div id="overviewMetrics" class="sc-responsive-grid home-metric-grid"></div>
+        <section id="homeEnergyWidget" class="sc-line-chart-card home-energy-widget sc-span-12">
+          <div id="homeEnergyHeader"></div>
+          <div id="homeEnergySummary" class="home-energy-summary"></div>
+          <div class="sc-chart-slot home-energy-chart-slot">
+            <svg id="homeEnergyChart" class="home-energy-chart" role="img" aria-label="Recent household energy consumption"></svg>
+            <div id="homeEnergyEmpty" class="home-empty-state" hidden><i data-lucide="zap" aria-hidden="true"></i><strong>Waiting for Energy Data</strong><span>Meter history will appear when the data source is available.</span></div>
+          </div>
+        </section>
+        <div id="homeSecondaryWidgets" class="home-secondary-grid"></div>
+        <div class="home-detail-boundary"><span>Home Details</span></div>
+        <div class="sc-widget-grid home-dashboard-grid">
+          <section class="sc-widget-container home-devices-widget sc-span-12">
+            <header class="sc-widget-header"><div><h2 class="sc-widget-title">Devices</h2><p class="sc-widget-subtitle">Your home at a glance</p></div></header>
+            <div id="homeDeviceCards" class="sc-responsive-grid"></div>
+            <div id="cameraControls" class="sc-responsive-grid"></div>
+          </section>
+          <section class="sc-line-chart-card home-environment-widget sc-span-8">
+            <header class="sc-widget-header"><div><h2 class="sc-widget-title">Home Environment</h2><p class="sc-widget-subtitle">Temperature and humidity</p></div><div id="overviewRanges" class="range-controls"></div></header>
+            <div class="chart-wrap"><svg id="overviewChart" class="chart"></svg><div class="tooltip"></div></div>
+            <div class="legend"><span><i style="background:var(--yellow)"></i>Temperature</span><span><i style="background:var(--cyan)"></i>Humidity</span></div>
+          </section>
+          <section class="sc-gauge-card home-air-gauge sc-span-4">
+            <header class="sc-widget-header"><div><h2 class="sc-widget-title">Air Quality</h2><p class="sc-widget-subtitle">Living room PM2.5</p></div></header>
+            <div id="homeAirGauge" class="sc-gauge-slot"></div>
+          </section>
+          <section class="sc-line-chart-card home-air-widget sc-span-12">
+            <header class="sc-widget-header"><div><h2 class="sc-widget-title">Room Air Quality</h2><p class="sc-widget-subtitle">Living room and bedroom</p></div></header>
+            <div class="chart-wrap"><svg id="overviewPmChart" class="chart"></svg><div class="tooltip"></div></div>
+            <div class="legend"><span><i style="background:var(--accent)"></i>Living Room</span><span><i style="background:var(--purple)"></i>Bedroom</span></div>
+          </section>
+          <section class="sc-widget-container sc-span-12">
+            <header class="sc-widget-header"><div><h2 class="sc-widget-title">Environment Details</h2><p class="sc-widget-subtitle">Current and average values</p></div></header>
+            <div id="overviewStats" class="sc-responsive-grid"></div>
+          </section>
+          <section class="sc-widget-container sc-span-12">
+            <header class="sc-widget-header"><div><h2 class="sc-widget-title">Home Status</h2><p class="sc-widget-subtitle">Alerts and availability</p></div></header>
+            <div id="alerts" class="alert-list"></div>
+          </section>
+        </div>
+        <div id="overviewPresence" hidden></div><div id="deviceSummary" hidden></div>
       </div>
     </section>
     <section class="page" data-page="lighting"><div class="grid"><div class="card span-12"><div class="card-head"><h2>Sonoff Switches</h2><div class="controls"><button class="btn primary" onclick="sonoffAll('on')">Global ALL ON</button><button class="btn danger" onclick="sonoffAll('off')">Global ALL OFF</button></div></div><div id="sonoffList" class="sonoff-grid"></div></div><div class="card span-12"><div class="card-head"><h2>Zone Lighting</h2></div><div id="tuyaList" class="zone-grid"></div></div></div></section>
@@ -57,7 +118,7 @@
     <section class="page" data-page="presence"><div id="presenceList" class="grid"></div><div class="grid" style="margin-top:14px"><div class="card span-12"><div class="card-head"><h2>Home Assistant Automations</h2></div><div id="automationEvents" class="automation-grid"></div></div></div></section>
     <section class="page" data-page="system"><div class="grid"><div class="card span-12"><div class="card-head"><h2>System Health</h2><button class="btn ghost" onclick="refresh()">Refresh status</button></div><div id="systemDetails"></div></div><div class="card span-12"><div class="card-head"><h2>TP-Link Providers</h2></div><div id="tplinkProviderDashboard" aria-live="polite"><p class="muted">Loading provider information…</p></div></div></div></section>
   </main>
-  <nav class="mobile-nav"><button data-nav="overview">Overview</button><button data-nav="lighting">Lighting</button><button data-nav="climate">Climate</button><button data-nav="entertainment">TV</button><button data-nav="presence">Presence</button><button data-nav="system">System</button></nav>
+  <div class="sc-bottom-navigation-container"><nav class="mobile-nav sc-bottom-navigation" aria-label="Dashboard navigation"><button data-nav="overview" aria-label="Overview"><i data-lucide="house" aria-hidden="true"></i><span>Home</span></button><button data-nav="lighting" aria-label="Lighting"><i data-lucide="lightbulb" aria-hidden="true"></i><span>Lights</span></button><button data-nav="climate" aria-label="Climate"><i data-lucide="wind" aria-hidden="true"></i><span>Climate</span></button><button data-nav="entertainment" aria-label="Entertainment"><i data-lucide="tv" aria-hidden="true"></i><span>TV</span></button><button data-nav="presence" aria-label="Presence"><i data-lucide="users" aria-hidden="true"></i><span>Presence</span></button><button data-nav="system" aria-label="System"><i data-lucide="settings" aria-hidden="true"></i><span>System</span></button></nav></div>
 </div>
 <div id="toast" class="toast"></div>
 <script>window.DASHBOARD_CHART_DEBUG=__CHART_DEBUG__;</script>
@@ -88,5 +149,7 @@
 <script src="/assets/dashboard_automation_triggers.js?v=__ASSET_VERSION__"></script>
 <script src="/assets/dashboard_tariff_sync.js?v=__ASSET_VERSION__"></script>
 <script src="/assets/dashboard_mea_tariff.js?v=__ASSET_VERSION__"></script>
+<script src="/assets/dashboard_design_system.js?v=__ASSET_VERSION__"></script>
+<script src="/assets/dashboard_home.js?v=__ASSET_VERSION__"></script>
 </body>
 </html>

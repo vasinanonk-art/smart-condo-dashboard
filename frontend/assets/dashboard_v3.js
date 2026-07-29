@@ -48,11 +48,28 @@ function currentPage() {
   return (location.hash || '#overview').slice(1);
 }
 function nav(page) {
+  document.documentElement.dataset.dashboardPage = page;
   document.querySelectorAll('.page').forEach(section => section.classList.toggle('active', section.dataset.page === page));
-  document.querySelectorAll('[data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === page));
+  let activeNavigation = null;
+  document.querySelectorAll('[data-nav]').forEach(button => {
+    const active = button.dataset.nav === page;
+    button.classList.toggle('active', active);
+    if (active) {
+      button.setAttribute('aria-current', 'page');
+      if (button.closest('.sc-bottom-navigation')) activeNavigation = button;
+    }
+    else button.removeAttribute('aria-current');
+  });
   const names = {overview:'Overview', lighting:'Lighting', climate:'Climate & Air Quality', entertainment:'Entertainment', presence:'Presence & Automation', system:'System'};
   if ($('pageTitle')) $('pageTitle').textContent = names[page] || 'Dashboard';
   if (location.hash !== `#${page}`) history.replaceState(null, '', `#${page}`);
+  window.requestAnimationFrame(() => {
+    activeNavigation?.scrollIntoView?.({
+      behavior:window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'auto' : 'smooth',
+      block:'nearest',
+      inline:'nearest',
+    });
+  });
   window.requestAnimationFrame(() => renderPage(page));
 }
 function renderPage(page = currentPage()) {
@@ -105,7 +122,8 @@ function drawChart(id, rows, series) {
   svg.innerHTML = '';
   const valid = displayRows.filter(row => series.some(item => Number.isFinite(num(row[item.key]))));
   if (!valid.length) {
-    svg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" class="axis-label">No data available for this range</text>';
+    svg.setAttribute('viewBox', '0 0 900 310');
+    svg.innerHTML = '<foreignObject x="0" y="0" width="900" height="310"><div xmlns="http://www.w3.org/1999/xhtml" class="home-chart-empty"><i data-lucide="chart-no-axes-column" aria-hidden="true"></i><strong>No data for this range</strong><span>Readings will appear when data is available.</span></div></foreignObject>';
     return;
   }
   const width = 900, height = 310, pad = {l:48,r:18,t:18,b:35};
@@ -178,10 +196,11 @@ function chartPng(id) {
   image.src = url;
 }
 function ensureChartToolbar(id) {
-  const svg = $(id), card = svg?.closest('.card'), head = card?.querySelector('.card-head');
+  const svg = $(id), card = svg?.closest('.sc-line-chart-card, .card'), head = card?.querySelector('.sc-widget-header, .card-head');
   if (!head || head.querySelector(`[data-tools-for="${id}"]`)) return;
   const tools = document.createElement('div'); tools.className = 'chart-tools'; tools.dataset.toolsFor = id;
-  tools.innerHTML = `<button class="btn ghost" onclick="chartZoom('${id}',1.5)">Zoom +</button><button class="btn ghost" onclick="chartZoom('${id}',0.67)">Zoom -</button><button class="btn ghost" onclick="chartPan('${id}',-1)">◀</button><button class="btn ghost" onclick="chartPan('${id}',1)">▶</button><button class="btn ghost" onclick="chartReset('${id}')">Reset</button><button class="btn ghost" onclick="chartPng('${id}')">PNG</button><button class="btn ghost" onclick="chartCsv('${id}')">CSV</button>`;
+  const className = card?.classList.contains('sc-line-chart-card') ? 'sc-button sc-button-secondary' : 'btn ghost';
+  tools.innerHTML = `<button class="${className}" onclick="chartZoom('${id}',1.5)">Zoom +</button><button class="${className}" onclick="chartZoom('${id}',0.67)">Zoom -</button><button class="${className}" onclick="chartPan('${id}',-1)">◀</button><button class="${className}" onclick="chartPan('${id}',1)">▶</button><button class="${className}" onclick="chartReset('${id}')">Reset</button><button class="${className}" onclick="chartPng('${id}')">PNG</button><button class="${className}" onclick="chartCsv('${id}')">CSV</button>`;
   head.appendChild(tools);
 }
 
@@ -190,16 +209,26 @@ function bindRangeButtons(container) {
 }
 function renderCameraControls() {
   const host=$('cameraControls');if(!host)return;
+  const ui=window.SmartCondoUI;
   host.innerHTML=(S.cameras||[]).map(camera=>{const c=camera.capabilities||{},controls=[];
-    if(c.snapshot)controls.push(`<button class="btn ghost" data-camera-snapshot="${safeText(camera.id)}">Snapshot</button>`);
-    if(c.ptz_move)['left','up','down','right'].forEach(direction=>controls.push(`<button class="btn ghost" data-camera-command="move" data-camera-direction="${direction}" data-camera-id="${safeText(camera.id)}">${direction}</button>`));
-    if(c.home_position)controls.push(`<button class="btn ghost" data-camera-command="home_position" data-camera-id="${safeText(camera.id)}">Home</button>`);
-    return `<article class="card span-4"><strong>${safeText(camera.name)}</strong><div class="device-meta">${safeText(camera.provider)}${camera.unsupported_reason?` · ${safeText(camera.unsupported_reason)}`:''}</div><div class="controls">${controls.join('')||'<span class="device-meta">Read-only</span>'}</div></article>`;
-  }).join('')||'<span class="device-meta">Camera configuration unavailable.</span>';
+    if(c.snapshot)controls.push(`<button class="sc-button sc-button-secondary" data-camera-snapshot="${safeText(camera.id)}">Snapshot</button>`);
+    if(c.ptz_move)['left','up','down','right'].forEach(direction=>controls.push(`<button class="sc-button sc-button-secondary" data-camera-command="move" data-camera-direction="${direction}" data-camera-id="${safeText(camera.id)}">${direction}</button>`));
+    if(c.home_position)controls.push(`<button class="sc-button sc-button-secondary" data-camera-command="home_position" data-camera-id="${safeText(camera.id)}">Home</button>`);
+    if(!ui)return `<article class="sc-device-card"><strong>${safeText(camera.name)}</strong><div class="device-meta">${safeText(camera.provider)}</div></article>`;
+    return ui.deviceCard({title:camera.name,subtitle:`${camera.provider||'Camera'}${camera.unsupported_reason?` · ${camera.unsupported_reason}`:''}`,status:ui.statusChip({label:camera.online===true?'Online':camera.online===false?'Offline':'Unknown',status:camera.online===true?'success':camera.online===false?'critical':'neutral'}),content:`<div class="home-device-icon">${ui.icon('camera')}</div>`,actions:controls.join('')});
+  }).join('')||(ui?`<div class="home-empty-state home-device-empty">${ui.icon('camera-off')}<strong>No camera data</strong><span>Camera configuration is not available.</span></div>`:'<span class="device-meta">Camera configuration unavailable.</span>');
   host.querySelectorAll('[data-camera-snapshot]').forEach(button=>button.onclick=()=>window.open(`/api/camera-control/${encodeURIComponent(button.dataset.cameraSnapshot)}/snapshot`,'_blank','noopener'));
   host.querySelectorAll('[data-camera-command]').forEach(button=>button.onclick=async()=>{button.disabled=true;try{await post(`/api/camera-control/${encodeURIComponent(button.dataset.cameraId)}/command`,{command:button.dataset.cameraCommand,direction:button.dataset.cameraDirection||null,duration:.3});toast('Camera command complete');}catch(error){toast(error.message);}finally{button.disabled=false;}});
 }
 function renderOverview() {
+  if (window.SmartCondoHome) {
+    window.SmartCondoHome.render({
+      state:S, history:S.history, series:SERIES, fmt, stat, safeText,
+      bindRangeButtons, drawChart, ensureChartToolbar,
+      renderCameraControls, renderOverviewSummary,
+    });
+    return;
+  }
   const history = S.history;
   $('overviewMetrics').innerHTML = metricHTML('Temperature',fmt(S.sensor.temperature),'°C','Current indoor reading') + metricHTML('Humidity',fmt(S.sensor.humidity),'%','Current indoor reading') + metricHTML('Living Room PM2.5',fmt(S.air.living_room?.value),'µg/m³',S.air.living_room?.stale?'Stale':'Home Assistant') + metricHTML('Bedroom PM2.5',fmt(S.air.bedroom?.value),'µg/m³',S.air.bedroom?.stale?'Stale':'Home Assistant');
   $('overviewStats').innerHTML = statsHTML('Temperature',stat(history,'temperature'),'°C') + statsHTML('Humidity',stat(history,'humidity'),'%') + statsHTML('Living Room PM2.5',stat(history,'pm25_living_room'),'µg/m³') + statsHTML('Bedroom PM2.5',stat(history,'pm25_bedroom'),'µg/m³');
@@ -218,7 +247,7 @@ function renderOverviewSummary() {
   if (S.air.living_room?.stale) alerts.push('Living Room PM2.5 is stale');
   if (S.air.bedroom?.stale) alerts.push('Bedroom PM2.5 is stale');
   if (!S.sonoffAvailable) alerts.push('Sonoff Cloud API is offline');
-  $('alerts').innerHTML = alerts.length ? alerts.map(text => `<div class="alert warn">${safeText(text)}</div>`).join('') : '<div class="alert ok">All monitored systems look normal.</div>';
+  $('alerts').innerHTML = alerts.length ? alerts.map(text => `<div class="home-status-message home-status-warning">${safeText(text)}</div>`).join('') : '<div class="home-status-message home-status-success">All monitored systems look normal.</div>';
 }
 
 function sonoffChannels(device) {
@@ -371,6 +400,17 @@ async function loadCameras() { try { const payload = await get('/api/camera-cont
 function renderBadges() {
   if ($('mqttBadge')) { $('mqttBadge').textContent = S.health.mqtt_connected ? 'MQTT Online' : 'MQTT Offline'; $('mqttBadge').className = `badge ${S.health.mqtt_connected?'ok':'bad'}`; }
   if ($('haBadge')) { $('haBadge').textContent = S.air.configured ? 'HA Air Online' : 'HA Air Unavailable'; $('haBadge').className = `badge ${S.air.configured?'ok':'warn'}`; }
+  const topHealth = $('topHealthStatus');
+  if (topHealth) {
+    const warnings = [
+      !S.health.mqtt_connected,
+      !S.air.configured,
+      !S.sonoffAvailable,
+    ].filter(Boolean).length;
+    topHealth.textContent = warnings ? `${warnings} Warning${warnings === 1 ? '' : 's'}` : 'System Healthy';
+    topHealth.dataset.status = warnings ? 'warning' : 'success';
+    topHealth.setAttribute('aria-label', `${topHealth.textContent}. View system details.`);
+  }
 }
 async function refresh() {
   await Promise.allSettled([

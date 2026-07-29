@@ -1,17 +1,21 @@
 .household-notification-trigger {
-  min-height: 38px;
-  padding: 8px 11px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: #101720;
-  color: var(--text);
-  font-weight: 800;
+  min-height: var(--sc-touch-target);
+  padding: var(--sc-space-2) var(--sc-space-3);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-sm);
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--sc-color-text);
+  font-family: var(--sc-font-family);
+  font-weight: 680;
+  transition:
+    border-color var(--sc-duration-normal) var(--sc-ease-standard),
+    background-color var(--sc-duration-normal) var(--sc-ease-standard);
 }
 
 .household-notification-trigger:focus-visible,
 .household-notification-action:focus-visible {
-  outline: 3px solid rgba(78, 161, 255, .8);
-  outline-offset: 3px;
+  outline: 2px solid color-mix(in srgb, var(--sc-color-primary) 72%, white);
+  outline-offset: 4px;
 }
 
 .household-notification-count {
@@ -34,52 +38,53 @@
 .household-notification-panel {
   position: fixed;
   z-index: 160;
-  top: 72px;
-  right: 18px;
+  top: 64px;
+  right: var(--sc-space-4);
   display: flex;
   width: min(440px, calc(100vw - 28px));
   max-height: min(72vh, 680px);
-  padding: 14px;
+  padding: var(--sc-space-4);
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sc-space-3);
   overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: #0d1723;
-  box-shadow: 0 20px 70px rgba(0, 0, 0, .45);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-md);
+  background: color-mix(in srgb, var(--sc-color-surface-elevated) 92%, #09090b);
+  box-shadow: var(--sc-shadow-popup);
+  backdrop-filter: blur(var(--sc-blur-lg)) saturate(120%);
 }
 
 .household-notification-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sc-space-3);
 }
 
 .household-notification-toolbar,
 .household-notification-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(110px, 1fr));
-  gap: 6px;
+  gap: var(--sc-space-2);
 }
 
 .household-notification-list {
   display: grid;
-  gap: 8px;
+  gap: var(--sc-space-2);
 }
 
 .household-notification-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid rgba(242, 184, 75, .3);
-  border-radius: 12px;
-  background: rgba(242, 184, 75, .06);
+  gap: var(--sc-space-3);
+  padding: var(--sc-space-3);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-sm);
+  background: rgba(255, 255, 255, 0.025);
 }
 
 .household-notification-unread {
-  border-left: 3px solid var(--accent);
+  border-left: 2px solid var(--sc-color-primary);
 }
 
 .household-notification-info {
@@ -105,34 +110,34 @@
 }
 
 .household-notification-copy p {
-  margin: 5px 0;
-  color: #c4cfdb;
-  font-size: 12px;
+  margin: var(--sc-space-1) 0;
+  color: var(--sc-color-text-secondary);
+  font-size: var(--sc-font-xs);
   line-height: 1.45;
 }
 
 .household-notification-copy small {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--sc-color-text-secondary);
+  font-size: var(--sc-font-xs);
 }
 
 .household-notification-action {
-  min-height: 38px;
-  padding: 7px 9px;
-  font-size: 11px;
+  min-height: 40px;
+  padding: var(--sc-space-2);
+  font-size: var(--sc-font-xs);
 }
 
 .household-notification-empty {
-  padding: 18px;
-  color: var(--muted);
+  padding: var(--sc-space-6);
+  color: var(--sc-color-text-secondary);
   text-align: center;
 }
 
 @media (max-width: 520px) {
   .household-notification-panel {
-    top: 12px;
-    right: 12px;
-    left: 12px;
+    top: var(--sc-space-4);
+    right: var(--sc-space-4);
+    left: var(--sc-space-4);
     width: auto;
     max-height: calc(100vh - 92px);
   }
