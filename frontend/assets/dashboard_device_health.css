@@ -1,0 +1,112 @@
+.device-health-dashboard {
+  display: grid;
+  gap: var(--sc-space-4, 16px);
+  margin-top: var(--sc-space-4, 16px);
+}
+
+.device-health-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sc-space-3, 12px);
+}
+
+.device-health-summary-item {
+  min-width: 0;
+  padding: var(--sc-space-3, 12px);
+  border: 1px solid var(--sc-color-border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--sc-radius-md, 16px);
+  background: var(--sc-color-surface, rgba(255, 255, 255, 0.05));
+}
+
+.device-health-summary-item span,
+.device-health-detail span {
+  display: block;
+  color: var(--sc-color-text-muted, #a7b0c0);
+  font-size: var(--sc-font-sm, 14px);
+}
+
+.device-health-summary-item strong {
+  display: block;
+  margin-top: var(--sc-space-1, 4px);
+  font-size: var(--sc-font-xl, 24px);
+}
+
+.device-health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--sc-space-3, 12px);
+}
+
+.device-health-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--sc-space-3, 12px);
+  padding: var(--sc-space-4, 16px);
+  border: 1px solid var(--sc-color-border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--sc-radius-lg, 20px);
+  background: var(--sc-color-surface, rgba(255, 255, 255, 0.05));
+}
+
+.device-health-header,
+.device-health-badges {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sc-space-2, 8px);
+}
+
+.device-health-header h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--sc-font-md, 16px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-health-indicator {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  border-radius: 50%;
+  background: var(--sc-color-warning, #f6c453);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--sc-color-warning, #f6c453) 16%, transparent);
+}
+
+.device-health-indicator[data-health="green"] {
+  background: var(--sc-color-success, #48d597);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--sc-color-success, #48d597) 16%, transparent);
+}
+
+.device-health-indicator[data-health="red"] {
+  background: var(--sc-color-critical, #ff6b6b);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--sc-color-critical, #ff6b6b) 16%, transparent);
+}
+
+.device-health-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--sc-space-2, 8px);
+}
+
+.device-health-detail strong {
+  min-width: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.device-health-empty,
+.device-health-error {
+  padding: var(--sc-space-5, 24px);
+  color: var(--sc-color-text-muted, #a7b0c0);
+  text-align: center;
+}
+
+@media (max-width: 768px) {
+  .device-health-summary {
+    grid-template-columns: 1fr;
+  }
+}

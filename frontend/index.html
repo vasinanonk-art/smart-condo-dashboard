@@ -29,6 +29,7 @@
   <link rel="stylesheet" href="/assets/dashboard_household_design_system.css?v=__ASSET_VERSION__">
   <link rel="stylesheet" href="/assets/dashboard_household_devices.css?v=__ASSET_VERSION__">
   <link rel="stylesheet" href="/assets/dashboard_tplink_provider.css?v=__ASSET_VERSION__">
+  <link rel="stylesheet" href="/assets/dashboard_device_health.css?v=__ASSET_VERSION__">
   <link rel="stylesheet" href="/assets/dashboard_automation.css?v=__ASSET_VERSION__">
   <link rel="stylesheet" href="/assets/dashboard_automation_triggers.css?v=__ASSET_VERSION__">
   <link rel="stylesheet" href="/assets/dashboard_tariff_sync.css?v=__ASSET_VERSION__">
@@ -116,7 +117,7 @@
     <section class="page" data-page="climate"><div id="airCards" class="grid"></div><div class="grid" style="margin-top:14px"><div class="card span-12"><div class="card-head"><h2>Air Conditioner</h2></div><div id="climateControls" class="grid"></div></div><div class="card span-12"><div class="card-head"><h2>PM2.5 Room Comparison</h2><div id="climateRanges" class="range-controls"></div></div><div class="chart-wrap"><svg id="airChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--accent)"></i>Living Room</span><span><i style="background:var(--purple)"></i>Bedroom</span></div></div><div id="airStats" class="span-12 grid"></div></div></section>
     <section class="page" data-page="entertainment"><div class="grid"><div class="card span-12"><div class="card-head"><h2>LG TV Controls</h2></div><div id="tvButtons" class="lg-remote-panel"></div></div><div class="card span-12 tv-remote-card" hidden></div></div></section>
     <section class="page" data-page="presence"><div id="presenceList" class="grid"></div><div class="grid" style="margin-top:14px"><div class="card span-12"><div class="card-head"><h2>Home Assistant Automations</h2></div><div id="automationEvents" class="automation-grid"></div></div></div></section>
-    <section class="page" data-page="system"><div class="grid"><div class="card span-12"><div class="card-head"><h2>System Health</h2><button class="btn ghost" onclick="refresh()">Refresh status</button></div><div id="systemDetails"></div></div><div class="card span-12"><div class="card-head"><h2>TP-Link Providers</h2></div><div id="tplinkProviderDashboard" aria-live="polite"><p class="muted">Loading provider information…</p></div></div></div></section>
+    <section class="page" data-page="system"><div class="grid"><div class="card span-12"><div class="card-head"><h2>System Health</h2><button class="btn ghost" onclick="refresh()">Refresh status</button></div><div id="systemDetails"></div></div><div class="card span-12"><div class="card-head"><div><h2>Device Health</h2><p class="muted">Live connectivity and response measurements</p></div></div><div id="deviceHealthDashboard" class="device-health-dashboard" aria-live="polite" aria-busy="false"><p class="device-health-empty">Loading device health…</p></div></div><div class="card span-12"><div class="card-head"><h2>TP-Link Providers</h2></div><div id="tplinkProviderDashboard" aria-live="polite"><p class="muted">Loading provider information…</p></div></div></div></section>
   </main>
   <div class="sc-bottom-navigation-container"><nav class="mobile-nav sc-bottom-navigation" aria-label="Dashboard navigation"><button data-nav="overview" aria-label="Overview"><i data-lucide="house" aria-hidden="true"></i><span>Home</span></button><button data-nav="lighting" aria-label="Lighting"><i data-lucide="lightbulb" aria-hidden="true"></i><span>Lights</span></button><button data-nav="climate" aria-label="Climate"><i data-lucide="wind" aria-hidden="true"></i><span>Climate</span></button><button data-nav="entertainment" aria-label="Entertainment"><i data-lucide="tv" aria-hidden="true"></i><span>TV</span></button><button data-nav="presence" aria-label="Presence"><i data-lucide="users" aria-hidden="true"></i><span>Presence</span></button><button data-nav="system" aria-label="System"><i data-lucide="settings" aria-hidden="true"></i><span>System</span></button></nav></div>
 </div>
@@ -146,6 +147,7 @@
 <script src="/assets/dashboard_notifications.js?v=__ASSET_VERSION__"></script>
 <script src="/assets/dashboard_household_devices.js?v=__ASSET_VERSION__"></script>
 <script src="/assets/dashboard_tplink_provider.js?v=__ASSET_VERSION__"></script>
+<script src="/assets/dashboard_device_health.js?v=__ASSET_VERSION__"></script>
 <script src="/assets/dashboard_automation.js?v=__ASSET_VERSION__"></script>
 <script src="/assets/dashboard_automation_triggers.js?v=__ASSET_VERSION__"></script>
 <script src="/assets/dashboard_tariff_sync.js?v=__ASSET_VERSION__"></script>

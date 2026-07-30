@@ -71,6 +71,8 @@ from backend import dashboard_polish_hotfix10 as _dashboard_polish_hotfix10  # n
 from backend import notification_center as _notification_center  # noqa: F401,E402
 # SMART CONTROL 02B exposes one safe, device-centric household projection.
 from backend import household_device_registry as _household_device_registry  # noqa: F401,E402
+# EPIC 19 adds a read-only heartbeat and latency projection over safe device IDs.
+from backend import device_health as _device_health  # noqa: F401,E402
 # EPIC 17 exposes the inert TP-Link connector through authenticated read routes.
 from backend import tplink_dashboard as _tplink_dashboard  # noqa: F401,E402
 
