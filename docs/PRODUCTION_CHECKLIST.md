@@ -1,16 +1,74 @@
-# Production Checklist
+# v1.0.0 Production Checklist
 
-## Before release
+Verification date: **2026-07-30 Asia/Bangkok**
 
-1. Confirm a clean source checkout and the intended commit.
-2. Run the complete Python suite on the TinkerBoard runtime Python.
-3. Run Python compilation, JavaScript syntax, shell syntax, and
-   `git diff --check`.
-4. Run `sudo ./install.sh --dry-run`.
-5. Confirm persistent camera/eWeLink/settings files and a recent backup.
-6. Record the previous production commit for rollback.
-7. Create the release tag only after production verification. For v1.0.0:
-   `git tag -a v1.0.0 -m "Smart Condo Dashboard v1.0.0"`.
+Production commit:
+`6e319ae37a1797430c26cb7eb6c82104205a2abd`
+
+Immediate rollback commit:
+`eccffee98b21a87f3674b4f14e631299badf2948`
+
+## Completed
+
+- [x] Production source checkout is on `main`.
+- [x] Production source and managed runtime use commit `6e319ae`.
+- [x] Complete TinkerBoard suite passes with no failures.
+- [x] Node-backed chart and frontend behavior tests pass locally.
+- [x] JavaScript syntax and `git diff --check` pass.
+- [x] Runtime-only deployment completed through the exclusive deployment lock.
+- [x] Persistent runtime configuration protection remains enabled.
+- [x] Service is active after deployment.
+- [x] Unauthenticated `GET /` returns 303.
+- [x] `GET /api/auth/status` returns 200.
+- [x] No new startup errors were found in the deployment journal.
+- [x] PM2.5, temperature, humidity, and electricity endpoints were physically
+  verified on an iPad with deterministic preview data.
+- [x] Authentication and CSRF regression coverage passes.
+- [x] EPIC 17 TP-Link APIs remain authenticated, read-only, redacted, and
+  fail-closed.
+- [x] EPIC 18 control-center assets are deployed.
+- [x] No destructive state or history migration is part of v1.0.0.
+
+## Outstanding verification before tagging
+
+- [ ] Run and retain the final Python compilation report.
+- [ ] Run and retain the final shell syntax report.
+- [ ] Run `sudo ./install.sh --dry-run` against the tag candidate.
+- [ ] Confirm a current backup of `/root/.smart-condo-dashboard`.
+- [ ] Confirm a current backup of `/etc/default/smart-condo-dashboard`.
+- [ ] Record backup location and checksum without printing secret contents.
+- [ ] Complete a current Safari, Chrome, Edge, and Firefox smoke test.
+- [ ] Complete keyboard-only and VoiceOver checks.
+- [ ] Confirm the production browser console has no uncaught errors or failed
+  managed asset requests.
+- [ ] Verify idle CPU, memory, task count, and restart count after ten minutes.
+- [ ] Review and approve the final changelog and release notes.
+- [ ] Create and push the annotated `v1.0.0` tag only after all required release
+  checks are approved.
+
+EPIC 19 Milestone 1 (`9380848`) is a validated post-baseline change and is not
+included in the v1.0.0 production tag candidate.
+
+## Functional release checklist
+
+| Area | Status | Required final check |
+|---|---|---|
+| Authentication | Complete | Login, logout, expiry, and CSRF rejection |
+| Dashboard | Complete | Navigate every page |
+| Device cards | Complete | Confirm provider state matches displayed state |
+| TP-Link provider | Complete | Read-only status and safe diagnostics |
+| Charts | Complete | Real and preview endpoint selection |
+| Notifications | Complete | Read, mark, clear, Escape, outside click |
+| Responsive layout | Complete | iPad portrait/landscape and desktop |
+| Dark theme | Complete | v1.0.0 is explicitly dark-only |
+| Light theme | Deferred | Planned for EPIC 20 |
+| Error/loading states | Complete | One safe unavailable-provider check |
+| Browser matrix | Pending | Current Safari, Chrome, Edge, Firefox |
+| Accessibility | Pending | Keyboard and VoiceOver |
+| Runtime deployment | Complete | Guarded runtime-only installer |
+| Backup/restore | Pending final backup | Archive and verify persistent files |
+| Release notes | Complete | Final stakeholder approval pending |
+| Git tag | Pending | Annotated `v1.0.0` |
 
 ## Backup
 
@@ -18,49 +76,87 @@ As root, stop writes or take a consistent filesystem snapshot, then archive:
 
 - `/root/.smart-condo-dashboard`
 - `/etc/default/smart-condo-dashboard`
-- the current Git commit and `/opt/smart-condo-dashboard-run` version
+- production commit and managed-runtime identification
 
-Store the archive outside both source and runtime directories with mode 0600.
-Do not print or check its contents into Git.
-
-## Restore
-
-1. Restore persistent files as `root:root`, mode 0600 for secret configuration.
-2. Restore `/etc/default/smart-condo-dashboard`.
-3. Fast-forward or check out the recorded source commit in a separate recovery
-   checkout; do not destructively reset a dirty production checkout.
-4. Run `sudo ./install.sh --dry-run`, then `sudo ./install.sh --runtime-only`.
-5. Verify authenticated health and read-only integration status.
-
-## Interrupted deployment
-
-The deployment trap restores the prior managed runtime and local configuration.
-If it reports a retained backup directory, do not rerun deployment until that
-backup and runtime integrity are inspected. The stable flock prevents overlap.
+Store the archive outside both source and runtime directories with root
+ownership and mode 0600. Do not print, inspect in chat, or commit its secret
+contents.
 
 ## Release verification command
 
 ```sh
 cd /opt/smart-condo-dashboard
+git worktree add /opt/smart-condo-dashboard-v1.0.0 \
+  6e319ae37a1797430c26cb7eb6c82104205a2abd
+cd /opt/smart-condo-dashboard-v1.0.0
+test -z "$(git status --short)" &&
+test "$(git rev-parse HEAD)" = \
+  "6e319ae37a1797430c26cb7eb6c82104205a2abd" &&
 test "$(cat VERSION)" = "1.0.0" &&
 git diff --check &&
 /opt/smart-condo-dashboard-run/venv/bin/python -m pytest -q &&
-find backend -name '*.py' -print0 | xargs -0 /opt/smart-condo-dashboard-run/venv/bin/python -m py_compile &&
+find backend -name '*.py' -print0 | \
+  xargs -0 /opt/smart-condo-dashboard-run/venv/bin/python -m py_compile &&
 find frontend -name '*.js' -print0 | xargs -0 -n1 node --check &&
-sh -n install.sh scripts/*.sh
+sh -n install.sh scripts/*.sh &&
+sudo ./install.sh --dry-run
 ```
 
 ## Post-deployment read-only checks
 
-- service is active; restart count unchanged
-- authenticated `/api/health` contains no secrets or paths
-- LG capabilities/inventory load without sending a command
-- electricity 24h, 7d, 30d, custom history, comparisons, and CSV respond
-- MQTT presence updates and background thread count remains stable
+```sh
+sudo systemctl status smart-condo-dashboard.service --no-pager -l
+curl -sS -o /dev/null -w "home=%{http_code}\n" http://127.0.0.1:8090/
+curl -sS -o /dev/null -w "auth=%{http_code}\n" \
+  http://127.0.0.1:8090/api/auth/status
+sudo journalctl -u smart-condo-dashboard.service -n 100 --no-pager
+sudo systemctl show smart-condo-dashboard.service \
+  -p MainPID -p MemoryCurrent -p TasksCurrent -p NRestarts
+```
 
-## Rollback
+Expected results:
 
-Use the commit immediately before the release commits (recorded in the release
-report), then run the same dry-run and runtime-only installer. Restore persistent
-state only if its format or content changed; v1.0.0 preparation performs no
-destructive migration.
+- service is active
+- `home=303`
+- `auth=200`
+- no new startup exception or restart loop
+- authenticated health contains no secret or filesystem-path exposure
+- camera absence is shown as configuration unavailable, not falsely offline
+- background task count remains stable
+
+## Rollback procedure
+
+Do not reset or overwrite a dirty production checkout.
+
+```sh
+cd /opt/smart-condo-dashboard
+git status --short
+git worktree add /opt/smart-condo-dashboard-rollback \
+  eccffee98b21a87f3674b4f14e631299badf2948
+cd /opt/smart-condo-dashboard-rollback
+sudo ./install.sh --dry-run
+sudo ./install.sh --runtime-only
+sudo systemctl status smart-condo-dashboard.service --no-pager -l
+curl -sS -o /dev/null -w "home=%{http_code}\n" http://127.0.0.1:8090/
+curl -sS -o /dev/null -w "auth=%{http_code}\n" \
+  http://127.0.0.1:8090/api/auth/status
+```
+
+If the installer reports a retained backup directory, stop and inspect it
+before another deployment. Restore persistent state only when its integrity is
+verified and a state rollback is necessary. v1.0.0 does not require a
+persistent-data rollback.
+
+## Tag procedure
+
+After outstanding release checks are approved:
+
+```sh
+git tag -a v1.0.0 \
+  -m "Smart Condo Dashboard v1.0.0" \
+  6e319ae37a1797430c26cb7eb6c82104205a2abd
+git show --stat --oneline v1.0.0
+git push origin v1.0.0
+```
+
+Do not move or recreate the tag after publication.
