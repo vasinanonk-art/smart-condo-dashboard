@@ -11,7 +11,11 @@ from backend import topology_hotfix
 
 class Perf01ElectricityHistoryTests(unittest.TestCase):
     def setUp(self):
+        electricity_history._invalidate_summary_cache()
         self.now = int(datetime(2026, 7, 31, 12, 0, tzinfo=electricity_history.BANGKOK).timestamp())
+
+    def tearDown(self):
+        electricity_history._invalidate_summary_cache()
 
     def _sample(self, ts, total):
         return {

@@ -24,8 +24,8 @@ const when = ts => ts ? new Date(Number(ts) * 1000).toLocaleString() : 'Not avai
 const shortTime = ts => ts ? new Date(Number(ts) * 1000).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}) : '—';
 const safeText = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 
-async function get(url) {
-  const response = await fetch(url);
+async function get(url, options) {
+  const response = await fetch(url, options);
   if (!response.ok) throw new Error(`${url} ${response.status}`);
   return response.json();
 }

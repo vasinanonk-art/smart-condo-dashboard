@@ -167,7 +167,9 @@
   }
 
   async function loadSummary() {
-    try { state.summary = await window.get('/api/electricity/summary'); }
+    try {
+      state.summary = await window.DashboardElectricitySummaryStore.get();
+    }
     catch (error) { console.error('Electricity summary failed', {name: error?.name || 'Error'}); }
   }
 

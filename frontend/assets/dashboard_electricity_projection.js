@@ -2,19 +2,13 @@
   'use strict';
   if (window.__dashboardElectricityProjectionInstalled) return;
   window.__dashboardElectricityProjectionInstalled = true;
-  let cache = null;
-  let cacheTs = 0;
 
   async function summary() {
-    const now = Date.now();
-    if (cache && now - cacheTs < 15000) return cache;
     try {
-      cache = await window.get('/api/electricity/summary');
-      cacheTs = now;
+      return await window.DashboardElectricitySummaryStore.get();
     } catch (_) {
-      cache = null;
+      return null;
     }
-    return cache;
   }
 
   async function enhance() {

@@ -458,3 +458,57 @@ process.stdout.write(JSON.stringify({{
 }}));
 """
     )
+
+
+def electricity_summary_store_behavior():
+    source = json.dumps(str(ROOT / "frontend/assets/dashboard_electricity_summary_store.js"))
+    return run_node(
+        f"""
+const fs=require('fs'),vm=require('vm');
+const events={{requests:0,adds:0,removes:0,timers:0,aborted:false}};
+let resolveRequest;
+let now=1000;
+const DateShim={{now:()=>now}};
+const window={{
+  get:(url,options)=>{{
+    events.requests++;
+    options?.signal?.addEventListener('abort',()=>{{events.aborted=true;}});
+    return new Promise(resolve=>{{resolveRequest=resolve;}});
+  }},
+  addEventListener:(name,handler)=>{{if(name==='beforeunload'){{events.adds++;window.unload=handler;}}}},
+  removeEventListener:(name,handler)=>{{if(name==='beforeunload'&&window.unload===handler)events.removes++;}}
+}};
+const context={{
+  window,console,Date:DateShim,AbortController,Promise,Set,
+  setInterval:()=>{{events.timers++;}},clearInterval:()=>{{}}
+}};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync({source},'utf8'),context);
+const store=window.DashboardElectricitySummaryStore;
+const first=store.get();
+const duplicate=store.get();
+resolveRequest({{today_kwh:1.25}});
+Promise.all([first,duplicate]).then(async values=>{{
+  const cached=await store.get();
+  const requestsBeforeCleanup=events.requests;
+  let notifications=0;
+  const unsubscribe=store.subscribe(()=>notifications++);
+  unsubscribe();
+  now+=16000;
+  const pending=store.get().catch(()=>null);
+  store.dispose();
+  resolveRequest({{today_kwh:2.5}});
+  await pending;
+  process.stdout.write(JSON.stringify({{
+    requestsBeforeCleanup,
+    requestsTotal:events.requests,
+    sameResult:values[0]===values[1]&&values[0]===cached,
+    timers:events.timers,
+    listenerAdds:events.adds,
+    listenerRemoves:events.removes,
+    aborted:events.aborted,
+    notifications
+  }}));
+}}).catch(error=>{{console.error(error);process.exit(1);}});
+"""
+    )

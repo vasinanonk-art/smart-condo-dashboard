@@ -40,6 +40,13 @@ MAX_INTEGRATION_GAP_SEC = max(60, int(os.getenv("ELECTRICITY_HISTORY_MAX_GAP_SEC
 MAX_QUERY_DAYS = min(400, max(1, int(os.getenv("ELECTRICITY_HISTORY_MAX_QUERY_DAYS", "400"))))
 _lock = threading.RLock()
 _last_prune_day: Optional[str] = None
+SUMMARY_CACHE_TTL_SEC = 10.0
+SUMMARY_CACHE_WAIT_SEC = 15.0
+_summary_condition = threading.Condition(threading.Lock())
+_summary_cache: Optional[Dict[str, Optional[float]]] = None
+_summary_cache_at = 0.0
+_summary_cache_generation = 0
+_summary_calculating = False
 
 SAFE_FIELDS = ("ts", "voltage", "current", "power", "total_energy", "source", "health")
 
@@ -202,6 +209,7 @@ def append_success(payload: Mapping[str, Any]) -> bool:
             # query can rebuild the non-destructive SQLite sidecar.
             pass
         _prune_if_due(sample["ts"])
+    _invalidate_summary_cache()
     return True
 
 
@@ -376,8 +384,7 @@ def _period_usage_from_rows(
     ])
 
 
-def usage_summary(current_power: Optional[float] = None) -> Dict[str, Any]:
-    now_ts = int(time.time())
+def _calculate_period_summary(now_ts: int) -> Dict[str, Optional[float]]:
     periods = {
         name: _period_bounds(name, now_ts)
         for name in ("today", "yesterday", "month", "last_month")
@@ -386,10 +393,64 @@ def usage_summary(current_power: Optional[float] = None) -> Dict[str, Any]:
         min(start for start, _ in periods.values()),
         max(end for _, end in periods.values()),
     )
-    today = _period_usage_from_rows(rows, periods["today"])
-    yesterday = _period_usage_from_rows(rows, periods["yesterday"])
-    month = _period_usage_from_rows(rows, periods["month"])
-    last_month = _period_usage_from_rows(rows, periods["last_month"])
+    return {
+        "today": _period_usage_from_rows(rows, periods["today"]),
+        "yesterday": _period_usage_from_rows(rows, periods["yesterday"]),
+        "month": _period_usage_from_rows(rows, periods["month"]),
+        "last_month": _period_usage_from_rows(rows, periods["last_month"]),
+    }
+
+
+def _invalidate_summary_cache() -> None:
+    global _summary_cache, _summary_cache_at, _summary_cache_generation
+    with _summary_condition:
+        _summary_cache = None
+        _summary_cache_at = 0.0
+        _summary_cache_generation += 1
+        _summary_condition.notify_all()
+
+
+def _cached_period_summary(now_ts: int) -> Dict[str, Optional[float]]:
+    global _summary_cache, _summary_cache_at, _summary_calculating
+    deadline = time.monotonic() + SUMMARY_CACHE_WAIT_SEC
+    with _summary_condition:
+        while True:
+            now = time.monotonic()
+            if _summary_cache is not None and now - _summary_cache_at < SUMMARY_CACHE_TTL_SEC:
+                return dict(_summary_cache)
+            if not _summary_calculating:
+                _summary_calculating = True
+                generation = _summary_cache_generation
+                break
+            remaining = deadline - now
+            if remaining <= 0:
+                raise TimeoutError("electricity summary calculation timed out")
+            _summary_condition.wait(timeout=remaining)
+
+    try:
+        calculated = _calculate_period_summary(now_ts)
+    except Exception:
+        with _summary_condition:
+            _summary_calculating = False
+            _summary_condition.notify_all()
+        raise
+
+    with _summary_condition:
+        if generation == _summary_cache_generation:
+            _summary_cache = dict(calculated)
+            _summary_cache_at = time.monotonic()
+        _summary_calculating = False
+        _summary_condition.notify_all()
+    return calculated
+
+
+def usage_summary(current_power: Optional[float] = None) -> Dict[str, Any]:
+    now_ts = int(time.time())
+    periods = _cached_period_summary(now_ts)
+    today = periods["today"]
+    yesterday = periods["yesterday"]
+    month = periods["month"]
+    last_month = periods["last_month"]
     now = datetime.fromtimestamp(now_ts, BANGKOK)
     elapsed_days = max(1.0 / 24.0, (now - _month_start(now)).total_seconds() / 86400.0)
     days_in_month = calendar.monthrange(now.year, now.month)[1]
