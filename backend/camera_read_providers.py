@@ -333,6 +333,8 @@ def discover(spec: CameraSpec) -> Dict[str, Any]:
     if not spec.enabled:
         return _base_result(spec, "unsupported", "camera_disabled")
     onvif_requested = spec.provider in {"auto", "onvif"} and bool(spec.onvif_port)
+    if onvif_requested and _credentials(spec) is None:
+        return _base_result(spec, "onvif", "camera_credentials_missing")
     if onvif_requested and importlib.util.find_spec("onvif") is not None:
         result = _discover_onvif(spec)
         if result["online"] is True or spec.provider == "onvif":

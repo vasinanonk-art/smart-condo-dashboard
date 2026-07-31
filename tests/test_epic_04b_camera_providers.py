@@ -35,6 +35,11 @@ def _install_config(monkeypatch, tmp_path, *cameras):
     path = tmp_path / "cameras.local.json"
     path.write_text(json.dumps({"schema_version": 1, "cameras": list(cameras)}))
     monkeypatch.setattr(providers, "_config_path", lambda: path)
+    for camera in cameras:
+        credentials = camera.get("credentials") or {}
+        for field in ("username_env", "password_env"):
+            if credentials.get(field):
+                monkeypatch.setenv(credentials[field], "test-camera-credential")
     return path
 
 

@@ -27,10 +27,20 @@ def test_migration_template_contains_known_inventory_without_invented_values():
     payload = json.loads(TEMPLATE.read_text())
     validated = validate_camera_config(payload, placeholder_mode=True)
     assert [item["display_name"] for item in validated["cameras"]] == [
-        "Tapo C220", "Xiaomi Camera 1", "Xiaomi Camera 2",
+        "Bedroom Camera", "Living Room Camera",
     ]
-    assert validated["cameras"][0]["model"] == "C220"
-    assert all(item["room"] == "unknown" and item["enabled"] is False for item in validated["cameras"])
+    tapo, xiaomi = validated["cameras"]
+    assert tapo["model"] == "C200"
+    assert tapo["provider"] == "onvif"
+    assert tapo["onvif_port"] == 2020
+    assert tapo["credentials"] == {
+        "password_env": "TAPO_C200_PASSWORD",
+        "username_env": "TAPO_C200_USERNAME",
+    }
+    assert xiaomi["model"] == "chuangmi.camera.ipc019"
+    assert xiaomi["provider"] == "auto"
+    assert xiaomi["credentials"] is None
+    assert all(item["enabled"] is True for item in validated["cameras"])
     assert all(item["declared_capabilities"] == [] for item in validated["cameras"])
 
 
@@ -96,7 +106,7 @@ def test_placeholder_validator_accepts_template():
         cwd=ROOT, text=True, capture_output=True, check=False,
     )
     assert result.returncode == 0
-    assert "3 camera entries" in result.stdout
+    assert "2 camera entries" in result.stdout
 
 
 def test_existing_recovery_validator_accepts_secure_template():

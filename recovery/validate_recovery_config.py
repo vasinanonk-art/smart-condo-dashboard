@@ -86,8 +86,8 @@ def validate_cameras(
     except CameraConfigError as exc:
         errors.append(f"{path}: camera schema invalid ({exc})")
         return
-    if len(validated["cameras"]) != 3:
-        errors.append(f"{path}: exactly three camera entries are required")
+    if len(validated["cameras"]) != 2:
+        errors.append(f"{path}: exactly two camera entries are required")
     validate_permissions(path, warnings)
 
 

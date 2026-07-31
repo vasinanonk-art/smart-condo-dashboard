@@ -12,7 +12,7 @@ def _payload(*cameras):
     return {"config_loaded": True, "configuration_status": "configured", "cameras": list(cameras)}
 
 
-def test_missing_configuration_keeps_three_unknown_camera_cards(monkeypatch):
+def test_missing_configuration_keeps_known_cameras_unknown(monkeypatch):
     monkeypatch.setattr(
         registry.camera_read_providers,
         "_inventory_payload",
@@ -20,7 +20,7 @@ def test_missing_configuration_keeps_three_unknown_camera_cards(monkeypatch):
     )
     cameras = registry._camera_placeholders()
     assert [camera["display_name"] for camera in cameras] == [
-        "Tapo C220", "Xiaomi Camera 1", "Xiaomi Camera 2",
+        "Bedroom Camera", "Living Room Camera",
     ]
     assert all(camera["online"] is None for camera in cameras)
     assert all(camera["room"] == "unknown" for camera in cameras)
@@ -30,8 +30,8 @@ def test_missing_configuration_keeps_three_unknown_camera_cards(monkeypatch):
 def test_verified_camera_projects_safe_status_and_capabilities(monkeypatch):
     camera = {
         "id": "tapo-c220",
-        "display_name": "Tapo C220",
-        "room": "living_room",
+        "display_name": "Bedroom Camera",
+        "room": "bed_room",
         "vendor": "Tapo",
         "model": "C220",
         "online": True,

@@ -10,6 +10,7 @@
   const disabledButton = (label, reason) => UI.actionButton({label, disabled:true, reason});
   const cameraReasons = {
     camera_disabled:'Camera is disabled in persistent configuration.',
+    camera_credentials_missing:'Camera credentials are not configured.',
     camera_timeout:'Camera discovery timed out.',
     invalid_credentials:'Camera credentials were rejected.',
     onvif_unavailable:'ONVIF connectivity is unavailable.',

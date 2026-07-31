@@ -48,6 +48,11 @@ def install(monkeypatch, tmp_path, entries):
     path = tmp_path / "cameras.local.json"
     path.write_text(json.dumps({"schema_version": 1, "cameras": entries}))
     monkeypatch.setattr(providers, "_config_path", lambda: path)
+    for entry in entries:
+        credentials = entry.get("credentials") or {}
+        for field in ("username_env", "password_env"):
+            if credentials.get(field):
+                monkeypatch.setenv(credentials[field], "test-camera-credential")
     return path
 
 
@@ -102,6 +107,55 @@ def test_invalid_credentials_are_offline_and_secret_safe(monkeypatch, tmp_path):
     assert item["health"] == "offline"
     assert item["unavailable_reason"] == "invalid_credentials"
     assert "private password" not in repr(item)
+
+
+def test_missing_credentials_remain_unknown_without_network_attempt(
+    monkeypatch, tmp_path,
+):
+    entry = configured_onvif()
+    entry["credentials"] = None
+    install(monkeypatch, tmp_path, [entry])
+    monkeypatch.setattr(providers.importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(
+        providers,
+        "_onvif_client",
+        lambda spec: (_ for _ in ()).throw(AssertionError("network attempted")),
+    )
+
+    item = providers.camera_devices_readonly()["cameras"][0]
+
+    assert item["online"] is None
+    assert item["health"] == "unknown"
+    assert item["unavailable_reason"] == "camera_credentials_missing"
+
+
+def test_unverified_auto_candidate_without_protocol_remains_unknown(
+    monkeypatch, tmp_path,
+):
+    install(monkeypatch, tmp_path, [
+        camera(
+            "xiaomi-camera-1",
+            display_name="Living Room Camera",
+            room="living_room",
+            vendor="Xiaomi",
+            model="chuangmi.camera.ipc019",
+            host="192.168.1.188",
+            enabled=True,
+            provider="auto",
+        ),
+    ])
+    monkeypatch.setattr(
+        providers,
+        "_tcp",
+        lambda host, port: (_ for _ in ()).throw(AssertionError("network attempted")),
+    )
+
+    item = providers.camera_devices_readonly()["cameras"][0]
+
+    assert item["online"] is None
+    assert item["health"] == "unknown"
+    assert item["unavailable_reason"] == "read_only_provider_unavailable"
+    assert not any(item["capabilities"].values())
 
 
 def test_provider_authentication_exception_is_classified_without_message(
@@ -239,8 +293,7 @@ def test_household_and_unified_registries_expose_semantic_camera_health(monkeypa
     assert (by_id["camera-2"]["online"], by_id["camera-2"]["health"]) == (
         False, "offline",
     )
-    assert by_id["camera-3"]["online"] is None
-    assert by_id["camera-3"]["health"] == "unknown"
+    assert set(by_id) == {"camera-1", "camera-2"}
 
     monkeypatch.setattr(
         providers, "_inventory_payload", lambda **kwargs: payload,

@@ -207,9 +207,8 @@ def _camera_placeholders() -> list[Dict[str, Any]]:
         if isinstance(item, dict) and isinstance(item.get("id"), str)
     }
     inventory = (
-        ("camera-1", "tapo-c220", "Tapo C220"),
-        ("camera-2", "xiaomi-camera-1", "Xiaomi Camera 1"),
-        ("camera-3", "xiaomi-camera-2", "Xiaomi Camera 2"),
+        ("camera-1", "tapo-c220", "Bedroom Camera"),
+        ("camera-2", "xiaomi-camera-1", "Living Room Camera"),
     )
     result = []
     for public_id, config_id, name in inventory:

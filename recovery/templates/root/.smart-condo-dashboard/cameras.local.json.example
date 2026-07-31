@@ -3,58 +3,36 @@
   "cameras": [
     {
       "id": "tapo-c220",
-      "display_name": "Tapo C220",
-      "room": "unknown",
+      "display_name": "Bedroom Camera",
+      "room": "bed_room",
       "vendor": "TP-Link Tapo",
-      "model": "C220",
-      "host": "<TAPO_C220_HOST>",
-      "enabled": false,
-      "provider": "auto",
+      "model": "C200",
+      "host": "192.168.1.46",
+      "enabled": true,
+      "provider": "onvif",
       "rtsp_port": null,
-      "onvif_port": null,
+      "onvif_port": 2020,
       "stream_path": null,
       "credentials": {
-        "username_env": "CAMERA_TAPO_C220_USERNAME",
-        "password_env": "CAMERA_TAPO_C220_PASSWORD"
+        "username_env": "TAPO_C200_USERNAME",
+        "password_env": "TAPO_C200_PASSWORD"
       },
       "declared_capabilities": [],
       "verification_status": "unverified"
     },
     {
       "id": "xiaomi-camera-1",
-      "display_name": "Xiaomi Camera 1",
-      "room": "unknown",
+      "display_name": "Living Room Camera",
+      "room": "living_room",
       "vendor": "Xiaomi",
-      "model": null,
-      "host": "<XIAOMI_CAMERA_1_HOST>",
-      "enabled": false,
+      "model": "chuangmi.camera.ipc019",
+      "host": "192.168.1.188",
+      "enabled": true,
       "provider": "auto",
       "rtsp_port": null,
       "onvif_port": null,
       "stream_path": null,
-      "credentials": {
-        "username_env": "CAMERA_XIAOMI_1_USERNAME",
-        "password_env": "CAMERA_XIAOMI_1_PASSWORD"
-      },
-      "declared_capabilities": [],
-      "verification_status": "unverified"
-    },
-    {
-      "id": "xiaomi-camera-2",
-      "display_name": "Xiaomi Camera 2",
-      "room": "unknown",
-      "vendor": "Xiaomi",
-      "model": null,
-      "host": "<XIAOMI_CAMERA_2_HOST>",
-      "enabled": false,
-      "provider": "auto",
-      "rtsp_port": null,
-      "onvif_port": null,
-      "stream_path": null,
-      "credentials": {
-        "username_env": "CAMERA_XIAOMI_2_USERNAME",
-        "password_env": "CAMERA_XIAOMI_2_PASSWORD"
-      },
+      "credentials": null,
       "declared_capabilities": [],
       "verification_status": "unverified"
     }
