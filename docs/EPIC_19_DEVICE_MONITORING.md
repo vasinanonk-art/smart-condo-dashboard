@@ -26,8 +26,10 @@ The response contains:
 - observation timestamp
 - aggregate online, offline, unknown, healthy, and degraded counts
 
-No credentials, network addresses, vendor device IDs, tokens, stream URLs,
-provider payloads, or control capabilities are exposed.
+No credentials, vendor device IDs, tokens, stream URLs, provider payloads, or
+control capabilities are exposed. Milestone 2 adds authenticated, validated
+IP and MAC health fields when a provider or protected configuration supplies
+them; they remain null otherwise.
 
 ### Runtime behavior
 
@@ -47,3 +49,41 @@ provider payloads, or control capabilities are exposed.
 Existing device, topology, control, authentication, and provider APIs remain
 unchanged. The endpoint is protected by the existing dashboard session
 middleware and is read-only, so no CSRF token is required.
+
+## Milestone 2 — Provider health metrics
+
+Milestone 2 adds optional fields to each existing device object. The Milestone
+1 fields, endpoint path, summary, polling interval, and online/offline behavior
+are unchanged.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `firmware_version` | string or null | Provider-reported software/firmware version |
+| `uptime` | integer or null | Provider-reported uptime in seconds |
+| `ip_address` | string or null | Valid configured or provider-reported IP address |
+| `mac_address` | string or null | Valid configured or provider-reported MAC address |
+| `signal_strength` | number or null | Provider-reported RSSI in dBm |
+| `connection_type` | string or null | Normalized `Wi-Fi`, `Ethernet`, or explicit `Unknown` |
+| `model` | string or null | Provider-reported or verified configured model |
+| `manufacturer` | string or null | Provider-reported or verified configured manufacturer |
+
+All eight fields are provider-dependent. Missing, malformed, unsupported, or
+ambiguous values are returned as `null`; the backend does not infer a connection
+type from an address or a manufacturer from a display name.
+
+### Current provider coverage
+
+- LG webOS TV: cached model and firmware plus validated configured IP and MAC.
+  Uptime, RSSI, connection type, and manufacturer remain null unless webOS
+  explicitly reports them.
+- Tapo H110-backed living-room IR devices: cached bridge model, firmware, IP,
+  MAC, uptime, RSSI, connection type, and manufacturer when present. These
+  metrics describe the shared bridge connection, not proof that an IR command
+  reached the appliance.
+- Configured cameras: validated configured IP, model, and manufacturer, plus
+  firmware when returned by the active read-only provider.
+- Configuration-unavailable camera placeholders and the unverified T3 bedroom
+  path return null metrics.
+
+The dashboard renders only fields with real values. It does not show empty
+metric rows and retains the existing 30-second visibility-aware poller.

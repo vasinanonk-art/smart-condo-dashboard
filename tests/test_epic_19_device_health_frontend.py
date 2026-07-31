@@ -23,7 +23,7 @@ const host={{
 const payload={{
   summary:{{total:3,online:1,offline:1,unknown:1}},
   devices:[
-    {{id:'tv',display_name:'LG <TV>',health:'healthy',health_indicator:'green',online:true,last_seen:'2026-07-30T03:00:00Z',response_time_ms:12.34}},
+    {{id:'tv',display_name:'LG <TV>',health:'healthy',health_indicator:'green',online:true,last_seen:'2026-07-30T03:00:00Z',response_time_ms:12.34,firmware_version:'1.2.3',uptime:93784,ip_address:'192.168.1.40',mac_address:'58:96:0A:9D:1C:0F',signal_strength:-61,connection_type:'Wi-Fi',model:'OLED <C1>',manufacturer:'LG'}},
     {{id:'camera',display_name:'Camera',health:'offline',health_indicator:'red',online:false,last_seen:null,response_time_ms:null}},
     {{id:'fan',display_name:'Fan',health:'unknown',health_indicator:'yellow',online:null,last_seen:'invalid',response_time_ms:2}}
   ]
@@ -69,6 +69,13 @@ def test_device_health_card_renders_safe_status_and_metrics():
     assert "12.3 ms" in result["html"]
     assert "Not seen" in result["html"]
     assert "Not available" in result["html"]
+    assert "OLED &lt;C1&gt;" in result["html"]
+    assert "OLED <C1>" not in result["html"]
+    assert "1d 2h" in result["html"]
+    assert "192.168.1.40" in result["html"]
+    assert "58:96:0A:9D:1C:0F" in result["html"]
+    assert "-61 dBm" in result["html"]
+    assert "Wi-Fi" in result["html"]
     assert 'data-health="green"' in result["html"]
     assert 'data-health="red"' in result["html"]
     assert 'data-health="yellow"' in result["html"]
@@ -85,6 +92,19 @@ def test_device_health_uses_one_authenticated_read_request():
         },
     ]]
     assert result["busy"] == "false"
+
+
+def test_unavailable_optional_metrics_are_not_rendered():
+    result = frontend_behavior()
+    camera_start = result["html"].index('data-device-health-id="camera"')
+    fan_start = result["html"].index('data-device-health-id="fan"')
+    camera_html = result["html"][camera_start:fan_start]
+
+    assert "Firmware" not in camera_html
+    assert "IP Address" not in camera_html
+    assert "MAC Address" not in camera_html
+    assert "0.0 ms" not in camera_html
+    assert "Not available" in camera_html
 
 
 def test_device_health_source_is_wired_into_dashboard():

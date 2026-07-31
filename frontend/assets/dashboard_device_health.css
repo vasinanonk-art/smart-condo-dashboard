@@ -98,6 +98,13 @@
   overflow-wrap: anywhere;
 }
 
+.device-health-metrics {
+  display: grid;
+  gap: var(--sc-space-2, 8px);
+  padding-top: var(--sc-space-3, 12px);
+  border-top: 1px solid var(--sc-color-border, rgba(255, 255, 255, 0.08));
+}
+
 .device-health-empty,
 .device-health-error {
   padding: var(--sc-space-5, 24px);

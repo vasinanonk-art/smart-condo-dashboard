@@ -38,10 +38,50 @@
     return 'Unknown';
   }
 
+  function present(value) {
+    return value !== null && value !== undefined && value !== '';
+  }
+
+  function uptimeLabel(value) {
+    if (!present(value) || !Number.isFinite(Number(value)) || Number(value) < 0) {
+      return null;
+    }
+    let seconds = Math.floor(Number(value));
+    const days = Math.floor(seconds / 86400);
+    seconds %= 86400;
+    const hours = Math.floor(seconds / 3600);
+    seconds %= 3600;
+    const minutes = Math.floor(seconds / 60);
+    if (days) return `${days}d ${hours}h`;
+    if (hours) return `${hours}h ${minutes}m`;
+    if (minutes) return `${minutes}m`;
+    return `${seconds}s`;
+  }
+
+  function metricRows(device) {
+    const definitions = [
+      ['Model', device.model],
+      ['Manufacturer', device.manufacturer],
+      ['Firmware', device.firmware_version],
+      ['Uptime', uptimeLabel(device.uptime)],
+      ['IP Address', device.ip_address],
+      ['MAC Address', device.mac_address],
+      ['Signal', present(device.signal_strength) ? `${device.signal_strength} dBm` : null],
+      ['Connection', device.connection_type],
+    ];
+    return definitions
+      .filter(([, value]) => present(value))
+      .map(([label, value]) => (
+        `<div class="device-health-detail"><span>${safe(label)}</span><strong>${safe(value)}</strong></div>`
+      ));
+  }
+
   function card(device) {
-    const latency = Number.isFinite(Number(device.response_time_ms))
+    const latency = present(device.response_time_ms)
+      && Number.isFinite(Number(device.response_time_ms))
       ? `${Number(device.response_time_ms).toFixed(1)} ms`
       : 'Not available';
+    const metrics = metricRows(device);
     return `<article class="device-health-card" data-device-health-id="${safe(device.id)}">
       <div class="device-health-header">
         <h3>${safe(device.display_name)}</h3>
@@ -53,6 +93,7 @@
       </div>
       <div class="device-health-detail"><span>Last Seen</span><strong>${safe(relativeTime(device.last_seen))}</strong></div>
       <div class="device-health-detail"><span>Response Time</span><strong>${safe(latency)}</strong></div>
+      ${metrics.length ? `<div class="device-health-metrics">${metrics.join('')}</div>` : ''}
     </article>`;
   }
 
@@ -112,6 +153,8 @@
     render,
     relativeTime,
     statusLabel,
+    metricRows,
+    uptimeLabel,
     state,
   };
 })();

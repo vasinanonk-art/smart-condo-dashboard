@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import bcrypt
 from fastapi.testclient import TestClient
@@ -26,7 +27,26 @@ def _auth_client(monkeypatch):
     return client
 
 
-def _device(identifier="lamp", *, online=True, health="healthy", updated_at=None):
+M1_FIELDS = {
+    "id", "display_name", "room", "category", "health",
+    "health_indicator", "online", "heartbeat_at",
+    "heartbeat_age_seconds", "last_seen", "response_time_ms",
+    "observed_at",
+}
+M2_FIELDS = {
+    "firmware_version", "uptime", "ip_address", "mac_address",
+    "signal_strength", "connection_type", "model", "manufacturer",
+}
+
+
+def _device(
+    identifier="lamp",
+    *,
+    online=True,
+    health="healthy",
+    updated_at=None,
+    state=None,
+):
     return {
         "id": identifier,
         "room": "living_room",
@@ -35,7 +55,7 @@ def _device(identifier="lamp", *, online=True, health="healthy", updated_at=None
         "online": online,
         "health": health,
         "capabilities": {},
-        "state": {"updated_at": updated_at},
+        "state": state if state is not None else {"updated_at": updated_at},
         "state_quality": "confirmed",
         "unavailable_reason": None,
     }
@@ -119,15 +139,11 @@ def test_health_endpoint_is_authenticated_and_returns_safe_model(monkeypatch):
         "healthy": 1,
         "degraded": 0,
     }
-    assert set(payload["devices"][0]) == {
-        "id", "display_name", "room", "category", "health",
-        "health_indicator", "online", "heartbeat_at",
-        "heartbeat_age_seconds", "last_seen", "response_time_ms",
-        "observed_at",
-    }
+    assert set(payload["devices"][0]) == M1_FIELDS | M2_FIELDS
+    assert all(payload["devices"][0][field] is None for field in M2_FIELDS)
     serialized = json.dumps(payload).casefold()
     assert not any(secret in serialized for secret in (
-        "password", "token", "deviceid", "rtsp", "client_key", "mac_address",
+        "password", "token", "deviceid", "rtsp", "client_key", "app_secret",
     ))
 
 
@@ -152,3 +168,106 @@ def test_health_snapshot_preserves_registry_order_and_counts(monkeypatch):
     assert payload["summary"]["online"] == 1
     assert payload["summary"]["offline"] == 1
     assert payload["summary"]["unknown"] == 1
+
+
+def test_milestone_one_clients_can_read_original_fields_unchanged(monkeypatch):
+    monkeypatch.setattr(
+        device_health,
+        "_timed_devices",
+        lambda: iter([(_device(), 4)]),
+    )
+    device_health.tracker.clear()
+
+    item = device_health.health_snapshot(observed_at=200)["devices"][0]
+    milestone_one_projection = {field: item[field] for field in M1_FIELDS}
+
+    assert set(milestone_one_projection) == M1_FIELDS
+    assert milestone_one_projection["id"] == "lamp"
+    assert milestone_one_projection["online"] is True
+    assert milestone_one_projection["response_time_ms"] == 4.0
+
+
+def test_normalizes_explicit_provider_metrics():
+    metrics = device_health.normalize_provider_metrics(_device(state={
+        "firmware": " 1.2.3 ",
+        "uptime_seconds": 93784,
+        "ip": "192.168.1.40",
+        "mac": "58-96-0a-9d-1c-0f",
+        "rssi": -61,
+        "network_type": "wireless",
+        "model": "Model One",
+        "manufacturer": "Vendor One",
+    }))
+
+    assert metrics == device_health.ProviderMetrics(
+        firmware_version="1.2.3",
+        uptime=93784,
+        ip_address="192.168.1.40",
+        mac_address="58:96:0A:9D:1C:0F",
+        signal_strength=-61.0,
+        connection_type="Wi-Fi",
+        model="Model One",
+        manufacturer="Vendor One",
+    )
+
+
+def test_invalid_or_unreported_metrics_remain_null():
+    metrics = device_health.normalize_provider_metrics(_device(state={
+        "uptime": -1,
+        "ip_address": "camera.local",
+        "mac_address": "not-a-mac",
+        "rssi": "unknown",
+        "connection_type": "cloud",
+        "model": {},
+    }))
+
+    assert metrics == device_health.ProviderMetrics()
+    assert device_health._mac_address("junk-58:96:0A:9D:1C:0F") is None
+
+
+def test_tapo_bridge_metrics_are_mapped_only_to_h110_devices():
+    sources = device_health.MetricSources()
+    sources._tapo = {
+        "host": "192.168.1.50",
+        "mac": "00:11:22:33:44:55",
+        "model": "H110",
+        "firmware": "1.0.0",
+        "debug": {"sys_info": {"rssi": -54, "connection_type": "Wi-Fi"}},
+    }
+
+    living = device_health.normalize_provider_metrics(
+        _device("living-room-fan", state={}),
+        sources,
+    )
+    bedroom = device_health.normalize_provider_metrics(
+        _device("bed-room-air-conditioner", state={}),
+        sources,
+    )
+
+    assert living.model == "H110"
+    assert living.firmware_version == "1.0.0"
+    assert living.ip_address == "192.168.1.50"
+    assert living.mac_address == "00:11:22:33:44:55"
+    assert living.signal_strength == -54.0
+    assert bedroom == device_health.ProviderMetrics()
+
+
+def test_camera_config_metrics_use_safe_public_identity():
+    sources = device_health.MetricSources()
+    sources._cameras = {
+        "tapo-c220": SimpleNamespace(
+            host="192.168.1.60",
+            vendor="TP-Link",
+            model="C220",
+        ),
+    }
+
+    metrics = device_health.normalize_provider_metrics(
+        _device("camera-1", state={"firmware_version": "2.1.0"}),
+        sources,
+    )
+
+    assert metrics.ip_address == "192.168.1.60"
+    assert metrics.manufacturer == "TP-Link"
+    assert metrics.model == "C220"
+    assert metrics.firmware_version == "2.1.0"
