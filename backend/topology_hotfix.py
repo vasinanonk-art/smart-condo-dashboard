@@ -94,11 +94,11 @@ def _provider_errors() -> List[Dict[str, str]]:
 
 def _enrich_electricity(nodes: Dict[str, Dict[str, Any]], errors: List[Dict[str, str]]) -> None:
     try:
-        from backend import electricity_provider
-
-        status = _safe_dict(electricity_provider.electricity_status())
-        diagnostics = _safe_dict(status.get("diagnostics"))
         node = nodes.setdefault("electricity", _unknown_node("electricity"))
+        devices = _safe_list(node.get("devices"))
+        device = _safe_dict(devices[0]) if devices else {}
+        status = _safe_dict(device.get("status"))
+        diagnostics = _safe_dict(device.get("diagnostics"))
         node.update({
             "physical_site": "condo",
             "data_source": diagnostics.get("source") or "tuya_local",

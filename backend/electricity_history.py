@@ -364,12 +364,33 @@ def period_usage(name: str) -> Optional[float]:
     return payload["summary"]["energy_used_kwh"]
 
 
+def _period_usage_from_rows(
+    rows: list[Mapping[str, Any]],
+    bounds: tuple[int, int],
+) -> Optional[float]:
+    start, end = bounds
+    return energy_used([
+        row
+        for row in rows
+        if start <= int(row["ts"]) <= end
+    ])
+
+
 def usage_summary(current_power: Optional[float] = None) -> Dict[str, Any]:
-    today = period_usage("today")
-    yesterday = period_usage("yesterday")
-    month = period_usage("month")
-    last_month = period_usage("last_month")
-    now = datetime.now(BANGKOK)
+    now_ts = int(time.time())
+    periods = {
+        name: _period_bounds(name, now_ts)
+        for name in ("today", "yesterday", "month", "last_month")
+    }
+    rows = read_samples(
+        min(start for start, _ in periods.values()),
+        max(end for _, end in periods.values()),
+    )
+    today = _period_usage_from_rows(rows, periods["today"])
+    yesterday = _period_usage_from_rows(rows, periods["yesterday"])
+    month = _period_usage_from_rows(rows, periods["month"])
+    last_month = _period_usage_from_rows(rows, periods["last_month"])
+    now = datetime.fromtimestamp(now_ts, BANGKOK)
     elapsed_days = max(1.0 / 24.0, (now - _month_start(now)).total_seconds() / 86400.0)
     days_in_month = calendar.monthrange(now.year, now.month)[1]
     projected = round(month / elapsed_days * days_in_month, 3) if month is not None else None
