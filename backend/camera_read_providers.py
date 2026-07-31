@@ -233,6 +233,19 @@ def _safe_snapshot_uri(media: Any, profile_token: Any, host: str | None) -> str 
     return uri
 
 
+def _profile_projection(profile: Any) -> Dict[str, Any]:
+    video = getattr(profile, "VideoEncoderConfiguration", None)
+    resolution = getattr(video, "Resolution", None)
+    width = getattr(resolution, "Width", None)
+    height = getattr(resolution, "Height", None)
+    return {
+        "name": _safe_text(getattr(profile, "Name", None)) or "Camera profile",
+        "codec": _safe_text(getattr(video, "Encoding", None), 32),
+        "width": width if isinstance(width, int) and 0 < width <= 16384 else None,
+        "height": height if isinstance(height, int) and 0 < height <= 16384 else None,
+    }
+
+
 def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
     result = _base_result(spec, "onvif", None)
     started = time.monotonic()
@@ -242,6 +255,7 @@ def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
         media = camera.create_media_service()
         raw_profiles = list(media.GetProfiles() or [])
         profile_count = min(len(raw_profiles), 16)
+        profiles = [_profile_projection(profile) for profile in raw_profiles[:16]]
         discovered = {"onvif_profiles", "firmware_info"} if raw_profiles else {"firmware_info"}
         snapshot_available = False
         if raw_profiles:
@@ -275,6 +289,7 @@ def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
             "health": "healthy",
             "profiles_available": bool(raw_profiles),
             "profile_count": profile_count,
+            "profiles": profiles,
             "ptz_capability": ptz_available,
             "snapshot_capability": snapshot_available,
             "discovered_capabilities": sorted(discovered),
@@ -335,7 +350,10 @@ def discover(spec: CameraSpec) -> Dict[str, Any]:
     onvif_requested = spec.provider in {"auto", "onvif"} and bool(spec.onvif_port)
     if onvif_requested and _credentials(spec) is None:
         return _base_result(spec, "onvif", "camera_credentials_missing")
-    if onvif_requested and importlib.util.find_spec("onvif") is not None:
+    onvif_available = importlib.util.find_spec("onvif") is not None
+    if onvif_requested and not onvif_available and spec.provider == "onvif":
+        return _base_result(spec, "onvif", "onvif_provider_unavailable")
+    if onvif_requested and onvif_available:
         result = _discover_onvif(spec)
         if result["online"] is True or spec.provider == "onvif":
             return result

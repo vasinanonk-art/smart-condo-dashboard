@@ -10,7 +10,7 @@
       "host": "192.168.1.46",
       "enabled": true,
       "provider": "onvif",
-      "rtsp_port": null,
+      "rtsp_port": 554,
       "onvif_port": 2020,
       "stream_path": null,
       "credentials": {

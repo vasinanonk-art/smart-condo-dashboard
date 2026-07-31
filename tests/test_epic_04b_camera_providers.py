@@ -127,6 +127,12 @@ def test_tapo_onvif_discovery_is_per_camera_and_secret_safe(monkeypatch, tmp_pat
     assert item["capabilities"]["live_stream"] is False
     assert item["profiles_available"] is True
     assert item["profile_count"] == 1
+    assert item["profiles"] == [{
+        "name": "Main stream",
+        "codec": "H264",
+        "width": 1920,
+        "height": 1080,
+    }]
     assert item["snapshot_capability"] is True
     assert item["ptz_capability"] is True
     assert item["stream"]["access"] == "unavailable"
@@ -170,6 +176,26 @@ def test_timeout_is_safe_and_does_not_expose_exception(monkeypatch, tmp_path):
     assert item["health"] == "offline"
     assert item["unavailable_reason"] == "camera_timeout"
     assert "secret camera address" not in repr(item)
+
+
+def test_explicit_onvif_provider_does_not_fall_back_to_rtsp(monkeypatch, tmp_path):
+    _install_config(
+        monkeypatch,
+        tmp_path,
+        _verified_onvif(rtsp_port=554, stream_path="/unused"),
+    )
+    monkeypatch.setattr(providers.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(
+        providers,
+        "_tcp",
+        lambda host, port: (_ for _ in ()).throw(AssertionError("RTSP attempted")),
+    )
+
+    item = providers.camera_devices_readonly()["cameras"][0]
+
+    assert item["online"] is None
+    assert item["health"] == "unknown"
+    assert item["unavailable_reason"] == "onvif_provider_unavailable"
 
 
 def test_rtsp_fallback_reports_metadata_without_raw_url_or_live_proxy(monkeypatch, tmp_path):

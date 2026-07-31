@@ -1,6 +1,10 @@
 import json
 from types import SimpleNamespace
 
+import bcrypt
+from fastapi.testclient import TestClient
+
+from backend.app_entry import app
 from backend import camera_read_providers as providers
 from backend import device_registration
 from backend import household_device_registry
@@ -237,6 +241,12 @@ def test_mixed_onvif_vendors_use_observed_metadata_without_enabling_controls(
     assert all(item["online"] is True for item in items)
     assert all(item["ptz_capability"] is True for item in items)
     assert all(item["snapshot_capability"] is True for item in items)
+    assert all(item["profiles"] == [{
+        "name": "Camera profile",
+        "codec": None,
+        "width": None,
+        "height": None,
+    }] for item in items)
     assert all(item["capabilities"]["ptz_move"] is False for item in items)
     assert all(item["capabilities"]["snapshot"] is False for item in items)
 
@@ -358,3 +368,106 @@ def test_legacy_camera_endpoint_projection_contains_verified_runtime_fields(
     assert payload["configuration_status"] == "configuration_partial"
     assert payload["cameras"][0]["online"] is True
     assert not any(payload["cameras"][0]["capabilities"].values())
+
+
+def test_authenticated_camera_endpoints_share_read_only_semantic_state(
+    monkeypatch,
+):
+    monkeypatch.setenv("DASHBOARD_AUTH_USERNAME", "camera-verification")
+    monkeypatch.setenv(
+        "DASHBOARD_AUTH_PASSWORD_HASH",
+        bcrypt.hashpw(b"camera-password", bcrypt.gensalt(rounds=4)).decode(),
+    )
+    monkeypatch.setenv(
+        "DASHBOARD_SESSION_SECRET",
+        "camera-verification-session-secret-with-entropy",
+    )
+    payload = {
+        "config_loaded": True,
+        "configuration_status": "configured",
+        "invalid_camera_count": 0,
+        "cameras": [
+            {
+                **providers._base_result(
+                    providers.CameraSpec(
+                        id="tapo-c220",
+                        display_name="Bedroom Camera",
+                        room="bed_room",
+                        vendor="TP-Link",
+                        model="Tapo C200",
+                        host=None,
+                        enabled=True,
+                        provider="onvif",
+                        rtsp_port=554,
+                        onvif_port=2020,
+                        stream_path=None,
+                        username_env=None,
+                        password_env=None,
+                        declared_capabilities=frozenset(),
+                        verification_status="verified",
+                    ),
+                    "onvif",
+                    None,
+                ),
+                "online": True,
+                "health": "healthy",
+            },
+            {
+                **providers._base_result(
+                    providers.CameraSpec(
+                        id="xiaomi-camera-1",
+                        display_name="Living Room Camera",
+                        room="living_room",
+                        vendor="Xiaomi",
+                        model="chuangmi.camera.ipc019",
+                        host=None,
+                        enabled=True,
+                        provider="unsupported",
+                        rtsp_port=None,
+                        onvif_port=None,
+                        stream_path=None,
+                        username_env=None,
+                        password_env=None,
+                        declared_capabilities=frozenset(),
+                        verification_status="unverified",
+                    ),
+                    "unsupported",
+                    "read_only_provider_unavailable",
+                ),
+            },
+        ],
+    }
+    monkeypatch.setattr(providers, "_inventory_payload", lambda **kwargs: payload)
+    monkeypatch.setattr(
+        household_device_registry.camera_read_providers,
+        "_inventory_payload",
+        lambda **kwargs: payload,
+    )
+
+    client = TestClient(app)
+    login = client.post(
+        "/api/auth/login",
+        json={
+            "username": "camera-verification",
+            "password": "camera-password",
+            "next": "/",
+        },
+    )
+    assert login.status_code == 200
+
+    responses = {
+        path: client.get(path)
+        for path in (
+            "/api/cameras",
+            "/api/camera-control/devices",
+            "/api/devices",
+            "/api/device-health",
+        )
+    }
+
+    assert all(response.status_code == 200 for response in responses.values())
+    assert all(response.headers["content-type"].startswith("application/json")
+               for response in responses.values())
+    rendered = repr([response.json() for response in responses.values()]).lower()
+    for forbidden in ("password", "profile-token", "rtsp://", "snapshot-uri"):
+        assert forbidden not in rendered

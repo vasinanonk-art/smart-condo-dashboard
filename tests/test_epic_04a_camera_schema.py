@@ -33,6 +33,7 @@ def test_migration_template_contains_known_inventory_without_invented_values():
     assert tapo["model"] == "C200"
     assert tapo["provider"] == "onvif"
     assert tapo["onvif_port"] == 2020
+    assert tapo["rtsp_port"] == 554
     assert tapo["credentials"] == {
         "password_env": "TAPO_C200_PASSWORD",
         "username_env": "TAPO_C200_USERNAME",
