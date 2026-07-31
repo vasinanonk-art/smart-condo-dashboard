@@ -85,6 +85,42 @@
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--sc-color-critical, #ff6b6b) 16%, transparent);
 }
 
+.device-health-dashboard .health-good,
+.device-health-dashboard .sc-status-chip.health-good {
+  border-color: color-mix(in srgb, var(--sc-color-success) 42%, var(--sc-color-border));
+  background-color: color-mix(in srgb, var(--sc-color-success) 14%, transparent);
+  color: var(--sc-color-success);
+}
+
+.device-health-dashboard .health-warning,
+.device-health-dashboard .sc-status-chip.health-warning {
+  border-color: color-mix(in srgb, var(--sc-color-warning) 46%, var(--sc-color-border));
+  background-color: color-mix(in srgb, var(--sc-color-warning) 15%, transparent);
+  color: var(--sc-color-warning);
+}
+
+.device-health-dashboard .health-critical,
+.device-health-dashboard .sc-status-chip.health-critical {
+  border-color: color-mix(in srgb, var(--sc-color-critical) 46%, var(--sc-color-border));
+  background-color: color-mix(in srgb, var(--sc-color-critical) 15%, transparent);
+  color: var(--sc-color-critical);
+}
+
+.device-health-indicator.health-good {
+  background: var(--sc-color-success);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--sc-color-success) 16%, transparent);
+}
+
+.device-health-indicator.health-warning {
+  background: var(--sc-color-warning);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--sc-color-warning) 16%, transparent);
+}
+
+.device-health-indicator.health-critical {
+  background: var(--sc-color-critical);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--sc-color-critical) 16%, transparent);
+}
+
 .device-health-detail {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

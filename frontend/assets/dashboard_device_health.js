@@ -38,6 +38,13 @@
     return 'Unknown';
   }
 
+  function healthClass(indicator) {
+    if (indicator === 'green') return 'health-good';
+    if (indicator === 'yellow') return 'health-warning';
+    if (indicator === 'red') return 'health-critical';
+    return '';
+  }
+
   function present(value) {
     return value !== null && value !== undefined && value !== '';
   }
@@ -82,14 +89,15 @@
       ? `${Number(device.response_time_ms).toFixed(1)} ms`
       : 'Not available';
     const metrics = metricRows(device);
+    const semanticHealthClass = healthClass(device.health_indicator);
     return `<article class="device-health-card" data-device-health-id="${safe(device.id)}">
       <div class="device-health-header">
         <h3>${safe(device.display_name)}</h3>
-        <span class="device-health-indicator" data-health="${safe(device.health_indicator)}" aria-label="${safe(healthLabel(device))}" title="${safe(healthLabel(device))}"></span>
+        <span class="device-health-indicator${semanticHealthClass ? ` ${semanticHealthClass}` : ''}" data-health="${safe(device.health_indicator)}" aria-label="${safe(healthLabel(device))}" title="${safe(healthLabel(device))}"></span>
       </div>
       <div class="device-health-badges">
         <span class="sc-status-chip" data-status="${device.online === true ? 'success' : device.online === false ? 'critical' : 'warning'}">${safe(statusLabel(device))}</span>
-        <span class="sc-status-chip" data-status="${device.health_indicator === 'green' ? 'success' : device.health_indicator === 'red' ? 'critical' : 'warning'}">${safe(healthLabel(device))}</span>
+        <span class="sc-status-chip${semanticHealthClass ? ` ${semanticHealthClass}` : ''}" data-health="${safe(device.health_indicator)}" data-status="${device.health_indicator === 'green' ? 'success' : device.health_indicator === 'red' ? 'critical' : device.health_indicator === 'yellow' ? 'warning' : 'neutral'}">${safe(healthLabel(device))}</span>
       </div>
       <div class="device-health-detail"><span>Last Seen</span><strong>${safe(relativeTime(device.last_seen))}</strong></div>
       <div class="device-health-detail"><span>Response Time</span><strong>${safe(latency)}</strong></div>
@@ -153,6 +161,7 @@
     render,
     relativeTime,
     statusLabel,
+    healthClass,
     metricRows,
     uptimeLabel,
     state,

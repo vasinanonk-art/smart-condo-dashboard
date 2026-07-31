@@ -21,11 +21,12 @@ const host={{
   setAttribute(name,value){{this.attributes[name]=value;}}
 }};
 const payload={{
-  summary:{{total:3,online:1,offline:1,unknown:1}},
+  summary:{{total:4,online:1,offline:1,unknown:2}},
   devices:[
     {{id:'tv',display_name:'LG <TV>',health:'healthy',health_indicator:'green',online:true,last_seen:'2026-07-30T03:00:00Z',response_time_ms:12.34,firmware_version:'1.2.3',uptime:93784,ip_address:'192.168.1.40',mac_address:'58:96:0A:9D:1C:0F',signal_strength:-61,connection_type:'Wi-Fi',model:'OLED <C1>',manufacturer:'LG'}},
     {{id:'camera',display_name:'Camera',health:'offline',health_indicator:'red',online:false,last_seen:null,response_time_ms:null}},
-    {{id:'fan',display_name:'Fan',health:'unknown',health_indicator:'yellow',online:null,last_seen:'invalid',response_time_ms:2}}
+    {{id:'fan',display_name:'Fan',health:'degraded',health_indicator:'yellow',online:null,last_seen:'invalid',response_time_ms:2}},
+    {{id:'unknown',display_name:'Unknown Device',health:'unknown',online:null,last_seen:null,response_time_ms:null}}
   ]
 }};
 const document={{
@@ -51,6 +52,7 @@ vm.runInContext(fs.readFileSync({source},'utf8'),context);
     requests,
     busy:host.attributes['aria-busy'],
     statuses:payload.devices.map(api.statusLabel),
+    healthClasses:payload.devices.map(device=>api.healthClass(device.health_indicator)),
     missing:api.relativeTime(null),
     invalid:api.relativeTime('invalid'),
     timerDelay:(api.state.timer || {{}}).delay || null
@@ -65,7 +67,10 @@ def test_device_health_card_renders_safe_status_and_metrics():
 
     assert "LG &lt;TV&gt;" in result["html"]
     assert "LG <TV>" not in result["html"]
-    assert result["statuses"] == ["Online", "Offline", "Unknown"]
+    assert result["statuses"] == ["Online", "Offline", "Unknown", "Unknown"]
+    assert result["healthClasses"] == [
+        "health-good", "health-critical", "health-warning", "",
+    ]
     assert "12.3 ms" in result["html"]
     assert "Not seen" in result["html"]
     assert "Not available" in result["html"]
@@ -79,6 +84,35 @@ def test_device_health_card_renders_safe_status_and_metrics():
     assert 'data-health="green"' in result["html"]
     assert 'data-health="red"' in result["html"]
     assert 'data-health="yellow"' in result["html"]
+
+
+def test_semantic_health_classes_apply_to_indicator_and_badge():
+    html = frontend_behavior()["html"]
+    card_starts = {
+        identifier: html.index(f'data-device-health-id="{identifier}"')
+        for identifier in ("tv", "camera", "fan", "unknown")
+    }
+    cards = {
+        "tv": html[card_starts["tv"]:card_starts["camera"]],
+        "camera": html[card_starts["camera"]:card_starts["fan"]],
+        "fan": html[card_starts["fan"]:card_starts["unknown"]],
+        "unknown": html[card_starts["unknown"]:],
+    }
+
+    for identifier, semantic, value in (
+        ("tv", "health-good", "green"),
+        ("camera", "health-critical", "red"),
+        ("fan", "health-warning", "yellow"),
+    ):
+        assert cards[identifier].count(semantic) == 2
+        assert f'class="device-health-indicator {semantic}"' in cards[identifier]
+        assert f'class="sc-status-chip {semantic}"' in cards[identifier]
+        assert cards[identifier].count(f'data-health="{value}"') == 2
+
+    assert "health-good" not in cards["unknown"]
+    assert "health-warning" not in cards["unknown"]
+    assert "health-critical" not in cards["unknown"]
+    assert 'data-health=""' in cards["unknown"]
 
 
 def test_device_health_uses_one_authenticated_read_request():
