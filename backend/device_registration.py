@@ -232,30 +232,53 @@ def _pm25_provider(app_module: Any) -> Iterable[UnifiedDevice]:
 
 def _camera_provider(app_module: Any) -> Iterable[UnifiedDevice]:
     try:
-        payload = app_module.camera_config_payload()
+        from backend import camera_read_providers
+
+        payload = camera_read_providers._inventory_payload(discover_live=True)
     except Exception:
-        payload = {"loaded": False, "cameras": []}
+        payload = {"config_loaded": False, "cameras": []}
     cameras = payload.get("cameras") if isinstance(payload, Mapping) else []
     result: List[UnifiedDevice] = []
     for raw in cameras if isinstance(cameras, list) else []:
         if not isinstance(raw, Mapping):
             continue
-        device_id = str(raw.get("id") or raw.get("name") or raw.get("ip") or "camera")
-        name = str(raw.get("name") or "Camera")
+        device_id = str(raw.get("id") or "camera")
+        name = str(raw.get("display_name") or "Camera")
+        discovered = tuple(
+            str(item)
+            for item in raw.get("discovered_capabilities", ())
+            if isinstance(item, str)
+            and item in {"onvif_profiles", "firmware_info"}
+        )
         result.append(
             UnifiedDevice(
                 id=f"camera:{device_id}",
                 type="camera",
                 name=name,
                 room=str(raw.get("room") or _room_from_name(name) or "unknown"),
-                online=None,
-                health="unknown",
-                last_update_ts=None,
-                status={"has_rtsp": bool(raw.get("rtsp") or raw.get("rtsp_url") or raw.get("rtsp_path") or raw.get("rtsp_port"))},
-                diagnostics={"source": "camera_config", "configured": bool(payload.get("loaded"))},
-                capabilities=("video",),
+                online=raw.get("online") if isinstance(raw.get("online"), bool) else None,
+                health=str(raw.get("health") or "unknown"),
+                last_update_ts=_int(raw.get("last_update")),
+                latency_ms=_float(raw.get("latency_ms")),
+                status={
+                    "profiles_available": raw.get("profiles_available") is True,
+                    "ptz_capability": raw.get("ptz_capability") is True,
+                    "snapshot_capability": raw.get("snapshot_capability") is True,
+                },
+                diagnostics={
+                    "source": "camera_read_provider",
+                    "configured": bool(payload.get("config_loaded")),
+                    "verification_status": raw.get("verification_status"),
+                    "unavailable_reason": raw.get("unavailable_reason"),
+                },
+                capabilities=discovered,
                 actions=(),
-                metadata={"brand": raw.get("brand"), "model": raw.get("model")},
+                metadata={
+                    "manufacturer": raw.get("manufacturer") or raw.get("vendor"),
+                    "model": raw.get("model"),
+                    "firmware": raw.get("firmware"),
+                    "serial": raw.get("serial"),
+                },
             )
         )
     return result

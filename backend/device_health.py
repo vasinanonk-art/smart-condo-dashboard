@@ -209,7 +209,7 @@ class MetricSources:
                 status, specs = camera_read_providers.load_inventory()
                 self._cameras = (
                     {spec.id: spec for spec in specs}
-                    if status == "configured" else {}
+                    if status in {"configured", "configuration_partial"} else {}
                 )
             except Exception:
                 self._cameras = {}

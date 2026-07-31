@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import json
 import os
 import socket
 import time
@@ -15,7 +16,7 @@ from typing import Any, Callable, Dict
 from fastapi.responses import JSONResponse, Response
 
 from backend import app as app_module
-from backend.camera_inventory_schema import CameraConfigError, load_camera_config
+from backend.camera_inventory_schema import CameraConfigError
 
 app = app_module.app
 NETWORK_TIMEOUT_SEC = min(10.0, max(0.5, float(os.getenv("CAMERA_READ_TIMEOUT_SEC", "4"))))
@@ -67,15 +68,43 @@ def _config_path() -> Path | None:
 
 
 def load_inventory() -> tuple[str, list[CameraSpec]]:
+    status, cameras, _ = load_inventory_details()
+    return status, cameras
+
+
+def load_inventory_details() -> tuple[str, list[CameraSpec], list[Dict[str, Any]]]:
     path = _config_path()
     if path is None:
-        return "configuration_missing", []
+        return "configuration_missing", [], []
     try:
-        payload = load_camera_config(path)
-    except CameraConfigError:
-        return "configuration_invalid", []
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "configuration_invalid", [], [{"index": None, "error": "camera_config_unreadable"}]
+    if (
+        not isinstance(raw, dict)
+        or set(raw) != {"schema_version", "cameras"}
+        or raw.get("schema_version") != 1
+        or not isinstance(raw.get("cameras"), list)
+        or len(raw["cameras"]) > 32
+    ):
+        return "configuration_invalid", [], [{"index": None, "error": "root_schema_invalid"}]
+
+    normalized: list[Dict[str, Any]] = []
+    invalid: list[Dict[str, Any]] = []
+    identifiers: set[str] = set()
+    for index, item in enumerate(raw["cameras"]):
+        try:
+            payload = load_camera_config_entry(item)
+            camera = payload["cameras"][0]
+            if camera["id"] in identifiers:
+                raise CameraConfigError("duplicate_camera_id")
+            identifiers.add(camera["id"])
+            normalized.append(camera)
+        except CameraConfigError as exc:
+            invalid.append({"index": index, "error": str(exc)[:80]})
+
     cameras = []
-    for item in payload["cameras"]:
+    for item in normalized:
         credentials = item.get("credentials") or {}
         cameras.append(CameraSpec(
             id=item["id"], display_name=item["display_name"], room=item["room"],
@@ -88,7 +117,15 @@ def load_inventory() -> tuple[str, list[CameraSpec]]:
             declared_capabilities=frozenset(item["declared_capabilities"]),
             verification_status=item["verification_status"],
         ))
-    return "configured", cameras
+    status = "configuration_partial" if invalid else "configured"
+    return status, cameras, invalid
+
+
+def load_camera_config_entry(item: Any) -> Dict[str, Any]:
+    """Validate one entry with the canonical schema without weakening it."""
+    from backend.camera_inventory_schema import validate_camera_config
+
+    return validate_camera_config({"schema_version": 1, "cameras": [item]})
 
 
 def _credentials(spec: CameraSpec) -> tuple[str, str] | None:
@@ -120,13 +157,34 @@ def _safe_text(value: Any, limit: int = 120) -> str | None:
     return "".join(char for char in text if ord(char) >= 32)[:limit]
 
 
+def _redacted_serial(value: Any) -> str | None:
+    serial = _safe_text(value, 120)
+    if not serial:
+        return None
+    return "****" if len(serial) <= 4 else f"***{serial[-4:]}"
+
+
+def _authentication_error(exc: BaseException) -> bool:
+    name = type(exc).__name__.casefold()
+    if any(marker in name for marker in ("auth", "unauthorized", "forbidden")):
+        return True
+    response = getattr(exc, "response", None)
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(response, "status_code", None)
+    return status in {401, 403}
+
+
 def _base_result(spec: CameraSpec, provider: str, reason: str | None) -> Dict[str, Any]:
     return {
         "id": spec.id,
         "display_name": spec.display_name,
         "room": spec.room,
         "vendor": spec.vendor if spec.verification_status == "verified" else None,
+        "manufacturer": spec.vendor if spec.verification_status == "verified" else None,
         "model": spec.model if spec.verification_status == "verified" else None,
+        "firmware": None,
+        "serial": None,
         "provider": provider,
         "enabled": spec.enabled,
         "online": None,
@@ -135,8 +193,11 @@ def _base_result(spec: CameraSpec, provider: str, reason: str | None) -> Dict[st
         "capabilities": _empty_capabilities(),
         "discovered_capabilities": [],
         "profiles": [],
+        "profiles_available": False,
+        "profile_count": 0,
+        "ptz_capability": False,
+        "snapshot_capability": False,
         "presets": [],
-        "firmware": None,
         "last_update": None,
         "unavailable_reason": reason,
         "stream": {"available": False, "access": "unavailable"},
@@ -153,20 +214,6 @@ def _onvif_client(spec: CameraSpec):
     username, password = credentials
     transport = Transport(timeout=NETWORK_TIMEOUT_SEC, operation_timeout=NETWORK_TIMEOUT_SEC)
     return ONVIFCamera(spec.host, spec.onvif_port, username, password, transport=transport)
-
-
-def _profile_projection(profile: Any) -> Dict[str, Any]:
-    video = getattr(profile, "VideoEncoderConfiguration", None)
-    resolution = getattr(video, "Resolution", None)
-    width = getattr(resolution, "Width", None)
-    height = getattr(resolution, "Height", None)
-    codec = _safe_text(getattr(video, "Encoding", None), 32)
-    return {
-        "name": _safe_text(getattr(profile, "Name", None)) or "Camera profile",
-        "codec": codec,
-        "width": width if isinstance(width, int) and 0 < width <= 16384 else None,
-        "height": height if isinstance(height, int) and 0 < height <= 16384 else None,
-    }
 
 
 def _safe_snapshot_uri(media: Any, profile_token: Any, host: str | None) -> str | None:
@@ -194,10 +241,10 @@ def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
         information = camera.devicemgmt.GetDeviceInformation()
         media = camera.create_media_service()
         raw_profiles = list(media.GetProfiles() or [])
-        profiles = [_profile_projection(profile) for profile in raw_profiles[:16]]
-        discovered = {"onvif_profiles", "firmware_info"}
+        profile_count = min(len(raw_profiles), 16)
+        discovered = {"onvif_profiles", "firmware_info"} if raw_profiles else {"firmware_info"}
         snapshot_available = False
-        if raw_profiles and "snapshot" in spec.declared_capabilities:
+        if raw_profiles:
             try:
                 snapshot_available = bool(
                     _safe_snapshot_uri(media, getattr(raw_profiles[0], "token", None), spec.host)
@@ -207,59 +254,50 @@ def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
             except Exception:
                 snapshot_available = False
         ptz_available = False
-        presets: list[Dict[str, str]] = []
         try:
             ptz = camera.create_ptz_service()
             configurations = list(ptz.GetConfigurations() or [])
             ptz_available = bool(configurations)
             if ptz_available:
                 discovered.update({"ptz_move", "ptz_stop"})
-                if raw_profiles:
-                    profile_token = getattr(raw_profiles[0], "token", None)
-                    if profile_token:
-                        raw_presets = list(ptz.GetPresets({"ProfileToken": profile_token}) or [])
-                        presets = [{"name": _safe_text(getattr(item, "Name", None)) or "Preset"} for item in raw_presets[:32]]
-                        if presets:
-                            discovered.add("presets")
         except Exception:
             ptz_available = False
-        declared = spec.declared_capabilities
-        controllable = spec.verification_status == "verified"
-        result["capabilities"].update({
-            "snapshot": snapshot_available,
-            # Profile discovery does not itself provide a browser-safe stream.
-            # Keep live viewing disabled until an authenticated media proxy exists.
-            "live_stream": False,
-            "onvif_profiles": bool(profiles),
-            "ptz_move": controllable and ptz_available and "ptz_move" in declared,
-            "ptz_stop": controllable and ptz_available and "ptz_stop" in declared,
-            "zoom": controllable and ptz_available and "zoom" in declared,
-            "presets": bool(presets) and "presets" in declared,
-            "home_position": controllable and ptz_available and "home_position" in declared,
-            "firmware_info": True,
-        })
+        result["capabilities"]["onvif_profiles"] = bool(raw_profiles)
+        result["capabilities"]["firmware_info"] = True
+        manufacturer = _safe_text(getattr(information, "Manufacturer", None))
         result.update({
-            "vendor": _safe_text(getattr(information, "Manufacturer", None)) or result["vendor"],
+            "vendor": manufacturer or result["vendor"],
+            "manufacturer": manufacturer or result["manufacturer"],
             "model": _safe_text(getattr(information, "Model", None)) or result["model"],
             "firmware": _safe_text(getattr(information, "FirmwareVersion", None)),
+            "serial": _redacted_serial(getattr(information, "SerialNumber", None)),
             "online": True,
             "health": "healthy",
-            "profiles": profiles,
-            "presets": presets,
+            "profiles_available": bool(raw_profiles),
+            "profile_count": profile_count,
+            "ptz_capability": ptz_available,
+            "snapshot_capability": snapshot_available,
             "discovered_capabilities": sorted(discovered),
             "last_update": int(time.time()),
             "unavailable_reason": None,
             "stream": {
                 "available": False,
-                "access": "metadata_only" if profiles and "live_stream" in declared else "unavailable",
+                "access": "unavailable",
             },
         })
         return result
     except (TimeoutError, socket.timeout):
-        result.update({"online": None, "health": "degraded", "unavailable_reason": "camera_timeout"})
+        result.update({"online": False, "health": "offline", "unavailable_reason": "camera_timeout"})
         return result
-    except Exception:
-        result.update({"online": False, "health": "unavailable", "unavailable_reason": "onvif_unavailable"})
+    except PermissionError:
+        result.update({"online": False, "health": "offline", "unavailable_reason": "invalid_credentials"})
+        return result
+    except (ConnectionError, OSError):
+        result.update({"online": False, "health": "offline", "unavailable_reason": "onvif_unavailable"})
+        return result
+    except Exception as exc:
+        reason = "invalid_credentials" if _authentication_error(exc) else "onvif_unavailable"
+        result.update({"online": False, "health": "offline", "unavailable_reason": reason})
         return result
     finally:
         result["latency_ms"] = int((time.monotonic() - started) * 1000)
@@ -279,7 +317,7 @@ def _discover_rtsp(spec: CameraSpec, reason: str | None = None) -> Dict[str, Any
     result["discovered_capabilities"] = ["live_stream"] if online else []
     result.update({
         "online": online,
-        "health": "healthy" if online else "unavailable",
+        "health": "healthy" if online else "offline",
         "last_update": int(time.time()),
         "unavailable_reason": None if online else "rtsp_unreachable",
         "stream": {
@@ -307,24 +345,43 @@ def discover(spec: CameraSpec) -> Dict[str, Any]:
 
 
 def _inventory_payload(*, discover_live: bool) -> Dict[str, Any]:
-    config_status, specs = load_inventory()
-    if config_status != "configured":
+    config_status, specs, invalid = load_inventory_details()
+    if config_status in {"configuration_missing", "configuration_invalid"}:
         return {
             "config_loaded": False,
             "configuration_status": config_status,
+            "invalid_camera_count": len(invalid),
             "cameras": [],
         }
     cameras = [discover(spec) if discover_live else _base_result(spec, "pending", None) for spec in specs]
-    return {"config_loaded": True, "configuration_status": "configured", "cameras": cameras}
+    return {
+        "config_loaded": True,
+        "configuration_status": config_status,
+        "invalid_camera_count": len(invalid),
+        "cameras": cameras,
+    }
 
 
 def camera_devices_readonly() -> Dict[str, Any]:
     return _inventory_payload(discover_live=True)
 
 
+def cameras_runtime() -> Dict[str, Any]:
+    payload = camera_devices_readonly()
+    return {
+        "ok": True,
+        "config_loaded": payload["config_loaded"],
+        "config_path": str(_config_path()) if _config_path() is not None else None,
+        "configuration_status": payload["configuration_status"],
+        "invalid_camera_count": payload.get("invalid_camera_count", 0),
+        "camera_count": len(payload["cameras"]),
+        "cameras": copy.deepcopy(payload["cameras"]),
+    }
+
+
 def _spec(camera_id: str) -> CameraSpec | None:
     status, specs = load_inventory()
-    if status != "configured":
+    if status not in {"configured", "configuration_partial"}:
         return None
     resolved_id = PUBLIC_CAMERA_ALIASES.get(camera_id, camera_id)
     return next((item for item in specs if item.id == resolved_id), None)
@@ -429,3 +486,4 @@ def camera_presets_route(camera_id: str):
 
 _replace_endpoint("/api/camera-control/devices", {"GET"}, camera_devices_readonly)
 _replace_endpoint("/api/camera-control/{camera_id}/snapshot", {"GET"}, camera_snapshot_readonly)
+_replace_endpoint("/api/cameras", {"GET"}, cameras_runtime)

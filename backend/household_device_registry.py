@@ -221,10 +221,15 @@ def _camera_placeholders() -> list[Dict[str, Any]]:
         state = {}
         if record:
             state = {
-                "vendor": record.get("vendor"),
+                "vendor": record.get("manufacturer") or record.get("vendor"),
                 "model": record.get("model"),
+                "firmware": record.get("firmware"),
+                "serial": record.get("serial"),
                 "last_update": record.get("last_update"),
                 "provider_verified": record.get("verification_status") == "verified",
+                "profiles_available": record.get("profiles_available") is True,
+                "ptz_capability": record.get("ptz_capability") is True,
+                "snapshot_capability": record.get("snapshot_capability") is True,
                 "discovered_capabilities": copy.deepcopy(record.get("discovered_capabilities") or []),
             }
         result.append(_device(

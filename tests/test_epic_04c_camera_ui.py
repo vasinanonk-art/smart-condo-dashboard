@@ -55,8 +55,13 @@ def test_verified_camera_projects_safe_status_and_capabilities(monkeypatch):
     assert item["state"] == {
         "vendor": "Tapo",
         "model": "C220",
+        "firmware": None,
+        "serial": None,
         "last_update": 123,
         "provider_verified": True,
+        "profiles_available": False,
+        "ptz_capability": False,
+        "snapshot_capability": False,
         "discovered_capabilities": ["onvif_profiles"],
     }
     rendered = repr(item).lower()

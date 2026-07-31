@@ -11,6 +11,7 @@
   const cameraReasons = {
     camera_disabled:'Camera is disabled in persistent configuration.',
     camera_timeout:'Camera discovery timed out.',
+    invalid_credentials:'Camera credentials were rejected.',
     onvif_unavailable:'ONVIF connectivity is unavailable.',
     onvif_provider_unavailable:'ONVIF support is not installed.',
     rtsp_configuration_incomplete:'Camera stream configuration is incomplete.',

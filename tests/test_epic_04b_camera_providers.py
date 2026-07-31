@@ -77,7 +77,10 @@ def _fake_onvif():
         GetConfigurations=lambda: [SimpleNamespace(token="secret-configuration-token")],
         GetPresets=lambda request: [SimpleNamespace(token="secret-preset-token", Name="Home")],
     )
-    information = SimpleNamespace(Manufacturer="Tapo", Model="C220", FirmwareVersion="1.2.3")
+    information = SimpleNamespace(
+        Manufacturer="Tapo", Model="C220", FirmwareVersion="1.2.3",
+        SerialNumber="TAPO-SERIAL-5678",
+    )
     return SimpleNamespace(
         devicemgmt=SimpleNamespace(GetDeviceInformation=lambda: information),
         create_media_service=lambda: media,
@@ -90,6 +93,7 @@ def test_missing_and_malformed_configuration_are_distinct(monkeypatch, tmp_path)
     assert providers.camera_devices_readonly() == {
         "config_loaded": False,
         "configuration_status": "configuration_missing",
+        "invalid_camera_count": 0,
         "cameras": [],
     }
     path = tmp_path / "cameras.local.json"
@@ -108,13 +112,19 @@ def test_tapo_onvif_discovery_is_per_camera_and_secret_safe(monkeypatch, tmp_pat
     payload = providers.camera_devices_readonly()
     item = payload["cameras"][0]
     assert item["online"] is True
-    assert item["vendor"] == "Tapo" and item["model"] == "C220"
+    assert item["vendor"] == "Tapo" and item["manufacturer"] == "Tapo"
+    assert item["model"] == "C220" and item["firmware"] == "1.2.3"
+    assert item["serial"] == "***5678"
     assert item["capabilities"]["onvif_profiles"] is True
-    assert item["capabilities"]["snapshot"] is True
-    assert item["capabilities"]["ptz_move"] is True
-    assert item["capabilities"]["presets"] is True
+    assert item["capabilities"]["snapshot"] is False
+    assert item["capabilities"]["ptz_move"] is False
+    assert item["capabilities"]["presets"] is False
     assert item["capabilities"]["live_stream"] is False
-    assert item["stream"]["access"] == "metadata_only"
+    assert item["profiles_available"] is True
+    assert item["profile_count"] == 1
+    assert item["snapshot_capability"] is True
+    assert item["ptz_capability"] is True
+    assert item["stream"]["access"] == "unavailable"
     rendered = repr(payload)
     for secret in (
         "camera.local", "private-user", "private-password",
@@ -151,7 +161,8 @@ def test_timeout_is_safe_and_does_not_expose_exception(monkeypatch, tmp_path):
         lambda spec: (_ for _ in ()).throw(TimeoutError("secret camera address")),
     )
     item = providers.camera_devices_readonly()["cameras"][0]
-    assert item["online"] is None
+    assert item["online"] is False
+    assert item["health"] == "offline"
     assert item["unavailable_reason"] == "camera_timeout"
     assert "secret camera address" not in repr(item)
 
@@ -197,7 +208,7 @@ def test_read_discovery_for_different_cameras_is_concurrent(monkeypatch):
         )
         for number in (1, 2)
     ]
-    monkeypatch.setattr(providers, "load_inventory", lambda: ("configured", specs))
+    monkeypatch.setattr(providers, "load_inventory_details", lambda: ("configured", specs, []))
     entered = []
     gate = threading.Event()
 
@@ -264,6 +275,7 @@ def test_camera_read_routes_require_dashboard_authentication(monkeypatch):
     monkeypatch.setenv("DASHBOARD_SESSION_SECRET", "camera-session-secret-long-enough")
     client = TestClient(app)
     for path in (
+        "/api/cameras",
         "/api/camera-control/devices",
         "/api/camera-control/camera-one/status",
         "/api/camera-control/camera-one/stream",
