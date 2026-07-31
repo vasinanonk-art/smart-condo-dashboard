@@ -4,10 +4,12 @@
   window.__lgTvStatusInstalled = true;
 
   const UI = window.HouseholdUI;
+  const INVENTORY_RETRY_MS = 3000;
+  const INVENTORY_RETRY_LIMIT = 3;
   const state = {
     status:null, capabilities:null, timer:null, inventoryTimer:null, busy:false,
     detailsLoaded:false, detailsLoading:false, pairing:null, diagnostics:null,
-    pendingCommands:new Set(),
+    pendingCommands:new Set(), inventoryAttempts:0,
   };
   const safe = UI.safe;
   const request = async (url, method='GET', body) => {
@@ -145,7 +147,10 @@
       render();
       clearTimeout(state.inventoryTimer);
       if (capabilities.inventory_refreshing === true) {
-        state.inventoryTimer = setTimeout(refreshInventory, 500);
+        state.inventoryAttempts = 0;
+        state.inventoryTimer = setTimeout(refreshInventory, INVENTORY_RETRY_MS);
+      } else {
+        state.inventoryAttempts = 0;
       }
     } catch (error) {
       UI.toast(error.message || 'LG TV status unavailable', 'error');
@@ -157,12 +162,19 @@
   }
 
   async function refreshInventory() {
+    if (state.inventoryAttempts >= INVENTORY_RETRY_LIMIT) return;
+    state.inventoryAttempts += 1;
     try {
       state.capabilities = await request('/api/lg-tv/capabilities');
       render();
-      if (state.capabilities.inventory_refreshing === true) {
+      if (
+        state.capabilities.inventory_refreshing === true
+        && state.inventoryAttempts < INVENTORY_RETRY_LIMIT
+      ) {
         clearTimeout(state.inventoryTimer);
-        state.inventoryTimer = setTimeout(refreshInventory, 500);
+        state.inventoryTimer = setTimeout(refreshInventory, INVENTORY_RETRY_MS);
+      } else if (state.capabilities.inventory_refreshing !== true) {
+        state.inventoryAttempts = 0;
       }
     } catch (_) {
       // Preserve and continue rendering the last successful inventory.

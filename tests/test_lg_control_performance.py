@@ -18,6 +18,7 @@ def _reset_inventory():
             last_attempt_at=None,
             refreshing=False,
             last_error=None,
+            failure_count=0,
         )
 
 
@@ -66,6 +67,133 @@ def test_cached_inventory_is_returned_while_background_refresh_is_scheduled(monk
     assert scheduled == [control._refresh_inventory]
     with control.ENUMERATION_LOCK:
         control._INVENTORY["refreshing"] = False
+
+
+def test_client_cleanup_force_closes_only_after_normal_close_stalls():
+    class Thread:
+        def __init__(self, alive, stop_on_join=False):
+            self.alive = alive
+            self.stop_on_join = stop_on_join
+            self.joins = []
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=None):
+            self.joins.append(timeout)
+            if self.stop_on_join:
+                self.alive = False
+
+    stopped_thread = Thread(True, stop_on_join=True)
+    stopped = SimpleNamespace(
+        _th=stopped_thread,
+        close=lambda: None,
+        close_connection=lambda: (_ for _ in ()).throw(AssertionError("unexpected force close")),
+    )
+    control._close_client(stopped)
+    assert stopped_thread.joins == [0.5]
+
+    stalled_thread = Thread(True)
+    forced = []
+    stalled = SimpleNamespace(
+        _th=stalled_thread,
+        close=lambda: None,
+        close_connection=lambda: forced.append(True),
+    )
+    control._close_client(stalled)
+    assert forced == [True]
+    assert stalled_thread.joins == [0.5, 0.5]
+
+
+def test_client_cleanup_exceptions_are_bounded_and_non_fatal():
+    class BrokenThread:
+        def is_alive(self):
+            return True
+
+        def join(self, timeout=None):
+            assert timeout == 0.5
+            raise RuntimeError("join failed")
+
+    client = SimpleNamespace(
+        _th=BrokenThread(),
+        close=lambda: (_ for _ in ()).throw(RuntimeError("close failed")),
+        close_connection=lambda: (_ for _ in ()).throw(RuntimeError("force failed")),
+    )
+    started = time.monotonic()
+    control._close_client(client)
+    assert time.monotonic() - started < 0.1
+
+
+def test_inventory_failure_backoff_progression_and_cap(monkeypatch):
+    _reset_inventory()
+    now = [1000.0]
+    monkeypatch.setattr(control.time, "time", lambda: now[0])
+
+    for failure_count, delay in ((1, 30), (2, 60), (3, 120), (4, 300), (8, 300)):
+        with control.ENUMERATION_LOCK:
+            control._INVENTORY.update(
+                refreshing=False,
+                last_attempt_at=now[0],
+                failure_count=failure_count,
+            )
+        assert control._mark_inventory_refresh() is False
+        now[0] += delay - 0.1
+        assert control._mark_inventory_refresh() is False
+        now[0] += 0.1
+        assert control._mark_inventory_refresh() is True
+        with control.ENUMERATION_LOCK:
+            control._INVENTORY["refreshing"] = False
+        now[0] += 1
+
+
+def test_successful_inventory_refresh_resets_backoff(monkeypatch):
+    _reset_inventory()
+    with control.ENUMERATION_LOCK:
+        control._INVENTORY.update(refreshing=True, failure_count=3)
+    fake = SimpleNamespace(close=lambda: None)
+
+    class SourceControl:
+        def __init__(self, client):
+            assert client is fake
+
+        def list_sources(self, timeout):
+            return [SimpleNamespace(data={"id": "hdmi-1", "label": "HDMI 1"})]
+
+    class ApplicationControl:
+        def __init__(self, client):
+            assert client is fake
+
+        def list_apps(self, timeout):
+            return [SimpleNamespace(data={"id": "youtube", "title": "YouTube"})]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pywebostv.controls",
+        SimpleNamespace(SourceControl=SourceControl, ApplicationControl=ApplicationControl),
+    )
+    monkeypatch.setattr(control.pairing, "_current_key", lambda: ("key", "test"))
+    monkeypatch.setattr(control, "_open_client", lambda key: fake)
+    monkeypatch.setattr(control, "_adopt_inventory_client", lambda client, key: True)
+
+    control._refresh_inventory()
+
+    with control.ENUMERATION_LOCK:
+        assert control._INVENTORY["failure_count"] == 0
+        assert control._INVENTORY["last_error"] is None
+
+
+def test_overlapping_inventory_refresh_is_rejected():
+    _reset_inventory()
+    with control.ENUMERATION_LOCK:
+        control._INVENTORY["refreshing"] = True
+    assert control._mark_inventory_refresh() is False
+
+    assert control.INVENTORY_REFRESH_LOCK.acquire(blocking=False)
+    try:
+        control._refresh_inventory()
+        assert control.INVENTORY_REFRESH_LOCK.locked()
+    finally:
+        control.INVENTORY_REFRESH_LOCK.release()
 
 
 def test_valid_inventory_survives_temporary_enumeration_failure(monkeypatch):
@@ -165,6 +293,22 @@ def test_frontend_debounces_duplicate_submissions_and_only_disables_clicked_cont
     assert "host.disabled" not in remote_source
     assert "volumeSending" in remote_source
     assert "setTimeout(sendQueuedVolume, 400)" in remote_source
+
+
+def test_frontend_inventory_reconciliation_is_bounded_and_not_500ms():
+    root = Path(__file__).resolve().parents[1]
+    status_source = (root / "frontend/assets/dashboard_lg_status.js").read_text()
+    inventory_path = status_source[
+        status_source.index("const INVENTORY_RETRY_MS"):
+        status_source.index("async function runPairing")
+    ]
+
+    assert "const INVENTORY_RETRY_MS = 3000" in inventory_path
+    assert "const INVENTORY_RETRY_LIMIT = 3" in inventory_path
+    assert "state.inventoryAttempts += 1" in inventory_path
+    assert "state.inventoryAttempts < INVENTORY_RETRY_LIMIT" in inventory_path
+    assert "setTimeout(refreshInventory, INVENTORY_RETRY_MS)" in inventory_path
+    assert "setTimeout(refreshInventory, 500)" not in inventory_path
 
 
 def test_wol_path_remains_isolated_from_persistent_command_connection():

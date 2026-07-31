@@ -49,7 +49,7 @@ ENUMERATION_LOCK = threading.Lock()
 ENUMERATION_RAW: Dict[str, Dict[str, Any]] = {"input": {}, "app": {}}
 INVENTORY_REFRESH_LOCK = threading.Lock()
 INVENTORY_TTL_SEC = min(1800, max(30, int(os.getenv("LG_TV_INVENTORY_TTL_SEC", "300"))))
-INVENTORY_RETRY_SEC = min(60, max(5, int(os.getenv("LG_TV_INVENTORY_RETRY_SEC", "15"))))
+INVENTORY_RETRY_DELAYS_SEC = (30, 60, 120, 300)
 _CLIENT: Any = None
 _CLIENT_KEY: str | None = None
 _POINTER_CONTROL: Any = None
@@ -62,6 +62,7 @@ _INVENTORY: Dict[str, Any] = {
     "last_attempt_at": None,
     "refreshing": False,
     "last_error": None,
+    "failure_count": 0,
 }
 
 
@@ -122,14 +123,34 @@ def wol_diagnostics() -> Dict[str, Any]:
 def _close_client(client: Any) -> None:
     try:
         client.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        log.debug("LG WebOS client close failed: %s", type(exc).__name__)
     thread = getattr(client, "_th", None)
-    if thread is not None and thread.is_alive():
+    try:
+        alive = bool(thread is not None and thread.is_alive())
+    except Exception:
+        alive = False
+    if alive:
         try:
             thread.join(timeout=0.5)
+        except Exception as exc:
+            log.debug("LG WebOS client join failed: %s", type(exc).__name__)
+        try:
+            alive = bool(thread.is_alive())
         except Exception:
-            pass
+            alive = False
+    if not alive:
+        return
+    force_close = getattr(client, "close_connection", None)
+    if callable(force_close):
+        try:
+            force_close()
+        except Exception as exc:
+            log.debug("LG WebOS client force-close failed: %s", type(exc).__name__)
+    try:
+        thread.join(timeout=0.5)
+    except Exception as exc:
+        log.debug("LG WebOS client final join failed: %s", type(exc).__name__)
 
 
 def _open_client(key: str, *, timeout: float = COMMAND_TIMEOUT_SEC) -> Any:
@@ -323,12 +344,22 @@ def _inventory_snapshot() -> Dict[str, Any]:
     }
 
 
+def _inventory_retry_delay(failure_count: int) -> int:
+    index = min(max(1, int(failure_count)) - 1, len(INVENTORY_RETRY_DELAYS_SEC) - 1)
+    return INVENTORY_RETRY_DELAYS_SEC[index]
+
+
 def _mark_inventory_refresh() -> bool:
     with ENUMERATION_LOCK:
         if _INVENTORY["refreshing"]:
             return False
         since_attempt = time.time() - (_INVENTORY["last_attempt_at"] or 0)
-        if _INVENTORY["last_attempt_at"] and since_attempt < INVENTORY_RETRY_SEC:
+        failure_count = int(_INVENTORY.get("failure_count") or 0)
+        if (
+            failure_count
+            and _INVENTORY["last_attempt_at"]
+            and since_attempt < _inventory_retry_delay(failure_count)
+        ):
             return False
         age = time.time() - (_INVENTORY["last_success_at"] or 0)
         if (
@@ -350,7 +381,13 @@ def _refresh_inventory() -> None:
         key, _ = pairing._current_key()
         if not key:
             with ENUMERATION_LOCK:
-                _INVENTORY.update(refreshing=False, last_error="pairing_required")
+                _INVENTORY.update(
+                    refreshing=False,
+                    last_error="pairing_required",
+                    failure_count=int(_INVENTORY.get("failure_count") or 0) + 1,
+                )
+                retry_delay = _inventory_retry_delay(_INVENTORY["failure_count"])
+            log.warning("LG inventory refresh failed: pairing_required; retry_in_sec=%d", retry_delay)
             return
         from pywebostv.controls import ApplicationControl, SourceControl
 
@@ -391,11 +428,26 @@ def _refresh_inventory() -> None:
             if inputs is not None or applications is not None:
                 _INVENTORY["last_success_at"] = time.time()
                 _INVENTORY["last_error"] = None
+                _INVENTORY["failure_count"] = 0
             else:
                 _INVENTORY["last_error"] = "live_enumeration_unavailable"
-    except Exception:
+                _INVENTORY["failure_count"] = int(_INVENTORY.get("failure_count") or 0) + 1
+                retry_delay = _inventory_retry_delay(_INVENTORY["failure_count"])
+        if inputs is None and applications is None:
+            log.warning(
+                "LG inventory refresh failed: live_enumeration_unavailable; retry_in_sec=%d",
+                retry_delay,
+            )
+    except Exception as exc:
         with ENUMERATION_LOCK:
             _INVENTORY["last_error"] = "live_enumeration_unavailable"
+            _INVENTORY["failure_count"] = int(_INVENTORY.get("failure_count") or 0) + 1
+            retry_delay = _inventory_retry_delay(_INVENTORY["failure_count"])
+        log.warning(
+            "LG inventory refresh failed: %s; retry_in_sec=%d",
+            type(exc).__name__,
+            retry_delay,
+        )
     finally:
         with ENUMERATION_LOCK:
             _INVENTORY["refreshing"] = False
