@@ -36,7 +36,7 @@
       "display_name": "Bed Room Air Conditioner",
       "room": "bed_room",
       "type": "air_conditioner",
-      "driver": "t3_ir",
+      "driver": "unsupported",
       "profile": "unconfigured",
       "capabilities": [],
       "enabled": true

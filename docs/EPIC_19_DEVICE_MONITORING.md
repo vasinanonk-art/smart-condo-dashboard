@@ -82,8 +82,8 @@ type from an address or a manufacturer from a display name.
   reached the appliance.
 - Configured cameras: validated configured IP, model, and manufacturer, plus
   firmware when returned by the active read-only provider.
-- Configuration-unavailable camera placeholders and the unverified T3 bedroom
-  path return null metrics.
+- Configuration-unavailable camera placeholders and the unverified
+  provider-neutral bedroom IR path return null metrics.
 
 The dashboard renders only fields with real values. It does not show empty
 metric rows and retains the existing 30-second visibility-aware poller.

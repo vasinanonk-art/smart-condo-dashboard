@@ -156,6 +156,7 @@ git diff --check
 - [Roadmap](docs/ROADMAP.md)
 - [EPIC 19 device monitoring](docs/EPIC_19_DEVICE_MONITORING.md)
 - [EPIC 20 camera provisioning](docs/EPIC_20_CAMERA_PROVISIONING.md)
+- [EPIC 21 Smart Life IR discovery](docs/EPIC_21_SMARTLIFE_IR_DISCOVERY.md)
 - [TP-Link connector](docs/TPLINK_CONNECTOR.md)
 - [Universal IR framework](docs/IR_FRAMEWORK.md)
 - [Electricity tariff configuration](docs/electricity_tariff_configuration.md)

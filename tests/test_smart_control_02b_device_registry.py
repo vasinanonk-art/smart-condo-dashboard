@@ -83,7 +83,7 @@ def test_unsupported_devices_have_unknown_state_and_clear_reason(monkeypatch):
     bedroom = next(item for item in devices if item["id"] == "bed-room-air-conditioner")
     television = next(item for item in devices if item["id"] == "living-room-configured-tv-ir")
     assert "transmit interface is not verified" in soundbar["unavailable_reason"]
-    assert "control path is not verified" in bedroom["unavailable_reason"]
+    assert bedroom["unavailable_reason"] == "provider_not_configured"
     assert television["online"] is True
     assert television["state"]["ir_diagnostics"]["remote_discovered"] is True
     assert television["state"]["ir_diagnostics"]["verified_controls"] == []

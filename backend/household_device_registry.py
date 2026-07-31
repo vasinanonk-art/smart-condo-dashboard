@@ -9,7 +9,14 @@ import copy
 from typing import Any, Dict
 
 from backend import app as app_module
-from backend import camera_read_providers, ir_framework, lg_tv_control, lg_tv_status, tapo_ir_local_bridge
+from backend import (
+    camera_read_providers,
+    ir_framework,
+    lg_tv_control,
+    lg_tv_status,
+    smartlife_ir_discovery,
+    tapo_ir_local_bridge,
+)
 
 app = app_module.app
 _SAFE_FIELDS = {
@@ -86,6 +93,17 @@ def _tapo_detected() -> bool:
 
 def _ir_devices() -> list[Dict[str, Any]]:
     tapo = _tapo_detected()
+    smartlife = smartlife_ir_discovery.inventory()
+    smartlife_devices = (
+        smartlife.get("devices")
+        if isinstance(smartlife.get("devices"), list)
+        else []
+    )
+    smartlife_device = (
+        smartlife_devices[0]
+        if len(smartlife_devices) == 1 and isinstance(smartlife_devices[0], dict)
+        else None
+    )
     try:
         inventory = tapo_ir_local_bridge.existing_ir_remote_inventory()
     except Exception:
@@ -125,19 +143,25 @@ def _ir_devices() -> list[Dict[str, Any]]:
             for command in capability.get("commands") or []
         ]
         capabilities = {"ir": metadata} if commands else {}
-        is_t3 = identity.get("id") == "bed-room-air-conditioner"
+        is_provider_neutral = identity.get("id") == "bed-room-air-conditioner"
         runtime_status = item.get("runtime_status") or {}
         remote = remote_by_kind.get(identity["type"])
         reason = item.get("unavailable_reason")
-        if not commands:
+        if is_provider_neutral:
             reason = (
-                "T3 IR device detected by household inventory; control path is not verified."
-                if is_t3 else
-                "Configured Tapo IR remote discovered; transmit interface is not verified."
-                if remote else
-                "Tapo H110 detected; configured remote was not matched."
-                if tapo else "Tapo H110 configuration is unavailable."
+                smartlife_device.get("discovery_reason")
+                if smartlife_device
+                else smartlife.get("discovery_reason")
+                or "provider_not_configured"
             )
+        if not commands:
+            if not is_provider_neutral:
+                reason = (
+                    "Configured Tapo IR remote discovered; transmit interface is not verified."
+                    if remote else
+                    "Tapo H110 detected; configured remote was not matched."
+                    if tapo else "Tapo H110 configuration is unavailable."
+                )
         ir_diagnostics = {
             key: copy.deepcopy(runtime_status.get(key))
             for key in (
@@ -154,19 +178,73 @@ def _ir_devices() -> list[Dict[str, Any]]:
                 "stored_commands_present": remote.get("stored_commands_present") is True,
                 "verified_controls": [],
             })
+        if is_provider_neutral:
+            available_categories = (
+                smartlife_device.get("supported_command_categories") or []
+                if smartlife_device else []
+            )
+            ir_diagnostics = {
+                "provider": smartlife.get("provider"),
+                "provider_detected": smartlife.get("provider_detected") is True,
+                "online": (
+                    smartlife_device.get("online")
+                    if smartlife_device else None
+                ),
+                "healthy": (
+                    smartlife_device.get("health") == "healthy"
+                    if smartlife_device else False
+                ),
+                "product_name": (
+                    smartlife_device.get("product_name")
+                    if smartlife_device else None
+                ),
+                "model": (
+                    smartlife_device.get("model")
+                    if smartlife_device else None
+                ),
+                "firmware_version": (
+                    smartlife_device.get("firmware")
+                    if smartlife_device else None
+                ),
+                "device_id": (
+                    smartlife_device.get("device_id")
+                    if smartlife_device else None
+                ),
+                "available_capabilities": copy.deepcopy(available_categories),
+                "discovery_reason": reason,
+            }
+        if is_provider_neutral:
+            online = smartlife_device.get("online") if smartlife_device else None
+            health = (
+                str(smartlife_device.get("health") or "unknown")
+                if smartlife_device
+                else "unknown"
+            )
+            state_quality = (
+                str(smartlife_device.get("state_quality") or "unknown")
+                if smartlife_device
+                else "unknown"
+            )
+        else:
+            online = runtime_status.get("online")
+            health = (
+                "healthy" if runtime_status.get("healthy") is True else
+                "degraded" if commands or tapo else "unavailable"
+            )
+            state_quality = (
+                (item.get("runtime_status") or {}).get("state_quality")
+                or "unknown"
+            )
         devices.append(_device(
             identity["id"],
             identity["room"],
             identity["friendly_name"],
             categories.get(identity["type"], identity["type"]),
-            online=runtime_status.get("online"),
-            health=(
-                "healthy" if runtime_status.get("healthy") is True else
-                "degraded" if commands or (tapo and not is_t3) else "unavailable"
-            ),
+            online=online,
+            health=health,
             capabilities=capabilities,
             state={"ir_diagnostics": ir_diagnostics},
-            state_quality=(item.get("runtime_status") or {}).get("state_quality") or "unknown",
+            state_quality=state_quality,
             reason=reason,
         ))
     tv_remote = remote_by_kind.get("television")

@@ -30,8 +30,13 @@ def test_unsupported_controls_are_disabled_with_reason():
     assert "No IR provider" not in SOURCE
 
 
-def test_known_camera_placeholders_remain_visible_without_false_offline():
+def test_known_camera_placeholders_remain_visible_without_false_offline(monkeypatch):
     from backend import household_device_registry as registry
+    monkeypatch.setattr(
+        registry.camera_read_providers,
+        "_inventory_payload",
+        lambda **kwargs: {"config_loaded": False, "cameras": []},
+    )
     devices = registry._camera_placeholders()
     assert [item["display_name"] for item in devices] == [
         "Bedroom Camera", "Living Room Camera",
