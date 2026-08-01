@@ -12,7 +12,8 @@ execute scenes, map commands, or enable appliance controls.
   living-room remotes.
 - TinyTuya is already used for electricity and lighting, but exposes no
   verified Smart Life IR inventory in this codebase.
-- No LocalTuya integration or verified Smart Life cloud client exists.
+- No LocalTuya integration exists. EPIC 21B adds a minimal signed Smart Life
+  cloud reader for one explicitly configured device.
 - Home Assistant already has a bounded authenticated state reader, which the
   Home Assistant adapter reuses.
 - MQTT already has one shared connection, but no documented Smart Life IR
@@ -28,10 +29,26 @@ No provider is inferred. Set `SMARTLIFE_IR_PROVIDER` explicitly to one of:
 - `mqtt`
 - `unsupported`
 
-An unset or invalid value fails closed as `unsupported`. Smart Life cloud,
-local Tuya, and MQTT remain unavailable until a documented IR inventory source
-is configured. Existing TinyTuya electricity/lighting and MQTT integrations
-are not reused as proof of an IR device.
+An unset or invalid value fails closed as `unsupported`. Local Tuya and MQTT
+remain unavailable until a documented IR inventory source is configured.
+Existing TinyTuya electricity/lighting and MQTT integrations are not reused as
+proof of an IR device.
+
+The `smartlife_cloud` provider uses a minimal signed, GET-only Tuya OpenAPI
+client for the Singapore data center. It requires:
+
+```text
+SMARTLIFE_IR_PROVIDER=smartlife_cloud
+TUYA_CLOUD_ACCESS_ID=...
+TUYA_CLOUD_ACCESS_SECRET=...
+TUYA_CLOUD_DEVICE_ID=...
+TUYA_CLOUD_REGION=sg
+```
+
+The access token is cached until shortly before expiry and refresh is guarded
+so only one caller authenticates at a time. Requests are restricted to device
+information, specification, status, and the optional device function list for
+the single configured device. No command method or arbitrary path is exposed.
 
 The Home Assistant adapter reuses the existing bounded Home Assistant state
 reader. It only considers entity IDs explicitly allow-listed in:
@@ -61,8 +78,8 @@ enabled.
 
 ## Future provider work
 
-- Smart Life cloud requires an official supported inventory API and owner
-  account/region configuration.
+- Smart Life cloud inventory supports the official device information,
+  specification, and status APIs for one explicitly configured `wnykq` device.
 - Local Tuya requires a verified IR device schema and safe read-only
   capability query.
 - Home Assistant requires the owner to provide the exact entity ID and confirm

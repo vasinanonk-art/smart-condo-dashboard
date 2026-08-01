@@ -10,7 +10,14 @@ from backend import smartlife_ir_discovery as discovery
 
 
 def _clear(monkeypatch):
-    for key in ("SMARTLIFE_IR_PROVIDER", "SMARTLIFE_IR_HA_ENTITY_IDS"):
+    for key in (
+        "SMARTLIFE_IR_PROVIDER",
+        "SMARTLIFE_IR_HA_ENTITY_IDS",
+        "TUYA_CLOUD_ACCESS_ID",
+        "TUYA_CLOUD_ACCESS_SECRET",
+        "TUYA_CLOUD_DEVICE_ID",
+        "TUYA_CLOUD_REGION",
+    ):
         monkeypatch.delenv(key, raising=False)
     discovery.invalidate_cache()
 
@@ -27,7 +34,7 @@ def test_smartlife_cloud_provider_is_explicitly_unavailable(monkeypatch):
     assert payload["health"] == "unknown"
     assert payload["state_quality"] == "unknown"
     assert payload["devices"] == []
-    assert payload["discovery_reason"] == "smartlife_cloud_unavailable"
+    assert payload["discovery_reason"] == "tuya_cloud_not_configured"
 
 
 def test_homeassistant_unavailable_is_safe(monkeypatch):

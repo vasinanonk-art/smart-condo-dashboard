@@ -1,7 +1,8 @@
 """Provider-neutral, read-only Smart Life / Tuya IR inventory discovery.
 
-Providers are selected explicitly. This module creates no client, polling loop,
-subscription, command route, cloud login, or local Tuya session.
+Providers are selected explicitly. The Smart Life cloud adapter is GET-only;
+this module creates no polling loop, subscription, command route, or local
+Tuya session.
 """
 from __future__ import annotations
 
@@ -12,11 +13,11 @@ import re
 import threading
 import time
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Iterable, Mapping
 
 from backend import app as app_module
-from backend import tapo_ir_provider
+from backend import tapo_ir_provider, tuya_cloud_readonly
 
 app = app_module.app
 PROVIDER_STATES = frozenset({
@@ -90,6 +91,8 @@ class IRInventoryDevice:
     state_quality: str
     supported_command_categories: tuple[str, ...]
     discovery_reason: str
+    dp_metadata: tuple[Mapping[str, Any], ...] = ()
+    state: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -239,11 +242,167 @@ class HomeAssistantProvider(ReadOnlyIRProvider):
         )
 
 
+def _safe_dp_code(value: Any) -> str | None:
+    code = _safe_text(value, 64)
+    if not code or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code):
+        return None
+    return code
+
+
+def _cloud_dp_data(
+    specification: Mapping[str, Any],
+    statuses: Any,
+) -> tuple[tuple[Mapping[str, Any], ...], Mapping[str, Any]]:
+    definitions: Dict[str, Dict[str, Any]] = {}
+    for source, writable in (("status", False), ("functions", False)):
+        rows = specification.get(source)
+        if not isinstance(rows, list):
+            continue
+        for raw in rows[:128]:
+            if not isinstance(raw, Mapping):
+                continue
+            code = _safe_dp_code(raw.get("code"))
+            if not code:
+                continue
+            item = definitions.setdefault(code, {"code": code, "writable": False})
+            kind = _safe_text(raw.get("type"), 32)
+            if kind:
+                item["type"] = kind
+            item["reported"] = item.get("reported", False) or source == "status"
+            item["instruction"] = item.get("instruction", False) or source == "functions"
+    state: Dict[str, Any] = {}
+    if isinstance(statuses, list):
+        for raw in statuses[:128]:
+            if not isinstance(raw, Mapping):
+                continue
+            code = _safe_dp_code(raw.get("code"))
+            value = raw.get("value")
+            if code not in definitions:
+                continue
+            # Opaque/raw strings can contain IR payloads and are deliberately
+            # excluded. Scalar telemetry remains useful and safe.
+            if isinstance(value, bool) or (
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+            ):
+                state[code] = value
+            elif (
+                isinstance(value, str)
+                and len(value) <= 64
+                and not re.search(
+                    r"(?:ir|raw|code|key|token|secret|device.?id)",
+                    code,
+                    re.IGNORECASE,
+                )
+            ):
+                state[code] = value
+    ordered = tuple(definitions[code] for code in sorted(definitions))
+    return ordered, state
+
+
+def _cloud_device(
+    information: Mapping[str, Any],
+    specification: Mapping[str, Any],
+    statuses: Any,
+    configured_id: str,
+) -> IRInventoryDevice:
+    device = information.get("result")
+    spec = specification.get("result")
+    if not isinstance(device, Mapping) or not isinstance(spec, Mapping):
+        raise tuya_cloud_readonly.TuyaCloudError("tuya_cloud_payload_invalid")
+    if str(device.get("id") or "") != configured_id:
+        raise tuya_cloud_readonly.TuyaCloudError("tuya_cloud_device_mismatch")
+    if str(device.get("category") or "").casefold() != "wnykq":
+        raise tuya_cloud_readonly.TuyaCloudError("tuya_cloud_category_mismatch")
+    if str(spec.get("category") or "").casefold() != "wnykq":
+        raise tuya_cloud_readonly.TuyaCloudError("tuya_cloud_category_mismatch")
+    online = device.get("online") if isinstance(device.get("online"), bool) else None
+    health = "healthy" if online is True else "offline" if online is False else "unknown"
+    quality = "confirmed" if online is not None else "unknown"
+    # DP definitions and values prove inventory only. They never become command
+    # capabilities in this read-only milestone.
+    dp_metadata, state = _cloud_dp_data(spec, statuses)
+    has_metadata = bool(dp_metadata)
+    has_status = isinstance(statuses, list)
+    reason = (
+        "verified_tuya_cloud_device"
+        if has_metadata and has_status
+        else "tuya_cloud_dp_metadata_incomplete"
+    )
+    return IRInventoryDevice(
+        provider="smartlife_cloud",
+        product_name=(
+            _safe_text(device.get("product_name"))
+            or _safe_text(device.get("name"))
+            or "Configured Smart Life device"
+        ),
+        model=_safe_text(device.get("model")),
+        device_id=_redacted_id(configured_id),
+        firmware=None,
+        online=online,
+        health=health,
+        state_quality=quality,
+        supported_command_categories=(),
+        discovery_reason=reason,
+        dp_metadata=dp_metadata,
+        state=state,
+    )
+
+
+class SmartLifeCloudProvider(ReadOnlyIRProvider):
+    provider = "smartlife_cloud"
+
+    def discover(self) -> ProviderInventory:
+        try:
+            client = tuya_cloud_readonly.configured_client()
+            information = client.device_information()
+            specification = client.device_specification()
+            spec_result = specification.get("result")
+            if (
+                isinstance(spec_result, Mapping)
+                and not isinstance(spec_result.get("functions"), list)
+            ):
+                try:
+                    function_payload = client.device_functions()
+                    function_result = function_payload.get("result")
+                    if (
+                        isinstance(function_result, Mapping)
+                        and isinstance(function_result.get("functions"), list)
+                    ):
+                        specification = dict(specification)
+                        merged = dict(spec_result)
+                        merged["functions"] = function_result["functions"]
+                        specification["result"] = merged
+                except tuya_cloud_readonly.TuyaCloudError:
+                    # Functions are supplemental when specification is
+                    # otherwise readable; the inventory remains fail-closed.
+                    pass
+            status_payload = client.device_status()
+            device = _cloud_device(
+                information,
+                specification,
+                status_payload.get("result"),
+                client.config.device_id,
+            )
+        except tuya_cloud_readonly.TuyaCloudError as exc:
+            return UnavailableProvider(self.provider, exc.reason).discover()
+        return ProviderInventory(
+            provider=self.provider,
+            provider_detected=True,
+            online=device.online,
+            health=device.health,
+            state_quality=device.state_quality,
+            available_capabilities=(),
+            discovery_reason="verified_inventory",
+            devices=(device,),
+        )
+
+
 def _provider(provider: str, selection_reason: str | None) -> ReadOnlyIRProvider:
+    if provider == "smartlife_cloud":
+        return SmartLifeCloudProvider()
     if provider == "homeassistant":
         return HomeAssistantProvider()
     reasons = {
-        "smartlife_cloud": "smartlife_cloud_unavailable",
         "tuya_local": "tuya_local_ir_inventory_unavailable",
         "mqtt": "mqtt_ir_inventory_unavailable",
         "unsupported": selection_reason or "unsupported_provider",
@@ -254,6 +413,7 @@ def _provider(provider: str, selection_reason: str | None) -> ReadOnlyIRProvider
 def invalidate_cache() -> None:
     with _CACHE_LOCK:
         _CACHE.update({"key": None, "ts": 0.0, "payload": None})
+    tuya_cloud_readonly.reset_client()
 
 
 def _public_inventory(value: ProviderInventory) -> Dict[str, Any]:
@@ -265,6 +425,12 @@ def _public_inventory(value: ProviderInventory) -> Dict[str, Any]:
         item["supported_command_categories"] = list(
             device.supported_command_categories
         )
+        item["dp_metadata"] = list(device.dp_metadata)
+        item["state"] = dict(device.state)
+        if not item["dp_metadata"]:
+            item.pop("dp_metadata")
+        if not item["state"]:
+            item.pop("state")
         payload["devices"].append(item)
     payload["count"] = len(value.devices)
     payload["read_only"] = True
@@ -273,7 +439,16 @@ def _public_inventory(value: ProviderInventory) -> Dict[str, Any]:
 
 def inventory(force: bool = False) -> Dict[str, Any]:
     provider, selection_reason = _selected_provider()
-    key = (provider, selection_reason, _explicit_ha_entities())
+    cloud_key = tuple(
+        hashlib.sha256(os.getenv(name, "").encode("utf-8")).hexdigest()
+        for name in (
+            "TUYA_CLOUD_ACCESS_ID",
+            "TUYA_CLOUD_ACCESS_SECRET",
+            "TUYA_CLOUD_DEVICE_ID",
+            "TUYA_CLOUD_REGION",
+        )
+    ) if provider == "smartlife_cloud" else ()
+    key = (provider, selection_reason, _explicit_ha_entities(), cloud_key)
     now = time.monotonic()
     with _CACHE_LOCK:
         if (
