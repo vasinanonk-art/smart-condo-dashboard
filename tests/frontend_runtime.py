@@ -45,6 +45,84 @@ process.stdout.write(JSON.stringify({{
     )
 
 
+def electricity_settings_navigation_behavior():
+    settings_source = json.dumps(str(ROOT / "frontend/assets/dashboard_electricity_settings_hotfix17.js"))
+    dashboard_source = json.dumps(str(ROOT / "frontend/assets/dashboard_v3.js"))
+    return run_node(
+        f"""
+const fs=require('fs'),vm=require('vm');
+const elements={{}};
+const classList=()=>({{toggle:()=>{{}},add:()=>{{}},remove:()=>{{}}}});
+function element(id=''){{
+  if(elements[id]) return elements[id];
+  const listeners={{}};
+  const inputs=new Proxy({{}},{{get:(target,key)=>target[key]||(target[key]={{value:'',checked:false}})}});
+  const item={{
+    id,dataset:{{}},style:{{}},classList:classList(),hidden:false,disabled:false,textContent:'',
+    value:'',checked:false,innerHTML:'',elements:inputs,
+    addEventListener:(name,fn)=>{{listeners[name]=fn;}},
+    dispatch:(name)=>listeners[name]?.({{preventDefault:()=>{{}}}}),
+    querySelector:()=>null,querySelectorAll:()=>[],closest:()=>null,
+    setAttribute:()=>{{}},removeAttribute:()=>{{}},insertAdjacentHTML:()=>{{}},appendChild:()=>{{}}
+  }};
+  elements[id]=item; return item;
+}}
+const settingsPage=element('settingsPage');
+const navButton=element('settingsNav'); navButton.dataset.nav='settings'; navButton.onclick=()=>"canonical";
+const document={{
+  visibilityState:'visible',documentElement:{{dataset:{{}}}},
+  getElementById:id=>element(id),
+  querySelector:selector=>selector==='[data-page="settings"]'?element('settingsSection'):selector==='.main'?element('main'):null,
+  querySelectorAll:selector=>selector==='[data-nav]'?[navButton]:[],
+  createElement:()=>element('created'),addEventListener:()=>{{}}
+}};
+let settingsVersion=1;
+const fetchCalls=[];
+const fetch=async url=>{{
+  fetchCalls.push(url);
+  const settings={{electricity:{{billing_cycle_day:7,timezone:'Asia/Bangkok',tariff:{{
+    tariff_name:`Tariff ${{settingsVersion}}`,effective_date:'2026-01-01',source:'manual',version:'v1',
+    tiers:[{{up_to_kwh:150,rate:3.1}}],ft_rate:0.1572,service_charge:24.62,vat_percent:7,minimum_charge:0
+  }}}},dashboard:{{timezone:'Asia/Bangkok'}},maintenance:{{}}}};
+  return {{ok:true,json:async()=>url==='/api/settings'?settings:{{}}}};
+}};
+let timerId=0;
+const window={{safeText:String,DASHBOARD_CHART_DEBUG:false,addEventListener:()=>{{}},scrollTo:()=>{{}}}};
+const context={{window,document,location:{{hostname:'dashboard',hash:'#overview'}},fetch,console,
+  AbortController,FormData:class {{}},setInterval:()=>++timerId,clearInterval:()=>{{}},Promise}};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync({settings_source},'utf8'),context);
+const handlerPreserved=navButton.onclick() === 'canonical';
+const api=window.DashboardElectricitySettings;
+(async()=>{{
+  await api.activate();
+  const first={{...api.diagnostics(),name:element('electricitySettingsForm').elements.tariff_name.value}};
+  await api.activate();
+  const duplicate={{...api.diagnostics()}};
+  element('electricitySettingsForm').elements.tariff_name.value='Unsaved draft';
+  element('electricitySettingsForm').dispatch('input');
+  settingsVersion=2;
+  api.deactivate(); await api.activate();
+  const returned={{...api.diagnostics(),name:element('electricitySettingsForm').elements.tariff_name.value}};
+
+  let activated=0,deactivated=0;
+  window.DashboardElectricitySettings={{activate:()=>activated++,deactivate:()=>deactivated++}};
+  document.querySelectorAll=selector=>selector==='[data-nav]'?[navButton]:selector==='.page'?[]:[];
+  document.querySelector=()=>null;
+  window.requestAnimationFrame=fn=>fn(); window.matchMedia=()=>({{matches:true}});
+  context.history={{replaceState:()=>{{}}}};
+  vm.runInContext(fs.readFileSync({dashboard_source},'utf8'),context);
+  context.nav('settings'); context.nav('settings'); context.nav('overview');
+  process.stdout.write(JSON.stringify({{
+    handlerPreserved,first,duplicate,returned,
+    settingsRequests:fetchCalls.filter(url=>url==='/api/settings').length,
+    canonicalNavigation:{{activated,deactivated}}
+  }}));
+}})().catch(error=>{{console.error(error);process.exit(1);}});
+"""
+    )
+
+
 def chart_scrub_behavior():
     source = json.dumps(str(ROOT / "frontend/assets/dashboard_pm25_hotfix.js"))
     return run_node(

@@ -48,6 +48,7 @@ function currentPage() {
   return (location.hash || '#overview').slice(1);
 }
 function nav(page) {
+  const previousPage = document.documentElement.dataset.dashboardPage;
   document.documentElement.dataset.dashboardPage = page;
   document.querySelectorAll('.page').forEach(section => section.classList.toggle('active', section.dataset.page === page));
   let activeNavigation = null;
@@ -63,6 +64,12 @@ function nav(page) {
   const names = {overview:'Overview', lighting:'Lighting', climate:'Climate & Air Quality', entertainment:'Entertainment', presence:'Presence & Automation', system:'System'};
   if ($('pageTitle')) $('pageTitle').textContent = names[page] || 'Dashboard';
   if (location.hash !== `#${page}`) history.replaceState(null, '', `#${page}`);
+  const settings = window.DashboardElectricitySettings;
+  if (page === 'settings') {
+    if (previousPage !== 'settings') settings?.activate?.();
+  } else if (previousPage === 'settings') {
+    settings?.deactivate?.();
+  }
   window.requestAnimationFrame(() => {
     activeNavigation?.scrollIntoView?.({
       behavior:window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'auto' : 'smooth',

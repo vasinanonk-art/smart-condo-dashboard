@@ -37,15 +37,18 @@ def test_electricity_startup_reuses_dashboard_refresh():
 
 
 def test_settings_polling_only_runs_while_settings_page_is_open():
-    source = (
+    settings_source = (
         ROOT / "frontend/assets/dashboard_electricity_settings_hotfix17.js"
     ).read_text()
-    assert "if(page==='settings')" in source
-    assert "else stopPolling()" in source
-    assert (
-        "if(window.currentPage()==='settings') "
-        "refreshData({initial:true})"
-    ) in source
+    navigation_source = (ROOT / "frontend/assets/dashboard_v3.js").read_text()
+
+    assert "function activate()" in settings_source
+    assert "function deactivate()" in settings_source
+    assert "state.active=true" in settings_source
+    assert "state.active=false" in settings_source
+    assert "stopPolling();" in settings_source
+    assert "settings?.activate?.()" in navigation_source
+    assert "settings?.deactivate?.()" in navigation_source
 
 
 def test_temporary_hotfix_object_diagnostics_are_not_printed():

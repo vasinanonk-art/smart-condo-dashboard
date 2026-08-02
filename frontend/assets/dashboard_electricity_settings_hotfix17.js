@@ -15,6 +15,7 @@
     settingsDirty:false, saving:false, tariffCheckInProgress:false, activeSection:'electricity',
     pollTimer:null, requestSequence:0, appliedSequence:0, ignoredStaleResponses:0,
     lastRefreshStarted:null, lastRefreshCompleted:null, lastError:null, mounted:false,
+    active:false, activationPromise:null, mountCount:0, settingsFetchCount:0,
   };
   const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
   const num = (value, fallback=0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -29,6 +30,9 @@
       ignored_stale_responses: state.ignoredStaleResponses,
       settings_dirty: state.settingsDirty,
       tariff_check_in_progress: state.tariffCheckInProgress,
+      active: state.active,
+      mount_count: state.mountCount,
+      settings_fetch_count: state.settingsFetchCount,
     };
   }
   window.dashboardElectricitySettingsDiagnostics = diagnostics;
@@ -63,7 +67,10 @@
         '/api/electricity/tariff/status','/api/electricity/tariff/sync-status',
         '/api/maintenance/status'
       ];
-      const results=await Promise.allSettled(endpoints.map(url=>request(url,'GET',undefined,controller.signal)));
+      const results=await Promise.allSettled(endpoints.map(url=>{
+        if(url==='/api/settings') state.settingsFetchCount += 1;
+        return request(url,'GET',undefined,controller.signal);
+      }));
       if(sequence < state.appliedSequence){ state.ignoredStaleResponses += 1; return; }
       state.appliedSequence=sequence;
       const previousSuccess={
@@ -117,6 +124,7 @@
   function mount(){
     const host=document.getElementById('settingsPage'); if(!host||state.mounted)return;
     state.mounted=true;
+    state.mountCount += 1;
     host.innerHTML=`<div class="settings-tabs">
       <button class="btn ghost active" type="button" data-settings-section="electricity">Electricity</button>
       <button class="btn ghost" type="button" data-settings-section="dashboard">Dashboard</button>
@@ -250,20 +258,25 @@
   function startPolling(){if(state.pollTimer)return;state.pollTimer=setInterval(()=>{if(document.visibilityState==='visible')refreshData();},POLL_MS);patchReadOnly();}
   function stopPolling(){if(state.pollTimer){clearInterval(state.pollTimer);state.pollTimer=null;}patchReadOnly();}
 
+  function activate(){
+    if(state.active) return state.activationPromise || Promise.resolve();
+    state.active=true;
+    if(!state.mounted) mount();
+    startPolling();
+    state.activationPromise=refreshData({initial:true}).finally(()=>{state.activationPromise=null;});
+    return state.activationPromise;
+  }
+
+  function deactivate(){
+    state.active=false;
+    stopPolling();
+  }
+
   installNavigation();
-  const previousRenderPage=window.renderPage;
-  window.renderPage=function stableRenderPage(page=window.currentPage()){
-    previousRenderPage(page);
-    if(page==='settings'){
-      if(!state.mounted)mount();
-      startPolling();
-      refreshData();
-    } else stopPolling();
-  };
-  const previousRefresh=window.refresh;
-  window.refresh=async function stableRefresh(){await previousRefresh();if(window.currentPage()==='settings')await refreshData();};
-  document.querySelectorAll('[data-nav]').forEach(button=>button.onclick=()=>window.nav(button.dataset.nav));
-  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&window.currentPage()==='settings'){startPolling();refreshData();}else if(document.visibilityState==='hidden')stopPolling();});
+  window.DashboardElectricitySettings={activate,deactivate,diagnostics};
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='visible'&&state.active){startPolling();refreshData();}
+    else if(document.visibilityState==='hidden')stopPolling();
+  });
   window.addEventListener('beforeunload',stopPolling);
-  if(window.currentPage()==='settings') refreshData({initial:true}).then(()=>{mount();startPolling();});
 })();
