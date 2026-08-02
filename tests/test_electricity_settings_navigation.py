@@ -20,4 +20,9 @@ def test_settings_navigation_has_one_authoritative_owner_and_hydrates_once():
     assert result["settingsRequests"] == 2
 
     # dashboard_v3 owns transitions and does not reactivate the current page.
-    assert result["canonicalNavigation"] == {"activated": 1, "deactivated": 1}
+    assert result["canonicalNavigation"] == {
+        "activated": 1,
+        "deactivated": 1,
+        "billingActivated": 1,
+        "billingDeactivated": 1,
+    }

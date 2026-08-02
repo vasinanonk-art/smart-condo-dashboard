@@ -3,7 +3,7 @@
   if (window.__dashboardPolish10Installed) return;
   window.__dashboardPolish10Installed = true;
 
-  const state = {status:null,maintenance:null,billing:null};
+  const state = {status:null,maintenance:null};
   const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
   const timeLabel = ts => ts ? new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Bangkok',year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(Number(ts)*1000)) : 'Not available';
   const relative = ts => { if (!ts) return ''; const seconds=Math.max(0,Math.floor(Date.now()/1000-Number(ts))); if(seconds<60)return 'just now'; if(seconds<3600)return `${Math.floor(seconds/60)} min ago`; if(seconds<86400)return `${Math.floor(seconds/3600)} hr ago`; return `${Math.floor(seconds/86400)} d ago`; };
@@ -15,12 +15,10 @@
   async function load() {
     const results = await Promise.allSettled([
       window.get('/api/settings/electricity/status'),
-      window.get('/api/maintenance/status'),
-      window.get('/api/electricity/billing-cycle?range=current_billing_cycle')
+      window.get('/api/maintenance/status')
     ]);
     if(results[0].status==='fulfilled')state.status=results[0].value;
     if(results[1].status==='fulfilled')state.maintenance=results[1].value;
-    if(results[2].status==='fulfilled')state.billing=results[2].value;
     renderAll();
   }
 
@@ -59,7 +57,8 @@
   }
 
   function renderElectricity(){
-    if(window.currentPage?.()!=='electricity')return;const section=document.querySelector('.electricity-cost-card');if(!section||!state.status||!state.billing)return;const s=state.status,b=state.billing,coverage=b.coverage||{};
+    const billing=window.DashboardElectricityHistory?.state?.billing;
+    if(window.currentPage?.()!=='electricity')return;const section=document.querySelector('.electricity-cost-card');if(!section||!state.status||!billing)return;const s=state.status,b=billing,coverage=b.coverage||{};
     const warning=!coverage.complete?`<div class="billing-warning"><strong>Current billing cycle is incomplete.</strong><span>Calculations currently cover ${safe(timeLabel(coverage.actual_from_ts))} to ${safe(timeLabel(coverage.actual_to_ts))}.</span></div>`:'';
     section.innerHTML=`<div class="card-head"><div><h2>Electricity Cost</h2><small>Estimated from configured tariff. This is not an official utility invoice.</small></div></div>${warning}<div class="polish-grid">${card('Current Billing Cycle',b.billing_period_label||s.billing_cycle?.label||'Not available')}${card('Coverage',percent(coverage.coverage_percent??s.coverage_percent))}${card('Current Usage',b.actual_partial_usage_kwh==null?'Not available':`${Number(b.actual_partial_usage_kwh).toFixed(2)} kWh`)}${card('Current Cost',b.actual_partial_cost==null?'Not available':`${Number(b.actual_partial_cost).toFixed(2)} THB`)}${card('Projected Cycle Usage',b.projected_cycle_usage_kwh==null?'Waiting':`${Number(b.projected_cycle_usage_kwh).toFixed(2)} kWh`)}${card('Projected Cycle Cost',b.projected_cycle_bill==null?'Waiting':`${Number(b.projected_cycle_bill).toFixed(2)} THB`)}${card('Tariff',s.tariff_version||s.tariff_source||'Manual')}${card('Last Tariff Check',timeLabel(s.last_tariff_check))}${card('History Started',timeLabel(s.history_starts))}${card('History Ends',timeLabel(s.history_ends))}</div>`;
   }

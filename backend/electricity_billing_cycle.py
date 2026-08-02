@@ -113,7 +113,11 @@ def _coverage(start_ts: int, end_ts: int, rows: list[Dict[str, Any]]) -> Dict[st
     }
 
 
-def billing_cycle_payload(period: str, from_ts: Optional[int] = None, to_ts: Optional[int] = None) -> Dict[str, Any]:
+def _billing_request_bounds(
+    period: str,
+    from_ts: Optional[int] = None,
+    to_ts: Optional[int] = None,
+) -> tuple[str, int, int]:
     if from_ts is not None or to_ts is not None:
         start = int(from_ts or 0)
         end = int(to_ts or time.time())
@@ -123,7 +127,15 @@ def billing_cycle_payload(period: str, from_ts: Optional[int] = None, to_ts: Opt
     else:
         selected = period if period in {"current_billing_cycle", "previous_billing_cycle", "calendar_month", "today", "yesterday"} else "current_billing_cycle"
         start, end = billing_period_bounds(selected)
-    rows = history.read_samples(start, end)
+    return selected, start, end
+
+
+def _billing_cycle_payload_from_rows(
+    selected: str,
+    start: int,
+    end: int,
+    rows: list[Dict[str, Any]],
+) -> Dict[str, Any]:
     coverage = _coverage(start, end, rows)
     usage = history.energy_used(rows) if len(rows) >= 2 else None
     bill = history.calculate_bill(usage, estimated=selected != "previous_billing_cycle")
@@ -152,6 +164,12 @@ def billing_cycle_payload(period: str, from_ts: Optional[int] = None, to_ts: Opt
         "projection_status": "available" if projected_usage is not None else "insufficient_projection_history",
         "coverage": coverage,
     }
+
+
+def billing_cycle_payload(period: str, from_ts: Optional[int] = None, to_ts: Optional[int] = None) -> Dict[str, Any]:
+    selected, start, end = _billing_request_bounds(period, from_ts, to_ts)
+    rows = history.read_samples(start, end)
+    return _billing_cycle_payload_from_rows(selected, start, end, rows)
 
 
 @app.get("/api/electricity/billing-cycle/status")

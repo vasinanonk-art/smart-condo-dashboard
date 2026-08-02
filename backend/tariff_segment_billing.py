@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import copy
 import json
+import threading
+import time
 from datetime import datetime
 from typing import Any, Dict, Mapping, Optional
 from zoneinfo import ZoneInfo
@@ -11,7 +13,13 @@ from backend import electricity_billing_cycle as billing
 from backend import electricity_history as history
 from backend import mea_tariff_provider as mea
 
-_ORIGINAL_PAYLOAD = billing.billing_cycle_payload
+BILLING_CACHE_TTL_SEC = 8.0
+BILLING_CACHE_WAIT_SEC = 30.0
+_billing_cache_lock = threading.Lock()
+_billing_cache_key: Optional[tuple[Any, ...]] = None
+_billing_cache_value: Optional[Dict[str, Any]] = None
+_billing_cache_at = 0.0
+_billing_inflight: Dict[tuple[Any, ...], threading.Event] = {}
 
 
 def _money(value: float) -> float:
@@ -103,11 +111,33 @@ def segmented_bill(start: int, end: int, rows: list[Dict[str, Any]]) -> Optional
     return {**totals, "usage_kwh": round(sum(float(segment.get("usage_kwh") or 0) for segment in segments), 4), "tariff_segments": segments, "tariff_segmented": True}
 
 
-def billing_cycle_payload_segmented(period: str, from_ts: Optional[int] = None, to_ts: Optional[int] = None) -> Dict[str, Any]:
-    payload = _ORIGINAL_PAYLOAD(period, from_ts, to_ts)
-    start = int(payload.get("billing_period_start") or from_ts or 0)
-    end = int(payload.get("billing_period_end") or to_ts or 0)
+def _file_fingerprint(path) -> tuple[int, int]:
+    try:
+        stat = path.stat()
+        return stat.st_mtime_ns, stat.st_size
+    except OSError:
+        return 0, 0
+
+
+def _request_key(selected: str, start: int, end: int) -> tuple[Any, ...]:
+    try:
+        from backend import dashboard_settings as settings
+        settings_path = settings.SETTINGS_PATH
+    except Exception:
+        settings_path = history.HISTORY_PATH.with_name("settings.json")
+    return (
+        selected,
+        start,
+        end,
+        _file_fingerprint(history.HISTORY_PATH),
+        _file_fingerprint(mea.TARIFF_HISTORY_PATH),
+        _file_fingerprint(settings_path),
+    )
+
+
+def _calculate_segmented_payload(selected: str, start: int, end: int) -> Dict[str, Any]:
     rows = history.read_samples(start, end)
+    payload = billing._billing_cycle_payload_from_rows(selected, start, end, rows)
     segmented = segmented_bill(start, end, rows)
     if segmented:
         payload.update(segmented)
@@ -115,6 +145,51 @@ def billing_cycle_payload_segmented(period: str, from_ts: Optional[int] = None, 
             payload["actual_partial_cost"] = segmented.get("total")
     payload.setdefault("tariff_segments", [])
     return payload
+
+
+def _cached_segmented_payload(selected: str, start: int, end: int) -> Dict[str, Any]:
+    global _billing_cache_key, _billing_cache_value, _billing_cache_at
+    key = _request_key(selected, start, end)
+    while True:
+        with _billing_cache_lock:
+            if (
+                _billing_cache_key == key
+                and _billing_cache_value is not None
+                and time.monotonic() - _billing_cache_at < BILLING_CACHE_TTL_SEC
+            ):
+                return copy.deepcopy(_billing_cache_value)
+            event = _billing_inflight.get(key)
+            if event is None:
+                event = threading.Event()
+                _billing_inflight[key] = event
+                owner = True
+            else:
+                owner = False
+        if owner:
+            break
+        if not event.wait(BILLING_CACHE_WAIT_SEC):
+            raise TimeoutError("billing cycle calculation timed out")
+
+    try:
+        payload = _calculate_segmented_payload(selected, start, end)
+    except Exception:
+        with _billing_cache_lock:
+            _billing_inflight.pop(key, None)
+            event.set()
+        raise
+
+    with _billing_cache_lock:
+        _billing_cache_key = key
+        _billing_cache_value = copy.deepcopy(payload)
+        _billing_cache_at = time.monotonic()
+        _billing_inflight.pop(key, None)
+        event.set()
+    return payload
+
+
+def billing_cycle_payload_segmented(period: str, from_ts: Optional[int] = None, to_ts: Optional[int] = None) -> Dict[str, Any]:
+    selected, start, end = billing._billing_request_bounds(period, from_ts, to_ts)
+    return _cached_segmented_payload(selected, start, end)
 
 
 billing.billing_cycle_payload = billing_cycle_payload_segmented

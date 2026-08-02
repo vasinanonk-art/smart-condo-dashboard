@@ -31,6 +31,8 @@
     comparisonRequestId: 0,
     customVisible: false,
     todayPeak: null,
+    billingOwnerActive: false,
+    billingInFlight: null,
   };
 
   const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
@@ -181,6 +183,28 @@
   async function loadBilling() {
     try { state.billing = await window.get('/api/electricity/billing-cycle?range=current_billing_cycle'); }
     catch (error) { console.error('Electricity billing failed', {name: error?.name || 'Error'}); }
+  }
+
+  function refreshBilling() {
+    if (!state.billingOwnerActive) return Promise.resolve();
+    if (state.billingInFlight) return state.billingInFlight;
+    state.billingInFlight = Promise.allSettled([loadBillingCycleStatus(), loadBilling()])
+      .then(results => {
+        if (state.billingOwnerActive) window.renderPage(window.currentPage());
+        return results;
+      })
+      .finally(() => { state.billingInFlight = null; });
+    return state.billingInFlight;
+  }
+
+  function activateBilling() {
+    if (state.billingOwnerActive) return state.billingInFlight || Promise.resolve();
+    state.billingOwnerActive = true;
+    return refreshBilling();
+  }
+
+  function deactivateBilling() {
+    state.billingOwnerActive = false;
   }
 
   async function loadTariff() {
@@ -762,7 +786,7 @@
   const originalRefresh = window.refresh;
   const originalRenderPage = window.renderPage;
   window.refresh = async function refreshWithElectricity() {
-    await Promise.allSettled([originalRefresh(), loadStatus(), loadSummary(), loadBillingCycleStatus(), loadBilling(), loadTariff(), loadTariffSync()]);
+    await Promise.allSettled([originalRefresh(), loadStatus(), loadSummary(), loadTariff(), loadTariffSync()]);
     window.renderPage(window.currentPage());
   };
   window.renderPage = function renderPageWithElectricity(page = window.currentPage()) {
@@ -772,12 +796,22 @@
   document.querySelectorAll('[data-nav]').forEach(button => button.onclick = () => window.nav(button.dataset.nav));
   const initialData = document.readyState === 'loading'
     ? Promise.resolve()
-    : Promise.allSettled([loadStatus(), loadSummary(), loadBillingCycleStatus(), loadBilling(), loadTariff(), loadTariffSync()]);
+    : Promise.allSettled([loadStatus(), loadSummary(), loadTariff(), loadTariffSync()]);
   initialData
     .then(() => Promise.allSettled([loadHistory(), loadComparison()]))
     .then(() => { if (window.currentPage() === 'electricity') render(); });
   window.DashboardElectricityHistory = {
     state, historyRequest, csvExport, axisLabelStride, splitSegments,
     movingAverage, analyticsStatistics, tooltipContent, bucketLabel,
+  };
+  window.DashboardElectricityBilling = {
+    activate: activateBilling,
+    deactivate: deactivateBilling,
+    refresh: refreshBilling,
+    diagnostics: () => ({
+      active: state.billingOwnerActive,
+      timer_active: false,
+      request_active: Boolean(state.billingInFlight),
+    }),
   };
 })();

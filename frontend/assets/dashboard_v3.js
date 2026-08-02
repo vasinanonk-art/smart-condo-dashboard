@@ -70,6 +70,11 @@ function nav(page) {
   } else if (previousPage === 'settings') {
     settings?.deactivate?.();
   }
+  const billing = window.DashboardElectricityBilling;
+  const billingPage = page === 'electricity' || page === 'history';
+  const previousBillingPage = previousPage === 'electricity' || previousPage === 'history';
+  if (billingPage && !previousBillingPage) billing?.activate?.();
+  else if (!billingPage && previousBillingPage) billing?.deactivate?.();
   window.requestAnimationFrame(() => {
     activeNavigation?.scrollIntoView?.({
       behavior:window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'auto' : 'smooth',
@@ -426,6 +431,9 @@ async function refresh() {
   ]);
   renderBadges();
   renderPage(currentPage());
+  if (currentPage() === 'electricity' || currentPage() === 'history') {
+    await window.DashboardElectricityBilling?.refresh?.();
+  }
 }
 
 function bindStaticControls() {

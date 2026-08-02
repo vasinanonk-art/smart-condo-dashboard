@@ -105,18 +105,20 @@ const api=window.DashboardElectricitySettings;
   api.deactivate(); await api.activate();
   const returned={{...api.diagnostics(),name:element('electricitySettingsForm').elements.tariff_name.value}};
 
-  let activated=0,deactivated=0;
+  let activated=0,deactivated=0,billingActivated=0,billingDeactivated=0;
   window.DashboardElectricitySettings={{activate:()=>activated++,deactivate:()=>deactivated++}};
+  window.DashboardElectricityBilling={{activate:()=>billingActivated++,deactivate:()=>billingDeactivated++}};
   document.querySelectorAll=selector=>selector==='[data-nav]'?[navButton]:selector==='.page'?[]:[];
   document.querySelector=()=>null;
   window.requestAnimationFrame=fn=>fn(); window.matchMedia=()=>({{matches:true}});
   context.history={{replaceState:()=>{{}}}};
   vm.runInContext(fs.readFileSync({dashboard_source},'utf8'),context);
   context.nav('settings'); context.nav('settings'); context.nav('overview');
+  context.nav('electricity'); context.nav('electricity'); context.nav('history'); context.nav('overview');
   process.stdout.write(JSON.stringify({{
     handlerPreserved,first,duplicate,returned,
     settingsRequests:fetchCalls.filter(url=>url==='/api/settings').length,
-    canonicalNavigation:{{activated,deactivated}}
+    canonicalNavigation:{{activated,deactivated,billingActivated,billingDeactivated}}
   }}));
 }})().catch(error=>{{console.error(error);process.exit(1);}});
 """
@@ -534,6 +536,50 @@ process.stdout.write(JSON.stringify({{
   tooltip,
   bucket:api.bucketLabel('30m')
 }}));
+"""
+    )
+
+
+def electricity_billing_owner_behavior():
+    source = json.dumps(str(ROOT / "frontend/assets/dashboard_electricity.js"))
+    return run_node(
+        f"""
+const fs=require('fs'),vm=require('vm');
+const calls=[]; const pending=[]; let timerCreates=0,timerClears=0;
+const document={{
+  readyState:'loading',body:{{appendChild:()=>{{}}}},
+  querySelectorAll:()=>[],querySelector:()=>({{}}),getElementById:()=>null,
+  createElement:()=>({{}})
+}};
+const get=url=>{{
+  calls.push(url);
+  if(url.startsWith('/api/electricity/billing-cycle')) {{
+    return new Promise(resolve=>pending.push(resolve));
+  }}
+  return Promise.resolve({{}});
+}};
+const window={{
+  safeText:String,get,refresh:async()=>{{}},renderPage:()=>{{}},currentPage:()=> 'overview',
+  nav:()=>{{}},setInterval:()=>{{timerCreates++;return timerCreates;}},
+  clearInterval:()=>{{timerClears++;}}
+}};
+const context={{window,document,console,fetch:async()=>({{ok:true,json:async()=>({{}})}}),
+  URL,URLSearchParams,Intl,Date,setTimeout,clearTimeout,AbortController,Promise}};
+vm.createContext(context); vm.runInContext(fs.readFileSync({source},'utf8'),context);
+const owner=window.DashboardElectricityBilling;
+(async()=>{{
+  const first=owner.activate();
+  owner.activate(); owner.refresh();
+  const whilePending=calls.filter(url=>url.startsWith('/api/electricity/billing-cycle')).length;
+  pending.splice(0).forEach(resolve=>resolve({{}})); await first;
+  const firstCycle={{calls:whilePending,diagnostics:owner.diagnostics(),timerCreates,timerClears}};
+  owner.deactivate(); owner.refresh();
+  const afterLeave={{calls:calls.filter(url=>url.startsWith('/api/electricity/billing-cycle')).length,diagnostics:owner.diagnostics(),timerCreates,timerClears}};
+  const second=owner.activate();
+  pending.splice(0).forEach(resolve=>resolve({{}})); await second;
+  const afterReturn={{calls:calls.filter(url=>url.startsWith('/api/electricity/billing-cycle')).length,diagnostics:owner.diagnostics(),timerCreates,timerClears}};
+  process.stdout.write(JSON.stringify({{firstCycle,afterLeave,afterReturn}}));
+}})().catch(error=>{{console.error(error);process.exit(1);}});
 """
     )
 
