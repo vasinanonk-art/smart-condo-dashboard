@@ -99,11 +99,16 @@ def _ir_devices() -> list[Dict[str, Any]]:
         if isinstance(smartlife.get("devices"), list)
         else []
     )
-    smartlife_device = (
-        smartlife_devices[0]
-        if len(smartlife_devices) == 1 and isinstance(smartlife_devices[0], dict)
-        else None
-    )
+    smartlife_device = next((
+        item for item in smartlife_devices
+        if isinstance(item, dict) and item.get("category") == "infrared_ac"
+    ), None)
+    if smartlife_device is None and len(smartlife_devices) == 1:
+        smartlife_device = smartlife_devices[0]
+    t3_hub = next((
+        item for item in smartlife_devices
+        if isinstance(item, dict) and item.get("category") == "sensor_hub"
+    ), None)
     try:
         inventory = tapo_ir_local_bridge.existing_ir_remote_inventory()
     except Exception:
@@ -212,6 +217,9 @@ def _ir_devices() -> list[Dict[str, Any]]:
                 ),
                 "available_capabilities": copy.deepcopy(available_categories),
                 "discovery_reason": reason,
+                "virtual": bool(smartlife_device and smartlife_device.get("virtual") is True),
+                "parent_id": smartlife_device.get("parent_id") if smartlife_device else None,
+                "controllable": False,
             }
         if is_provider_neutral:
             online = smartlife_device.get("online") if smartlife_device else None
@@ -273,6 +281,25 @@ def _ir_devices() -> list[Dict[str, Any]]:
             },
             state_quality="unknown",
             reason="Configured Tapo IR remote discovered; transmit interface is not verified.",
+        ))
+    if t3_hub:
+        devices.append(_device(
+            "bed-room-t3-hub",
+            "bed_room",
+            "T3 Hub",
+            "sensor",
+            online=t3_hub.get("online"),
+            health=str(t3_hub.get("health") or "unknown"),
+            capabilities={},
+            state={
+                "temperature_c": t3_hub.get("state", {}).get("temperature_c"),
+                "humidity_percent": t3_hub.get("state", {}).get("humidity_percent"),
+                "last_seen": t3_hub.get("last_seen"),
+                "virtual": False,
+                "controls_available": False,
+            },
+            state_quality=str(t3_hub.get("state_quality") or "unknown"),
+            reason=None if t3_hub.get("online") is True else t3_hub.get("discovery_reason"),
         ))
     return devices
 

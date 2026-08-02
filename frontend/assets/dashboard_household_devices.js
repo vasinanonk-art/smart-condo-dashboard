@@ -143,11 +143,19 @@
         ${irDetails}
       </div>`,
     });
+    const sensorSummary = device.id === 'bed-room-t3-hub'
+      ? [
+          Number.isFinite(device.state?.temperature_c) ? `${device.state.temperature_c.toFixed(1)} °C` : '',
+          Number.isFinite(device.state?.humidity_percent) ? `${device.state.humidity_percent.toFixed(0)}% humidity` : '',
+        ].filter(Boolean).join(' · ')
+      : '';
+    const virtualSummary = device.state?.ir_diagnostics?.provider === 'smartlife_cloud'
+      && device.category === 'climate' ? 'Virtual Device · Controls unavailable' : '';
     return UI.deviceCard({
       id:device.id, title:device.display_name,
       room:device.room === 'bed_room' ? 'Bed Room' : 'Living Room',
       status:status(device), quality:device.state_quality,
-      state:stateText, warning:userReason(device),
+      state:sensorSummary || virtualSummary || stateText, warning:userReason(device),
       actions:controls, details,
     });
   }
@@ -173,7 +181,7 @@
     const host = document.getElementById('climateControls');
     if (!host) return;
     host.className = 'household-grid';
-    const devices = state.devices.filter(item => ['climate', 'fan'].includes(item.category));
+    const devices = state.devices.filter(item => ['climate', 'fan'].includes(item.category) || item.id === 'bed-room-t3-hub');
     host.innerHTML = devices.map(device => card(device, irActions(device))).join('');
     bindIrCommands(host);
   }

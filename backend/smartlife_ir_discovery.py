@@ -93,6 +93,11 @@ class IRInventoryDevice:
     discovery_reason: str
     dp_metadata: tuple[Mapping[str, Any], ...] = ()
     state: Mapping[str, Any] = field(default_factory=dict)
+    category: str | None = None
+    virtual: bool = False
+    parent_id: str | None = None
+    controllable: bool = False
+    last_seen: int | None = None
 
 
 @dataclass(frozen=True)
@@ -385,7 +390,7 @@ class SmartLifeCloudProvider(ReadOnlyIRProvider):
             )
         except tuya_cloud_readonly.TuyaCloudError as exc:
             return UnavailableProvider(self.provider, exc.reason).discover()
-        return ProviderInventory(
+        return _with_t3_inventory(ProviderInventory(
             provider=self.provider,
             provider_detected=True,
             online=device.online,
@@ -394,7 +399,141 @@ class SmartLifeCloudProvider(ReadOnlyIRProvider):
             available_capabilities=(),
             discovery_reason="verified_inventory",
             devices=(device,),
-        )
+        ))
+
+
+_T3_MODEL = "T3-Smart-301"
+_T3_HUB_ID = "ir-t3-hub"
+_T3_AIR_ID = "ir-t3-air-remote"
+_T3_SENSOR_MAX_AGE_SEC = max(
+    30,
+    min(3600, int(os.getenv("T3_SENSOR_MAX_AGE_SEC", "300"))),
+)
+
+
+def _number(value: Any) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def _t3_sensor_state(now: int | None = None) -> tuple[Dict[str, Any], int | None, bool]:
+    """Project the existing MQTT state without creating another subscriber."""
+    current = app_module.state.get("condo_sensor")
+    if not isinstance(current, Mapping):
+        return {}, None, False
+    timestamp = current.get("ts")
+    last_seen = int(timestamp) if isinstance(timestamp, (int, float)) else None
+    state: Dict[str, Any] = {}
+    temperature = _number(current.get("temperature"))
+    humidity = _number(current.get("humidity"))
+    if temperature is not None:
+        state["temperature_c"] = temperature
+    if humidity is not None:
+        state["humidity_percent"] = humidity
+    clock = int(time.time()) if now is None else now
+    fresh = bool(
+        state
+        and last_seen is not None
+        and 0 <= clock - last_seen <= _T3_SENSOR_MAX_AGE_SEC
+    )
+    return state, last_seen, fresh
+
+
+def _with_t3_inventory(value: ProviderInventory) -> ProviderInventory:
+    """Add verified T3 physical/virtual identities to a cloud inventory result."""
+    if len(value.devices) != 1 or value.devices[0].model != _T3_MODEL:
+        return value
+    cloud = value.devices[0]
+    sensor, last_seen, sensor_fresh = _t3_sensor_state()
+    if sensor_fresh:
+        hub_online: bool | None = True
+        hub_health = "healthy"
+        hub_quality = "confirmed"
+        hub_reason = "verified_mqtt_sensor_state"
+    elif last_seen is not None:
+        hub_online = False
+        hub_health = "offline"
+        hub_quality = "unknown"
+        hub_reason = "mqtt_sensor_state_stale"
+    else:
+        hub_online = cloud.online
+        hub_health = cloud.health
+        hub_quality = cloud.state_quality
+        hub_reason = "mqtt_sensor_state_unavailable"
+    hub = IRInventoryDevice(
+        provider="smartlife_cloud+mqtt",
+        product_name="T3 Hub",
+        model=_T3_MODEL,
+        device_id=_T3_HUB_ID,
+        firmware=cloud.firmware,
+        online=hub_online,
+        health=hub_health,
+        state_quality=hub_quality,
+        supported_command_categories=(),
+        discovery_reason=hub_reason,
+        state=sensor,
+        category="sensor_hub",
+        last_seen=last_seen,
+    )
+    air = IRInventoryDevice(
+        provider="smartlife_cloud",
+        product_name="Air Remote",
+        model=None,
+        device_id=_T3_AIR_ID,
+        firmware=None,
+        online=cloud.online,
+        health=cloud.health,
+        state_quality=cloud.state_quality,
+        supported_command_categories=(),
+        discovery_reason="verified_virtual_air_child_read_only",
+        category="infrared_ac",
+        virtual=True,
+        parent_id=_T3_HUB_ID,
+        controllable=False,
+    )
+    return ProviderInventory(
+        provider=value.provider,
+        provider_detected=value.provider_detected,
+        online=value.online,
+        health=value.health,
+        state_quality=value.state_quality,
+        available_capabilities=(),
+        discovery_reason=value.discovery_reason,
+        devices=(hub, air),
+    )
+
+
+def _mqtt_only_t3_inventory(value: ProviderInventory) -> ProviderInventory:
+    """Keep verified LAN telemetry visible during a cloud inventory outage."""
+    sensor, last_seen, fresh = _t3_sensor_state()
+    if value.provider != "smartlife_cloud" or not fresh:
+        return value
+    hub = IRInventoryDevice(
+        provider="mqtt",
+        product_name="T3 Hub",
+        model=_T3_MODEL,
+        device_id=_T3_HUB_ID,
+        firmware=None,
+        online=True,
+        health="healthy",
+        state_quality="confirmed",
+        supported_command_categories=(),
+        discovery_reason="verified_mqtt_sensor_state_cloud_unavailable",
+        state=sensor,
+        category="sensor_hub",
+        last_seen=last_seen,
+    )
+    return ProviderInventory(
+        provider=value.provider,
+        provider_detected=value.provider_detected,
+        online=value.online,
+        health=value.health,
+        state_quality=value.state_quality,
+        available_capabilities=(),
+        discovery_reason=value.discovery_reason,
+        devices=(hub,),
+    )
 
 
 def _provider(provider: str, selection_reason: str | None) -> ReadOnlyIRProvider:
@@ -431,6 +570,15 @@ def _public_inventory(value: ProviderInventory) -> Dict[str, Any]:
             item.pop("dp_metadata")
         if not item["state"]:
             item.pop("state")
+        # Existing provider records retain their exact public shape. The new
+        # relationship fields are emitted only for explicitly typed T3 items.
+        if item["category"] is None:
+            for key in ("category", "virtual", "parent_id", "controllable", "last_seen"):
+                item.pop(key)
+        elif item["parent_id"] is None:
+            item.pop("parent_id")
+        if item.get("last_seen") is None:
+            item.pop("last_seen", None)
         payload["devices"].append(item)
     payload["count"] = len(value.devices)
     payload["read_only"] = True
@@ -458,7 +606,10 @@ def inventory(force: bool = False) -> Dict[str, Any]:
             and now - float(_CACHE["ts"]) < _CACHE_TTL_SEC
         ):
             return copy.deepcopy(_CACHE["payload"])
-    payload = _public_inventory(_provider(provider, selection_reason).discover())
+    discovered = _provider(provider, selection_reason).discover()
+    if provider == "smartlife_cloud" and not discovered.devices:
+        discovered = _mqtt_only_t3_inventory(discovered)
+    payload = _public_inventory(discovered)
     with _CACHE_LOCK:
         _CACHE.update({"key": key, "ts": now, "payload": copy.deepcopy(payload)})
     return payload
