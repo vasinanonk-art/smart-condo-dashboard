@@ -89,3 +89,59 @@ enabled.
 
 IR transmission, learning, scenes, command mappings, AC controls, and fan
 controls remain out of scope.
+
+## T3 hub and virtual Air inventory (EPIC 21D)
+
+The verified `T3-Smart-301` is projected as two read-only inventory records:
+
+- `T3 Hub` combines the verified Smart Life identity with temperature,
+  humidity, and last-seen data already received by the shared
+  `condo/t3/state` MQTT subscriber. It does not create another TinyTuya poller
+  or MQTT subscription.
+- `Air Remote` is a virtual `infrared_ac` child of the hub. The relationship is
+  represented using dashboard-local identifiers only. It has no command
+  capabilities and remains non-controllable.
+
+Fresh MQTT telemetry confirms hub health. Stale telemetry is reported as
+offline rather than silently presenting old sensor values as current. During a
+cloud inventory outage, fresh MQTT telemetry may continue to identify the
+physical hub, but the virtual child is not invented without its verified cloud
+identity.
+
+## Air child mapping audit (EPIC 21E)
+
+The existing TinyTuya inventory cache contains nine descriptors for the
+verified `infrared_ac` child. The table uses deterministic, dashboard-local
+fingerprints derived from private mapping keys; neither the keys nor descriptor
+contents are recorded here.
+
+| Index | Fingerprint | Declared type | Encoded length | Structural shape | Changed with UI state |
+| ---: | --- | --- | ---: | --- | --- |
+| 1 | `b2955482fd3d` | enum | 89 | 3-field object; value schema has four integers and one string | Not observed |
+| 2 | `9d3ec7ae4bf1` | enum | 89 | 3-field object; value schema has four integers and one string | Not observed |
+| 3 | `14ec672582d9` | string | 55 | 3-field object; scalar string value schema | Not observed |
+| 4 | `78606287df15` | string | 53 | 3-field object; scalar string value schema | Not observed |
+| 5 | `833db6e771b4` | enum | 91 | 3-field object; value schema has four integers and one string | Not observed |
+| 6 | `ccafe739b51c` | enum | 92 | 3-field object; value schema has four integers and one string | Not observed |
+| 7 | `bf4ec672018b` | boolean | 45 | 3-field object; empty object value schema | Not observed |
+| 8 | `a344d4ec875a` | enum | 94 | 3-field object; value schema has four integers and one string | Not observed |
+| 9 | `e1d5b5cb356c` | enum | 92 | 3-field object; value schema has four integers and one string | Not observed |
+
+These are capability descriptors, not observed state values or a transmit
+contract. The saved cloud record contains no Air status entries, and the saved
+LAN snapshot contains no Air DPS entries. Consequently there are no repeated
+observations against which a Smart Life display change can be measured.
+
+No descriptor is assigned to power, target temperature, mode, fan, or swing.
+The boolean descriptor is not treated as proof of power, the string descriptors
+are not treated as proof of a combined AC state, and the enum descriptors are
+not assigned semantic labels. Doing so would be inference rather than an
+observation.
+
+No safe IR transmit contract has been found. The cache does not disclose a
+documented child RPC method, request schema, response semantics, or confirmed
+mapping from a displayed AC state to a callable operation. Controls therefore
+remain disabled. A future mapping experiment requires separately approved,
+operator-controlled state changes with before/after read-only snapshots; a
+future send implementation additionally requires a verified method and request
+schema.
