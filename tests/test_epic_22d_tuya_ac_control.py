@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from backend import ir_framework as ir
 from backend import tuya_cloud_readonly as cloud
+from backend.ir_command_state import AssumedCommandStateStore
 from backend.app_entry import app
 from tests.frontend_runtime import run_node
 
@@ -112,7 +113,7 @@ def _configure(monkeypatch, fake):
     monkeypatch.setattr(cloud, "configured_ir_client", lambda: fake)
     driver = ir.DRIVERS["tuya_ir_ac"]
     driver._last_attempt = 0
-    driver._last_commanded.clear()
+    driver._state_store = AssumedCommandStateStore(None)
     driver._last_error = None
     driver._last_response = None
     queue = ir._queue("bed-room-air-conditioner")
@@ -292,6 +293,11 @@ def test_success_audit_is_complete_and_sanitized(
     assert len(record["correlation_id"]) >= 16
     assert record["outbound_attempts"] == 1
     assert record["retry_count"] == 0
+    assert response.json()["last_commanded"][
+        "power" if command_type == "power" else "target_temperature"
+    ] == value
+    assert response.json()["last_commanded_correlation_id"] == record["correlation_id"]
+    assert response.json()["last_commanded_at"] == record["timestamp"]
     rendered = json.dumps(record)
     for secret in (
         "test-access", "test-secret", "configured-device-123",
@@ -313,13 +319,113 @@ def test_status_is_explicitly_assumed(monkeypatch):
     assert result["ok"] is True
 
     status = ir.bedroom_ac_status()
-    assert status["last_commanded"] == {
-        "power": 1,
-        "target_temperature": 27,
-        "retrieved_at": status["last_commanded"]["retrieved_at"],
-    }
+    assert status["last_commanded"] == {"target_temperature": 27}
+    assert status["last_commanded_at"] > 0
+    assert status["last_commanded_correlation_id"] == "status-test"
     assert status["state_quality"] == "assumed"
     assert status["physical_state_confirmed"] is False
+
+
+def test_sequential_temperature_commands_keep_latest_value(monkeypatch):
+    fake = FakeIRClient()
+    driver = _configure(monkeypatch, fake)
+    first = ir.execute_command(
+        "bed-room-air-conditioner",
+        ir.IRCommandRequest(command="temperature_27"),
+        authenticated_user="owner",
+        correlation_id="temperature-27",
+    )
+    driver._last_attempt = 0
+    second = ir.execute_command(
+        "bed-room-air-conditioner",
+        ir.IRCommandRequest(command="temperature_26"),
+        authenticated_user="owner",
+        correlation_id="temperature-26",
+    )
+    assert first["last_commanded"]["target_temperature"] == 27
+    assert second["last_commanded"]["target_temperature"] == 26
+    assert driver.read_last_commanded()["last_commanded"] == {
+        "target_temperature": 26,
+    }
+    assert driver.read_last_commanded()["last_commanded_correlation_id"] == "temperature-26"
+
+
+def test_failed_command_does_not_change_assumed_state(monkeypatch):
+    fake = FakeIRClient()
+    driver = _configure(monkeypatch, fake)
+    success = ir.execute_command(
+        "bed-room-air-conditioner",
+        ir.IRCommandRequest(command="temperature_27"),
+        correlation_id="successful-command",
+    )
+    before = driver.read_last_commanded()
+    assert success["ok"] is True
+    driver._last_attempt = 0
+    fake.error = cloud.TuyaCloudError("tuya_cloud_timeout")
+    failed = ir.execute_command(
+        "bed-room-air-conditioner",
+        ir.IRCommandRequest(command="temperature_26"),
+        correlation_id="failed-command",
+    )
+    assert failed.status_code == 504
+    assert driver.read_last_commanded() == before
+
+
+def test_older_completion_cannot_overwrite_newer_success():
+    store = AssumedCommandStateStore(None)
+    older = store.begin("bed-room-air-conditioner")
+    newer = store.begin("bed-room-air-conditioner")
+    committed = store.commit(
+        "bed-room-air-conditioner", newer, "temperature", 26,
+        200, "newer-command",
+    )
+    discarded = store.commit(
+        "bed-room-air-conditioner", older, "temperature", 27,
+        100, "older-command",
+    )
+    assert committed["last_commanded"]["target_temperature"] == 26
+    assert discarded is None
+    assert store.snapshot("bed-room-air-conditioner") == committed
+
+
+def test_assumed_state_persists_timestamp_and_correlation(tmp_path):
+    path = tmp_path / "state" / "ir_last_commanded.json"
+    store = AssumedCommandStateStore(path)
+    generation = store.begin("bed-room-air-conditioner")
+    store.commit(
+        "bed-room-air-conditioner", generation, "temperature", 26,
+        123456, "persistent-command",
+    )
+    restored = AssumedCommandStateStore(path).snapshot(
+        "bed-room-air-conditioner"
+    )
+    assert restored == {
+        "last_commanded": {"target_temperature": 26},
+        "last_commanded_at": 123456,
+        "last_commanded_correlation_id": "persistent-command",
+    }
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_power_and_temperature_are_merged_independently(monkeypatch):
+    fake = FakeIRClient()
+    driver = _configure(monkeypatch, fake)
+    ir.execute_command(
+        "bed-room-air-conditioner",
+        ir.IRCommandRequest(command="power_off"),
+        correlation_id="power-command",
+    )
+    driver._last_attempt = 0
+    result = ir.execute_command(
+        "bed-room-air-conditioner",
+        ir.IRCommandRequest(command="temperature_26"),
+        correlation_id="temperature-command",
+    )
+    assert result["last_commanded"] == {
+        "power": 0,
+        "target_temperature": 26,
+    }
+    assert result["last_commanded_correlation_id"] == "temperature-command"
 
 
 def test_invalid_command_audit_has_zero_outbound_attempts(monkeypatch, capsys):

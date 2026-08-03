@@ -55,10 +55,11 @@ def emit(
     outbound_attempts: int,
     retry_count: int,
     request_id: str,
+    timestamp: int | None = None,
 ) -> None:
     record = {
         "event": "ir_command_audit",
-        "timestamp": int(time.time()),
+        "timestamp": int(timestamp if timestamp is not None else time.time()),
         "authenticated_user": stable_user_identifier(user),
         "device": safe_identifier(device_id, "invalid_device"),
         "command_type": safe_identifier(command_type, "unknown"),

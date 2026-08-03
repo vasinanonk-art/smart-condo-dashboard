@@ -93,6 +93,8 @@
           device.state = device.state || {};
           device.state.ir_diagnostics = device.state.ir_diagnostics || {};
           device.state.ir_diagnostics.last_commanded = payload.last_commanded;
+          device.state.ir_diagnostics.last_commanded_at = payload.last_commanded_at || null;
+          device.state.ir_diagnostics.last_commanded_correlation_id = payload.last_commanded_correlation_id || null;
           device.state.ir_diagnostics.physical_state_confirmed = false;
         }
         UI.toast('Command sent; IR state is not physically confirmed.', 'success');
@@ -142,6 +144,8 @@
             bedroomAc.state = bedroomAc.state || {};
             bedroomAc.state.ir_diagnostics = bedroomAc.state.ir_diagnostics || {};
             bedroomAc.state.ir_diagnostics.last_commanded = statusPayload.last_commanded || {};
+            bedroomAc.state.ir_diagnostics.last_commanded_at = statusPayload.last_commanded_at || null;
+            bedroomAc.state.ir_diagnostics.last_commanded_correlation_id = statusPayload.last_commanded_correlation_id || null;
             bedroomAc.state.ir_diagnostics.physical_state_confirmed = false;
           }
         } catch (_error) {

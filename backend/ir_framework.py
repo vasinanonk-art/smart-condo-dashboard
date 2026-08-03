@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from backend import app as app_module
 from backend import ir_command_audit
+from backend.ir_command_state import AssumedCommandStateStore
 
 app = app_module.app
 ROOT = Path(__file__).resolve().parents[1]
@@ -222,9 +223,10 @@ class TuyaIRACDriver(IRDriver):
         self._last_error: str | None = None
         self._last_response: str | None = None
         self._last_latency_ms: float | None = None
-        self._last_commanded: Dict[str, Any] = {}
+        self._state_store = AssumedCommandStateStore()
         self._last_outbound_attempts = 0
         self._last_result_code = "not_attempted"
+        self._last_commanded_at: int | None = None
 
     def initialize(self) -> None:
         self._initialized = True
@@ -247,6 +249,7 @@ class TuyaIRACDriver(IRDriver):
 
     def health(self) -> Dict[str, Any]:
         ready = bool(self._initialized and self._configured())
+        record = self._state_store.snapshot("bed-room-air-conditioner")
         return {
             "online": None,
             "authenticated": ready,
@@ -255,7 +258,11 @@ class TuyaIRACDriver(IRDriver):
             "driver_version": self.driver_version,
             "last_response": self._last_response,
             "last_command_latency_ms": self._last_latency_ms,
-            "last_commanded": copy.deepcopy(self._last_commanded),
+            "last_commanded": copy.deepcopy(record.get("last_commanded") or {}),
+            "last_commanded_at": record.get("last_commanded_at"),
+            "last_commanded_correlation_id": record.get(
+                "last_commanded_correlation_id"
+            ),
         }
 
     def supports(self, profile: "IRProfile") -> bool:
@@ -281,7 +288,7 @@ class TuyaIRACDriver(IRDriver):
                 self._last_attempt = now
             if command.code == "power" and command.value in (0, 1):
                 value = int(command.value)
-                state_key = "power"
+                command_type = "power"
             elif (
                 command.code == "temp"
                 and isinstance(command.value, int)
@@ -289,11 +296,12 @@ class TuyaIRACDriver(IRDriver):
                 and 18 <= command.value <= 30
             ):
                 value = command.value
-                state_key = "target_temperature"
+                command_type = "temperature"
             else:
                 raise IRDriverUnavailable("tuya_ir_command_not_allowed")
             from backend import tuya_cloud_readonly
 
+            generation = self._state_store.begin(command.device_id)
             started = time.monotonic()
             try:
                 def record_post_attempt() -> None:
@@ -306,8 +314,18 @@ class TuyaIRACDriver(IRDriver):
                 )
                 if payload.get("result") is not True:
                     raise IRDriverUnavailable("tuya_ir_command_rejected")
-                self._last_commanded[state_key] = value
-                self._last_commanded["updated_at"] = int(time.time())
+                commanded_at = int(time.time())
+                committed = self._state_store.commit(
+                    command.device_id,
+                    generation,
+                    command_type,
+                    value,
+                    commanded_at,
+                    command.correlation_id,
+                )
+                if committed is None:
+                    raise IRDriverUnavailable("ir_assumed_state_superseded")
+                self._last_commanded_at = commanded_at
                 self._last_error = None
                 self._last_response = "sent"
                 self._last_result_code = "tuya_success"
@@ -336,25 +354,7 @@ class TuyaIRACDriver(IRDriver):
             self._send_lock.release()
 
     def read_last_commanded(self) -> Dict[str, Any]:
-        from backend import tuya_cloud_readonly
-
-        payload = tuya_cloud_readonly.configured_ir_client().ac_status()
-        result = payload.get("result")
-        if not isinstance(result, Mapping):
-            raise tuya_cloud_readonly.TuyaCloudError("tuya_ir_status_invalid")
-        state: Dict[str, Any] = {}
-        power = result.get("power")
-        temperature = result.get("temp")
-        if str(power) in {"0", "1"}:
-            state["power"] = int(power)
-        try:
-            parsed_temperature = int(temperature)
-        except (TypeError, ValueError):
-            parsed_temperature = 0
-        if 18 <= parsed_temperature <= 30:
-            state["target_temperature"] = parsed_temperature
-        state["retrieved_at"] = int(time.time())
-        return state
+        return self._state_store.snapshot("bed-room-air-conditioner")
 
 
 @dataclass(frozen=True)
@@ -838,7 +838,16 @@ def last_commanded_state(device_id: str) -> Dict[str, Any]:
     driver = DRIVERS.get(device.driver) if device else None
     if not isinstance(driver, TuyaIRACDriver):
         return {}
-    return copy.deepcopy(driver._last_commanded)
+    record = driver._state_store.snapshot(device_id)
+    return copy.deepcopy(record.get("last_commanded") or {})
+
+
+def last_commanded_record(device_id: str) -> Dict[str, Any]:
+    device = _device(device_id)
+    driver = DRIVERS.get(device.driver) if device else None
+    if not isinstance(driver, TuyaIRACDriver):
+        return {}
+    return driver._state_store.snapshot(device_id)
 
 
 def _public_device(device: IRDevice) -> Dict[str, Any]:
@@ -920,6 +929,7 @@ def _log_dispatch(
     http_status: int,
     outbound_attempts: int = 0,
     retry_count: int = 0,
+    audit_timestamp: int | None = None,
 ) -> None:
     ir_command_audit.emit(
         user=dispatch.authenticated_user,
@@ -933,6 +943,7 @@ def _log_dispatch(
         outbound_attempts=outbound_attempts,
         retry_count=retry_count,
         request_id=dispatch.correlation_id,
+        timestamp=audit_timestamp,
     )
 
 
@@ -1000,6 +1011,11 @@ def _execute_job(driver: IRDriver, job: QueuedCommand) -> Any:
                 http_status=200,
                 outbound_attempts=outbound_attempts,
                 retry_count=max(0, attempts - 1),
+                audit_timestamp=(
+                    driver._last_commanded_at
+                    if isinstance(driver, TuyaIRACDriver)
+                    else None
+                ),
             )
             response = {
                 "ok": True,
@@ -1011,8 +1027,15 @@ def _execute_job(driver: IRDriver, job: QueuedCommand) -> Any:
                 "updated_at": now,
             }
             if isinstance(driver, TuyaIRACDriver):
+                record = driver._state_store.snapshot(device_id)
                 response.update({
-                    "last_commanded": copy.deepcopy(driver._last_commanded),
+                    "last_commanded": copy.deepcopy(
+                        record.get("last_commanded") or {}
+                    ),
+                    "last_commanded_at": record.get("last_commanded_at"),
+                    "last_commanded_correlation_id": record.get(
+                        "last_commanded_correlation_id"
+                    ),
                     "physical_state_confirmed": False,
                     "latency_ms": driver._last_latency_ms,
                 })
@@ -1097,6 +1120,7 @@ def execute_command(
     correlation_id: str = "",
 ):
     started = time.monotonic()
+    correlation_id = ir_command_audit.correlation_id(correlation_id)
     requested_id = (
         command_or_request
         if isinstance(command_or_request, str)
@@ -1197,7 +1221,7 @@ def bedroom_ac_status():
             status_code=503,
         )
     try:
-        state = driver.read_last_commanded()
+        record = driver.read_last_commanded()
     except Exception:
         return JSONResponse(
             {"detail": "tuya_ir_status_unavailable"},
@@ -1205,7 +1229,11 @@ def bedroom_ac_status():
         )
     return {
         "device_id": "bed-room-air-conditioner",
-        "last_commanded": state,
+        "last_commanded": copy.deepcopy(record.get("last_commanded") or {}),
+        "last_commanded_at": record.get("last_commanded_at"),
+        "last_commanded_correlation_id": record.get(
+            "last_commanded_correlation_id"
+        ),
         "state_quality": "assumed",
         "physical_state_confirmed": False,
     }

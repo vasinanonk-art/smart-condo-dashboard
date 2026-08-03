@@ -198,6 +198,7 @@ def _ir_devices() -> list[Dict[str, Any]]:
                 capabilities = {}
             else:
                 reason = None
+            command_record = ir_framework.last_commanded_record(identity["id"])
             ir_diagnostics = {
                 "provider": smartlife.get("provider"),
                 "provider_detected": smartlife.get("provider_detected") is True,
@@ -234,7 +235,11 @@ def _ir_devices() -> list[Dict[str, Any]]:
                 "parent_id": smartlife_device.get("parent_id") if smartlife_device else None,
                 "controllable": control_ready,
                 "last_commanded": copy.deepcopy(
-                    ir_framework.last_commanded_state(identity["id"])
+                    command_record.get("last_commanded") or {}
+                ),
+                "last_commanded_at": command_record.get("last_commanded_at"),
+                "last_commanded_correlation_id": command_record.get(
+                    "last_commanded_correlation_id"
                 ),
                 "physical_state_confirmed": False,
             }
