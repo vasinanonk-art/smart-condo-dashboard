@@ -188,6 +188,16 @@ def _ir_devices() -> list[Dict[str, Any]]:
                 smartlife_device.get("supported_command_categories") or []
                 if smartlife_device else []
             )
+            control_ready = bool(
+                smartlife_device
+                and smartlife_device.get("online") is True
+                and runtime_status.get("healthy") is True
+            )
+            discovery_reason = reason
+            if not control_ready:
+                capabilities = {}
+            else:
+                reason = None
             ir_diagnostics = {
                 "provider": smartlife.get("provider"),
                 "provider_detected": smartlife.get("provider_detected") is True,
@@ -215,11 +225,18 @@ def _ir_devices() -> list[Dict[str, Any]]:
                     smartlife_device.get("device_id")
                     if smartlife_device else None
                 ),
-                "available_capabilities": copy.deepcopy(available_categories),
-                "discovery_reason": reason,
+                "available_capabilities": (
+                    ["power", "temperature"] if control_ready else
+                    copy.deepcopy(available_categories)
+                ),
+                "discovery_reason": discovery_reason,
                 "virtual": bool(smartlife_device and smartlife_device.get("virtual") is True),
                 "parent_id": smartlife_device.get("parent_id") if smartlife_device else None,
-                "controllable": False,
+                "controllable": control_ready,
+                "last_commanded": copy.deepcopy(
+                    ir_framework.last_commanded_state(identity["id"])
+                ),
+                "physical_state_confirmed": False,
             }
         if is_provider_neutral:
             online = smartlife_device.get("online") if smartlife_device else None
@@ -243,6 +260,12 @@ def _ir_devices() -> list[Dict[str, Any]]:
                 (item.get("runtime_status") or {}).get("state_quality")
                 or "unknown"
             )
+        projected_state = {"ir_diagnostics": ir_diagnostics}
+        if is_provider_neutral and t3_hub:
+            projected_state.update({
+                "temperature_c": t3_hub.get("state", {}).get("temperature_c"),
+                "humidity_percent": t3_hub.get("state", {}).get("humidity_percent"),
+            })
         devices.append(_device(
             identity["id"],
             identity["room"],
@@ -251,7 +274,7 @@ def _ir_devices() -> list[Dict[str, Any]]:
             online=online,
             health=health,
             capabilities=capabilities,
-            state={"ir_diagnostics": ir_diagnostics},
+            state=projected_state,
             state_quality=state_quality,
             reason=reason,
         ))

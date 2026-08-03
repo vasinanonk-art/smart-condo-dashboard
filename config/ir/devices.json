@@ -36,9 +36,9 @@
       "display_name": "Bed Room Air Conditioner",
       "room": "bed_room",
       "type": "air_conditioner",
-      "driver": "unsupported",
-      "profile": "unconfigured",
-      "capabilities": [],
+      "driver": "tuya_ir_ac",
+      "profile": "t3_sharp_ac",
+      "capabilities": ["power", "temperature"],
       "enabled": true
     }
   ]

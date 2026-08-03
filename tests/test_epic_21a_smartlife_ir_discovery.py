@@ -280,5 +280,7 @@ def test_registry_configuration_no_longer_contains_t3_placeholder():
         item for item in payload["devices"]
         if item["id"] == "bed-room-air-conditioner"
     )
-    assert bedroom["driver"] == "unsupported"
+    assert bedroom["driver"] == "tuya_ir_ac"
+    assert bedroom["profile"] == "t3_sharp_ac"
+    assert bedroom["capabilities"] == ["power", "temperature"]
     assert "t3_ir" not in json.dumps(payload)

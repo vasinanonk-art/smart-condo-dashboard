@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "id": "t3_sharp_ac",
+  "brand": "Sharp",
+  "model": "Configured Tuya IR remote",
+  "device_type": "air_conditioner",
+  "capabilities": [
+    {
+      "id": "power",
+      "type": "button",
+      "label": "Power",
+      "icon": "power",
+      "group": "main",
+      "confirm": true
+    },
+    {
+      "id": "temperature",
+      "type": "range",
+      "label": "Target temperature",
+      "icon": "thermometer",
+      "group": "main",
+      "confirm": false,
+      "min": 18,
+      "max": 30,
+      "step": 1,
+      "unit": "°C"
+    }
+  ],
+  "commands": {
+    "power_off": {"capability": "power", "label": "Power Off", "icon": "power", "code": "power", "value": 0},
+    "power_on": {"capability": "power", "label": "Power On", "icon": "power", "code": "power", "value": 1},
+    "temperature_18": {"capability": "temperature", "label": "18°C", "icon": "thermometer", "code": "temp", "value": 18},
+    "temperature_19": {"capability": "temperature", "label": "19°C", "icon": "thermometer", "code": "temp", "value": 19},
+    "temperature_20": {"capability": "temperature", "label": "20°C", "icon": "thermometer", "code": "temp", "value": 20},
+    "temperature_21": {"capability": "temperature", "label": "21°C", "icon": "thermometer", "code": "temp", "value": 21},
+    "temperature_22": {"capability": "temperature", "label": "22°C", "icon": "thermometer", "code": "temp", "value": 22},
+    "temperature_23": {"capability": "temperature", "label": "23°C", "icon": "thermometer", "code": "temp", "value": 23},
+    "temperature_24": {"capability": "temperature", "label": "24°C", "icon": "thermometer", "code": "temp", "value": 24},
+    "temperature_25": {"capability": "temperature", "label": "25°C", "icon": "thermometer", "code": "temp", "value": 25},
+    "temperature_26": {"capability": "temperature", "label": "26°C", "icon": "thermometer", "code": "temp", "value": 26},
+    "temperature_27": {"capability": "temperature", "label": "27°C", "icon": "thermometer", "code": "temp", "value": 27},
+    "temperature_28": {"capability": "temperature", "label": "28°C", "icon": "thermometer", "code": "temp", "value": 28},
+    "temperature_29": {"capability": "temperature", "label": "29°C", "icon": "thermometer", "code": "temp", "value": 29},
+    "temperature_30": {"capability": "temperature", "label": "30°C", "icon": "thermometer", "code": "temp", "value": 30}
+  },
+  "metadata": {
+    "transport": "tuya_ir_ac",
+    "state_feedback": false,
+    "verified_controls": ["power", "temperature"]
+  }
+}

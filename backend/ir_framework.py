@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Mapping
 
-from fastapi import Body
+from fastapi import Body, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -54,6 +54,14 @@ class IRTransientError(RuntimeError):
     pass
 
 
+class IRCommandBusy(RuntimeError):
+    pass
+
+
+class IRRateLimited(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class IRDispatchCommand:
     device_id: str
@@ -61,6 +69,8 @@ class IRDispatchCommand:
     capability: str
     code: str
     timeout: float
+    value: str | int | float | bool | None = None
+    authenticated_user: str = "unknown"
 
 
 class IRDriver(ABC):
@@ -196,6 +206,147 @@ class TapoIRDriver(IRDriver):
             self._last_latency_ms = round((time.monotonic() - started) * 1000, 1)
 
 
+class TuyaIRACDriver(IRDriver):
+    """Verified T3 cloud driver limited to Bedroom AC power and temperature."""
+
+    driver_version = "1"
+    max_attempts = 1
+    reject_when_busy = True
+    minimum_interval_sec = 1.0
+
+    def __init__(self) -> None:
+        self._initialized = False
+        self._send_lock = threading.Lock()
+        self._rate_lock = threading.Lock()
+        self._last_attempt = 0.0
+        self._last_error: str | None = None
+        self._last_response: str | None = None
+        self._last_latency_ms: float | None = None
+        self._last_commanded: Dict[str, Any] = {}
+
+    def initialize(self) -> None:
+        self._initialized = True
+
+    def shutdown(self) -> None:
+        self._initialized = False
+
+    @staticmethod
+    def _configured() -> bool:
+        required = (
+            "TUYA_CLOUD_ACCESS_ID",
+            "TUYA_CLOUD_ACCESS_SECRET",
+            "TUYA_CLOUD_DEVICE_ID",
+        )
+        return bool(
+            os.getenv("SMARTLIFE_IR_PROVIDER", "").strip().casefold()
+            == "smartlife_cloud"
+            and all(os.getenv(key, "").strip() for key in required)
+        )
+
+    def health(self) -> Dict[str, Any]:
+        ready = bool(self._initialized and self._configured())
+        return {
+            "online": None,
+            "authenticated": ready,
+            "ready": ready,
+            "last_error": self._last_error if ready else "tuya_cloud_not_configured",
+            "driver_version": self.driver_version,
+            "last_response": self._last_response,
+            "last_command_latency_ms": self._last_latency_ms,
+            "last_commanded": copy.deepcopy(self._last_commanded),
+        }
+
+    def supports(self, profile: "IRProfile") -> bool:
+        return bool(
+            self.health()["ready"]
+            and profile.metadata.get("transport") == "tuya_ir_ac"
+            and set(profile.commands) == {
+                "power_off", "power_on",
+                *(f"temperature_{value}" for value in range(18, 31)),
+            }
+        )
+
+    def send(self, command: IRDispatchCommand) -> None:
+        if not self._send_lock.acquire(blocking=False):
+            raise IRCommandBusy("ir_command_busy")
+        try:
+            now = time.monotonic()
+            with self._rate_lock:
+                if now - self._last_attempt < self.minimum_interval_sec:
+                    raise IRRateLimited("ir_command_rate_limited")
+                self._last_attempt = now
+            if command.code == "power" and command.value in (0, 1):
+                value = int(command.value)
+                state_key = "power"
+            elif (
+                command.code == "temp"
+                and isinstance(command.value, int)
+                and not isinstance(command.value, bool)
+                and 18 <= command.value <= 30
+            ):
+                value = command.value
+                state_key = "target_temperature"
+            else:
+                raise IRDriverUnavailable("tuya_ir_command_not_allowed")
+            from backend import tuya_cloud_readonly
+
+            started = time.monotonic()
+            try:
+                payload = tuya_cloud_readonly.configured_ir_client().send_ac_command(
+                    command.code,
+                    value,
+                )
+                if payload.get("result") is not True:
+                    raise IRDriverUnavailable("tuya_ir_command_rejected")
+                self._last_commanded[state_key] = value
+                self._last_commanded["updated_at"] = int(time.time())
+                self._last_error = None
+                self._last_response = "sent"
+            except Exception as exc:
+                self._last_error = (
+                    exc.reason
+                    if isinstance(exc, tuya_cloud_readonly.TuyaCloudError)
+                    else type(exc).__name__
+                )
+                self._last_response = "failed"
+                if (
+                    isinstance(exc, tuya_cloud_readonly.TuyaCloudError)
+                    and exc.reason == "tuya_cloud_timeout"
+                ):
+                    raise TimeoutError("tuya_cloud_timeout") from exc
+                if isinstance(exc, tuya_cloud_readonly.TuyaCloudError):
+                    raise IRDriverUnavailable(exc.reason) from exc
+                raise
+            finally:
+                self._last_latency_ms = round(
+                    (time.monotonic() - started) * 1000,
+                    1,
+                )
+        finally:
+            self._send_lock.release()
+
+    def read_last_commanded(self) -> Dict[str, Any]:
+        from backend import tuya_cloud_readonly
+
+        payload = tuya_cloud_readonly.configured_ir_client().ac_status()
+        result = payload.get("result")
+        if not isinstance(result, Mapping):
+            raise tuya_cloud_readonly.TuyaCloudError("tuya_ir_status_invalid")
+        state: Dict[str, Any] = {}
+        power = result.get("power")
+        temperature = result.get("temp")
+        if str(power) in {"0", "1"}:
+            state["power"] = int(power)
+        try:
+            parsed_temperature = int(temperature)
+        except (TypeError, ValueError):
+            parsed_temperature = 0
+        if 18 <= parsed_temperature <= 30:
+            state["target_temperature"] = parsed_temperature
+        state["retrieved_at"] = int(time.time())
+        return state
+
+
 @dataclass(frozen=True)
 class IRCommandDefinition:
     id: str
@@ -288,8 +439,32 @@ class DeviceCommandQueue:
             if status is not None:
                 status["pending_queue"] = self.pending
 
-    def submit(self, job: QueuedCommand, executor: Callable[[QueuedCommand], Any]) -> Any:
-        owner, _ = self.put(job)
+    def submit(
+        self,
+        job: QueuedCommand,
+        executor: Callable[[QueuedCommand], Any],
+        *,
+        reject_when_busy: bool = False,
+    ) -> Any:
+        if reject_when_busy:
+            with self._lock:
+                if self._draining or self._pending:
+                    _log_dispatch(
+                        job.dispatch,
+                        0.0,
+                        "rejected",
+                        "ir_command_busy",
+                    )
+                    return JSONResponse(
+                        {"detail": "ir_command_busy"},
+                        status_code=409,
+                    )
+                self._pending.append(job)
+                self._draining = True
+                owner = True
+            self._publish_pending()
+        else:
+            owner, _ = self.put(job)
         if owner:
             while True:
                 current = self.pop()
@@ -641,6 +816,14 @@ def _public_status(status: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def last_commanded_state(device_id: str) -> Dict[str, Any]:
+    device = _device(device_id)
+    driver = DRIVERS.get(device.driver) if device else None
+    if not isinstance(driver, TuyaIRACDriver):
+        return {}
+    return copy.deepcopy(driver._last_commanded)
+
+
 def _public_device(device: IRDevice) -> Dict[str, Any]:
     reason = None
     profile = None
@@ -718,10 +901,12 @@ def _log_dispatch(
     error_reason: str | None,
 ) -> None:
     _COMMAND_LOG.info(
-        "ir_command timestamp=%d device=%s command=%s duration_ms=%.1f result=%s error_reason=%s",
+        "ir_command timestamp=%d user=%s device=%s command=%s value=%s duration_ms=%.1f result=%s error_reason=%s",
         int(time.time()),
+        re.sub(r"[^A-Za-z0-9_.@-]", "_", dispatch.authenticated_user)[:64],
         dispatch.device_id,
         dispatch.command_id,
+        str(dispatch.value)[:16] if dispatch.value is not None else "none",
         duration_ms,
         result,
         error_reason or "none",
@@ -751,7 +936,8 @@ def _execute_job(driver: IRDriver, job: QueuedCommand) -> Any:
     started = time.monotonic()
     with _RUNTIME_LOCK:
         _RUNTIME[device_id]["last_command"] = job.dispatch.command_id
-    for attempts in (1, 2):
+    maximum_attempts = max(1, min(2, int(getattr(driver, "max_attempts", 2))))
+    for attempts in range(1, maximum_attempts + 1):
         try:
             driver.send(job.dispatch)
             now = int(time.time())
@@ -764,7 +950,7 @@ def _execute_job(driver: IRDriver, job: QueuedCommand) -> Any:
                     "last_error": None,
                 })
             _log_dispatch(job.dispatch, (time.monotonic() - started) * 1000, "sent", None)
-            return {
+            response = {
                 "ok": True,
                 "device_id": device_id,
                 "command": job.dispatch.command_id,
@@ -773,8 +959,34 @@ def _execute_job(driver: IRDriver, job: QueuedCommand) -> Any:
                 "state_quality": "assumed",
                 "updated_at": now,
             }
+            if isinstance(driver, TuyaIRACDriver):
+                response.update({
+                    "last_commanded": copy.deepcopy(driver._last_commanded),
+                    "physical_state_confirmed": False,
+                    "latency_ms": driver._last_latency_ms,
+                })
+            return response
+        except IRRateLimited:
+            _log_dispatch(
+                job.dispatch,
+                (time.monotonic() - started) * 1000,
+                "rejected",
+                "ir_command_rate_limited",
+            )
+            return JSONResponse(
+                {"detail": "ir_command_rate_limited", "retry_after_sec": 1},
+                status_code=429,
+            )
+        except IRCommandBusy:
+            _log_dispatch(
+                job.dispatch,
+                (time.monotonic() - started) * 1000,
+                "rejected",
+                "ir_command_busy",
+            )
+            return JSONResponse({"detail": "ir_command_busy"}, status_code=409)
         except (TimeoutError, IRTransientError):
-            if attempts == 1:
+            if attempts < maximum_attempts:
                 with _RUNTIME_LOCK:
                     _RUNTIME[device_id]["retry_count"] += 1
                 continue
@@ -818,6 +1030,7 @@ def execute_command(
     device_id: str,
     command_or_request: str | IRCommandRequest,
     timeout: float | None = None,
+    authenticated_user: str = "unknown",
 ):
     started = time.monotonic()
     requested_id = (
@@ -856,10 +1069,13 @@ def execute_command(
         command.capability,
         command.code,
         timeout or DEFAULT_TIMEOUT_SEC,
+        command.value,
+        authenticated_user,
     )
     return _queue(device.id).submit(
         QueuedCommand(dispatch, profile),
         lambda job: _execute_job(driver, job),
+        reject_when_busy=bool(getattr(driver, "reject_when_busy", False)),
     )
 
 
@@ -870,9 +1086,43 @@ def ir_devices() -> Dict[str, Any]:
 
 
 @app.post("/api/ir/{device_id}/command")
-def ir_command(device_id: str, payload: IRCommandRequest = Body(...)):
-    return execute_command(device_id, payload)
+def ir_command(
+    device_id: str,
+    request: Request,
+    payload: IRCommandRequest = Body(...),
+):
+    return execute_command(
+        device_id,
+        payload,
+        authenticated_user=str(
+            getattr(request.state, "dashboard_user", None) or "unknown"
+        ),
+    )
+
+
+@app.get("/api/ir/bed-room-air-conditioner/status")
+def bedroom_ac_status():
+    driver = DRIVERS.get("tuya_ir_ac")
+    if not isinstance(driver, TuyaIRACDriver) or not driver.health()["ready"]:
+        return JSONResponse(
+            {"detail": "ir_driver_unavailable"},
+            status_code=503,
+        )
+    try:
+        state = driver.read_last_commanded()
+    except Exception:
+        return JSONResponse(
+            {"detail": "tuya_ir_status_unavailable"},
+            status_code=503,
+        )
+    return {
+        "device_id": "bed-room-air-conditioner",
+        "last_commanded": state,
+        "state_quality": "assumed",
+        "physical_state_confirmed": False,
+    }
 
 
 register_driver("tapo_ir", TapoIRDriver())
+register_driver("tuya_ir_ac", TuyaIRACDriver())
 atexit.register(shutdown_drivers)

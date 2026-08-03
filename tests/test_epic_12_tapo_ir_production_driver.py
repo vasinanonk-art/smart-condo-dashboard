@@ -206,9 +206,27 @@ def test_timeout_retries_once_and_logs_one_final_failure(caplog, monkeypatch):
     assert "result=timeout" in messages[0]
 
 
-def test_default_registry_enables_no_unverified_ir_commands():
+def test_default_registry_enables_no_unverified_ir_commands(monkeypatch):
+    for key in (
+        "SMARTLIFE_IR_PROVIDER",
+        "TUYA_CLOUD_ACCESS_ID",
+        "TUYA_CLOUD_ACCESS_SECRET",
+        "TUYA_CLOUD_DEVICE_ID",
+    ):
+        monkeypatch.delenv(key, raising=False)
     devices = ir.public_devices()
 
     assert devices
-    assert all(device["capabilities"] == [] for device in devices)
+    bedroom = next(
+        device for device in devices
+        if device["device"]["id"] == "bed-room-air-conditioner"
+    )
+    assert {item["id"] for item in bedroom["capabilities"]} == {
+        "power", "temperature",
+    }
+    assert all(
+        device["capabilities"] == []
+        for device in devices
+        if device is not bedroom
+    )
     assert all(device["controllable"] is False for device in devices)

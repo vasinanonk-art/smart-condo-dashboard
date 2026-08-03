@@ -219,7 +219,9 @@ def test_cloud_inventory_normalizes_specification_and_redacts(monkeypatch):
         assert secret not in rendered
 
 
-def test_missing_dp_metadata_keeps_inventory_non_controllable(monkeypatch):
+def test_missing_dp_metadata_keeps_inventory_non_controllable_without_verified_driver(
+    monkeypatch,
+):
     _configure(monkeypatch)
 
     class FakeClient:
@@ -252,6 +254,21 @@ def test_missing_dp_metadata_keeps_inventory_non_controllable(monkeypatch):
         household_device_registry.tapo_ir_local_bridge,
         "existing_ir_remote_inventory",
         lambda: {"bridge_online": None, "remotes": []},
+    )
+    public_devices = household_device_registry.ir_framework.public_devices
+    monkeypatch.setattr(
+        household_device_registry.ir_framework,
+        "public_devices",
+        lambda: [
+            {
+                **item,
+                "runtime_status": {
+                    **(item.get("runtime_status") or {}),
+                    "healthy": False,
+                },
+            }
+            for item in public_devices()
+        ],
     )
     bedroom = next(
         item for item in household_device_registry._ir_devices()

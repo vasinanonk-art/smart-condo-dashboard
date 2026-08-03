@@ -4,7 +4,7 @@
   window.__householdDevicesInstalled = true;
 
   const UI = window.HouseholdUI;
-  const state = {devices:[], loading:false};
+  const state = {devices:[], loading:false, inFlight:new Set()};
   const safe = UI.safe;
   const status = device => device.online === true ? 'online' : device.online === false ? 'offline' : 'unknown';
   const disabledButton = (label, reason) => UI.actionButton({label, disabled:true, reason});
@@ -51,7 +51,10 @@
       const expected = Math.floor((Number(capability.max) - Number(capability.min)) / Number(capability.step)) + 1;
       const available = commands.filter(command => Number.isFinite(Number(command.value)));
       if (available.length !== expected) return '';
-      return `<label class="household-ir-field"><span>${safe(capability.label)} <output>${safe(capability.min)}${safe(capability.unit || '')}</output></span><input type="range" min="${safe(capability.min)}" max="${safe(capability.max)}" step="${safe(capability.step)}" value="${safe(capability.min)}" data-household-ir-device="${safe(device.id)}" data-household-ir-capability="${safe(capability.id)}" data-household-ir-unit="${safe(capability.unit || '')}" data-household-ir-confirm="${capability.confirm ? 'true' : 'false'}"></label>`;
+      const commanded = Number(device.state?.ir_diagnostics?.last_commanded?.target_temperature);
+      const selected = Number.isInteger(commanded) && commanded >= capability.min && commanded <= capability.max
+        ? commanded : capability.min;
+      return `<label class="household-ir-field"><span>${safe(capability.label)} <output>${safe(selected)}${safe(capability.unit || '')}</output></span><input type="range" min="${safe(capability.min)}" max="${safe(capability.max)}" step="${safe(capability.step)}" value="${safe(selected)}" data-household-ir-device="${safe(device.id)}" data-household-ir-capability="${safe(capability.id)}" data-household-ir-unit="${safe(capability.unit || '')}" data-household-ir-confirm="${capability.confirm ? 'true' : 'false'}"></label>`;
     }
     return commands.map(command => irCommandButton(device, capability, command)).join('');
   }
@@ -71,20 +74,34 @@
   function bindIrCommands(host) {
     const send = async (control, body) => {
       if (control.dataset.householdIrConfirm === 'true' && !window.confirm('Send this IR command?')) return;
-      control.disabled = true;
+      const target = control.dataset.householdIrDevice;
+      if (!target || state.inFlight.has(target)) return;
+      state.inFlight.add(target);
+      const controls = [...host.querySelectorAll('[data-household-ir-device]')]
+        .filter(item => item.dataset.householdIrDevice === target);
+      controls.forEach(item => { item.disabled = true; });
       try {
-        const response = await fetch(`/api/ir/${encodeURIComponent(control.dataset.householdIrDevice)}/command`, {
+        const response = await fetch(`/api/ir/${encodeURIComponent(target)}/command`, {
           method:'POST',
           headers:{'Content-Type':'application/json'},
           body:JSON.stringify(body),
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.detail || 'IR command failed');
-        UI.toast('IR command sent', 'success');
+        const device = state.devices.find(item => item.id === target);
+        if (device && payload.last_commanded) {
+          device.state = device.state || {};
+          device.state.ir_diagnostics = device.state.ir_diagnostics || {};
+          device.state.ir_diagnostics.last_commanded = payload.last_commanded;
+          device.state.ir_diagnostics.physical_state_confirmed = false;
+        }
+        UI.toast('Command sent; IR state is not physically confirmed.', 'success');
+        render();
       } catch (error) {
         UI.toast(error.message, 'error');
       } finally {
-        control.disabled = false;
+        state.inFlight.delete(target);
+        controls.forEach(item => { item.disabled = false; });
       }
     };
     host?.querySelectorAll('[data-household-ir-command]').forEach(button => button.addEventListener('click', () => {
@@ -113,6 +130,24 @@
       if (!response.ok) throw new Error('device_registry_unavailable');
       const payload = await response.json();
       state.devices = payload.devices || [];
+      const bedroomAc = state.devices.find(device => (
+        device.id === 'bed-room-air-conditioner'
+        && Array.isArray(device.capabilities?.ir)
+      ));
+      if (bedroomAc) {
+        try {
+          const statusResponse = await fetch('/api/ir/bed-room-air-conditioner/status');
+          if (statusResponse.ok) {
+            const statusPayload = await statusResponse.json();
+            bedroomAc.state = bedroomAc.state || {};
+            bedroomAc.state.ir_diagnostics = bedroomAc.state.ir_diagnostics || {};
+            bedroomAc.state.ir_diagnostics.last_commanded = statusPayload.last_commanded || {};
+            bedroomAc.state.ir_diagnostics.physical_state_confirmed = false;
+          }
+        } catch (_error) {
+          // The registry remains usable when the explicit cloud status read fails.
+        }
+      }
       render();
     } catch (error) {
       console.warn('Household device registry unavailable:', error.message);
@@ -149,13 +184,26 @@
           Number.isFinite(device.state?.humidity_percent) ? `${device.state.humidity_percent.toFixed(0)}% humidity` : '',
         ].filter(Boolean).join(' · ')
       : '';
+    const bedroomAcSummary = device.id === 'bed-room-air-conditioner'
+      ? [
+          Number.isFinite(device.state?.temperature_c) ? `Room ${device.state.temperature_c.toFixed(1)} °C` : '',
+          Number.isFinite(device.state?.humidity_percent) ? `${device.state.humidity_percent.toFixed(0)}% humidity` : '',
+          device.state?.ir_diagnostics?.last_commanded?.power === 1 ? 'Last commanded: On' : '',
+          device.state?.ir_diagnostics?.last_commanded?.power === 0 ? 'Last commanded: Off' : '',
+          Number.isInteger(device.state?.ir_diagnostics?.last_commanded?.target_temperature)
+            ? `Target ${device.state.ir_diagnostics.last_commanded.target_temperature} °C` : '',
+          'IR state not physically confirmed',
+        ].filter(Boolean).join(' · ')
+      : '';
     const virtualSummary = device.state?.ir_diagnostics?.provider === 'smartlife_cloud'
-      && device.category === 'climate' ? 'Virtual Device · Controls unavailable' : '';
+      && device.category === 'climate'
+      && device.state?.ir_diagnostics?.controllable !== true
+      ? 'Virtual Device · Controls unavailable' : '';
     return UI.deviceCard({
       id:device.id, title:device.display_name,
       room:device.room === 'bed_room' ? 'Bed Room' : 'Living Room',
       status:status(device), quality:device.state_quality,
-      state:sensorSummary || virtualSummary || stateText, warning:userReason(device),
+      state:sensorSummary || bedroomAcSummary || virtualSummary || stateText, warning:userReason(device),
       actions:controls, details,
     });
   }
@@ -272,5 +320,6 @@
     originalRenderPage(page);
     render();
   };
+  window.DashboardHouseholdDevices = Object.freeze({bindIrCommands, irActions});
   load();
 })();
