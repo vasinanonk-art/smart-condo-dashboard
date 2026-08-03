@@ -1,10 +1,18 @@
-import logging
+import json
 import threading
 import time
 
 import pytest
 
 from backend import ir_framework as ir
+
+
+def _audit_records(capsys):
+    return [
+        json.loads(line.split(" ", 1)[1])
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("ir_command_audit ")
+    ]
 
 
 def _bridge_status(*, online=True, error=None):
@@ -126,7 +134,7 @@ def test_authentication_failure_and_offline_bridge_are_not_ready():
     assert health["last_error"] == "AuthenticationError"
 
 
-def test_command_logging_is_structured_and_never_contains_ir_code(caplog, monkeypatch):
+def test_command_logging_is_structured_and_never_contains_ir_code(capsys, monkeypatch):
     driver = ir.TapoIRDriver(lambda: _bridge_status())
     driver.register_verified_sender(lambda code, timeout: None)
     driver.initialize()
@@ -140,40 +148,38 @@ def test_command_logging_is_structured_and_never_contains_ir_code(caplog, monkey
     })
     job = ir.QueuedCommand(_dispatch("never-log-this-code"), _profile())
 
-    with caplog.at_level(logging.INFO, logger="smart_condo.ir.command"):
-        result = ir._execute_job(driver, job)
+    result = ir._execute_job(driver, job)
 
     assert result["ok"] is True
-    message = caplog.messages[-1]
-    assert "device=living-room-tv" in message
-    assert "command=power" in message
-    assert "duration_ms=" in message
-    assert "result=sent" in message
-    assert "error_reason=none" in message
-    assert "never-log-this-code" not in caplog.text
+    records = _audit_records(capsys)
+    assert len(records) == 1
+    assert records[0]["device"] == "living-room-tv"
+    assert records[0]["command_type"] == "power"
+    assert records[0]["latency_ms"] >= 0
+    assert records[0]["outcome"] == "success"
+    assert "never-log-this-code" not in json.dumps(records)
 
 
-def test_rejected_command_is_logged_once_with_untrusted_values_redacted(caplog, monkeypatch):
+def test_rejected_command_is_logged_once_with_untrusted_values_redacted(capsys, monkeypatch):
     monkeypatch.setattr(ir, "_device", lambda device_id: None)
 
-    with caplog.at_level(logging.INFO, logger="smart_condo.ir.command"):
-        response = ir.execute_command(
-            "invalid device/account@example.test",
-            ir.IRCommandRequest(command="invalid command/token-value"),
-        )
+    response = ir.execute_command(
+        "invalid device/account@example.test",
+        ir.IRCommandRequest(command="invalid command/token-value"),
+    )
 
     assert response.status_code == 404
-    messages = [message for message in caplog.messages if message.startswith("ir_command ")]
-    assert len(messages) == 1
-    assert "device=invalid_device" in messages[0]
-    assert "command=invalid_command" in messages[0]
-    assert "result=rejected" in messages[0]
-    assert "error_reason=ir_device_not_found" in messages[0]
-    assert "example.test" not in caplog.text
-    assert "token-value" not in caplog.text
+    records = _audit_records(capsys)
+    assert len(records) == 1
+    assert records[0]["device"] == "invalid_device"
+    assert records[0]["command_type"] == "invalid_command"
+    assert records[0]["outcome"] == "rejected"
+    assert records[0]["result_code"] == "ir_device_not_found"
+    assert "example.test" not in json.dumps(records)
+    assert "token-value" not in json.dumps(records)
 
 
-def test_timeout_retries_once_and_logs_one_final_failure(caplog, monkeypatch):
+def test_timeout_retries_once_and_logs_one_final_failure(capsys, monkeypatch):
     attempts = 0
 
     def timeout_sender(code, timeout):
@@ -195,15 +201,16 @@ def test_timeout_retries_once_and_logs_one_final_failure(caplog, monkeypatch):
     })
     job = ir.QueuedCommand(_dispatch(), _profile())
 
-    with caplog.at_level(logging.INFO, logger="smart_condo.ir.command"):
-        result = ir._execute_job(driver, job)
+    result = ir._execute_job(driver, job)
 
     assert result.status_code == 504
     assert attempts == 2
     assert ir._RUNTIME["living-room-tv"]["retry_count"] == 1
-    messages = [message for message in caplog.messages if message.startswith("ir_command ")]
-    assert len(messages) == 1
-    assert "result=timeout" in messages[0]
+    records = _audit_records(capsys)
+    assert len(records) == 1
+    assert records[0]["outcome"] == "failed"
+    assert records[0]["result_code"] == "ir_command_timeout"
+    assert records[0]["retry_count"] == 1
 
 
 def test_default_registry_enables_no_unverified_ir_commands(monkeypatch):

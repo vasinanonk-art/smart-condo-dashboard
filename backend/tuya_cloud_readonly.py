@@ -12,7 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 
 _REGION_ENDPOINTS = {"sg": "https://openapi-sg.iotbing.com"}
@@ -303,7 +303,13 @@ class TuyaCloudIRACClient(TuyaCloudReadOnlyClient):
             self._token(),
         )
 
-    def send_ac_command(self, code: str, value: int) -> Mapping[str, Any]:
+    def send_ac_command(
+        self,
+        code: str,
+        value: int,
+        *,
+        on_post_attempt: Callable[[], None] | None = None,
+    ) -> Mapping[str, Any]:
         if code not in self._COMMAND_VALUES or value not in self._COMMAND_VALUES[code]:
             raise TuyaCloudError("tuya_ir_command_not_allowed")
         remote_id = self._verified_air_remote_id()
@@ -312,6 +318,8 @@ class TuyaCloudIRACClient(TuyaCloudReadOnlyClient):
             {"code": code, "value": value},
             separators=(",", ":"),
         ).encode("utf-8")
+        if on_post_attempt is not None:
+            on_post_attempt()
         return self._raw_request("POST", path, self._token(), body)
 
 

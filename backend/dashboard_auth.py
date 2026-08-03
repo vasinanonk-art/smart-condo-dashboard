@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from backend import app as app_module
+from backend import ir_command_audit
 
 app = app_module.app
 FRONTEND_DIR = Path(app_module.FRONTEND_DIR)
@@ -179,19 +180,49 @@ def _config_required_response(api: bool) -> JSONResponse | FileResponse:
 
 @app.middleware("http")
 async def dashboard_auth_middleware(request: Request, call_next):
+    started = time.monotonic()
     path = request.url.path
     is_api = path.startswith("/api/")
     is_public = path in _PUBLIC_PATHS or path.startswith("/assets/")
+    is_ir_command = (
+        request.method.upper() == "POST"
+        and path.startswith("/api/ir/")
+        and path.endswith("/command")
+    )
+    request_id = ir_command_audit.correlation_id(
+        request.headers.get("x-request-id")
+    )
+    request.state.ir_audit_correlation_id = request_id
+    ir_device = path.removeprefix("/api/ir/").removesuffix("/command").strip("/")
+
+    def audit_rejection(user: str | None, status: int, result: str) -> None:
+        if not is_ir_command:
+            return
+        ir_command_audit.emit(
+            user=user,
+            device_id=ir_device,
+            command_type="unknown",
+            value=None,
+            outcome="rejected",
+            http_status=status,
+            result_code=result,
+            latency_ms=(time.monotonic() - started) * 1000,
+            outbound_attempts=0,
+            retry_count=0,
+            request_id=request_id,
+        )
 
     if is_public:
         return await call_next(request)
 
     if not configured():
+        audit_rejection(None, 503, "authentication_not_configured")
         return _config_required_response(is_api)
 
     session = _decode(request.cookies.get(COOKIE_NAME))
     if session is None:
         if is_api:
+            audit_rejection(None, 401, "authentication_required")
             return _api_unauthorized()
         destination = _safe_next(path + (f"?{request.url.query}" if request.url.query else ""))
         return RedirectResponse(url=f"/login?next={quote(destination, safe='/%?#=&')}", status_code=303)
@@ -201,10 +232,12 @@ async def dashboard_auth_middleware(request: Request, call_next):
 
     if request.method.upper() in _STATE_METHODS:
         if not _same_origin(request):
+            audit_rejection(session.get("u"), 403, "csrf_origin_failed")
             return JSONResponse({"detail": "csrf origin validation failed"}, status_code=403)
         supplied = request.headers.get("x-csrf-token", "")
         expected = str(session.get("csrf") or "")
         if not supplied or not expected or not hmac.compare_digest(supplied, expected):
+            audit_rejection(session.get("u"), 403, "csrf_token_failed")
             return JSONResponse({"detail": "csrf token validation failed"}, status_code=403)
 
     return await call_next(request)

@@ -4,7 +4,6 @@ from __future__ import annotations
 import atexit
 import copy
 import json
-import logging
 import os
 import re
 import threading
@@ -20,6 +19,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from backend import app as app_module
+from backend import ir_command_audit
 
 app = app_module.app
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,7 +39,6 @@ _DEVICE_QUEUES: Dict[str, "DeviceCommandQueue"] = {}
 _DEVICE_QUEUES_GUARD = threading.Lock()
 _RUNTIME_LOCK = threading.RLock()
 _RUNTIME: Dict[str, Dict[str, Any]] = {}
-_COMMAND_LOG = logging.getLogger("smart_condo.ir.command")
 
 
 class IRConfigurationError(ValueError):
@@ -71,6 +70,7 @@ class IRDispatchCommand:
     timeout: float
     value: str | int | float | bool | None = None
     authenticated_user: str = "unknown"
+    correlation_id: str = ""
 
 
 class IRDriver(ABC):
@@ -223,6 +223,8 @@ class TuyaIRACDriver(IRDriver):
         self._last_response: str | None = None
         self._last_latency_ms: float | None = None
         self._last_commanded: Dict[str, Any] = {}
+        self._last_outbound_attempts = 0
+        self._last_result_code = "not_attempted"
 
     def initialize(self) -> None:
         self._initialized = True
@@ -270,6 +272,8 @@ class TuyaIRACDriver(IRDriver):
         if not self._send_lock.acquire(blocking=False):
             raise IRCommandBusy("ir_command_busy")
         try:
+            self._last_outbound_attempts = 0
+            self._last_result_code = "not_attempted"
             now = time.monotonic()
             with self._rate_lock:
                 if now - self._last_attempt < self.minimum_interval_sec:
@@ -292,9 +296,13 @@ class TuyaIRACDriver(IRDriver):
 
             started = time.monotonic()
             try:
+                def record_post_attempt() -> None:
+                    self._last_outbound_attempts += 1
+
                 payload = tuya_cloud_readonly.configured_ir_client().send_ac_command(
                     command.code,
                     value,
+                    on_post_attempt=record_post_attempt,
                 )
                 if payload.get("result") is not True:
                     raise IRDriverUnavailable("tuya_ir_command_rejected")
@@ -302,6 +310,7 @@ class TuyaIRACDriver(IRDriver):
                 self._last_commanded["updated_at"] = int(time.time())
                 self._last_error = None
                 self._last_response = "sent"
+                self._last_result_code = "tuya_success"
             except Exception as exc:
                 self._last_error = (
                     exc.reason
@@ -309,6 +318,7 @@ class TuyaIRACDriver(IRDriver):
                     else type(exc).__name__
                 )
                 self._last_response = "failed"
+                self._last_result_code = self._last_error or "tuya_ir_failed"
                 if (
                     isinstance(exc, tuya_cloud_readonly.TuyaCloudError)
                     and exc.reason == "tuya_cloud_timeout"
@@ -419,7 +429,13 @@ class DeviceCommandQueue:
                 status_code=429,
             )
             dropped.done.set()
-            _log_dispatch(dropped.dispatch, 0.0, "dropped", "ir_queue_overflow")
+            _log_dispatch(
+                dropped.dispatch,
+                0.0,
+                "rejected",
+                "ir_queue_overflow",
+                http_status=429,
+            )
         self._publish_pending()
         return owner, dropped
 
@@ -454,6 +470,7 @@ class DeviceCommandQueue:
                         0.0,
                         "rejected",
                         "ir_command_busy",
+                        http_status=409,
                     )
                     return JSONResponse(
                         {"detail": "ir_command_busy"},
@@ -897,36 +914,56 @@ def _resolve_command(profile: IRProfile, request: IRCommandRequest) -> IRCommand
 def _log_dispatch(
     dispatch: IRDispatchCommand,
     duration_ms: float,
-    result: str,
-    error_reason: str | None,
+    outcome: str,
+    result_code: str,
+    *,
+    http_status: int,
+    outbound_attempts: int = 0,
+    retry_count: int = 0,
 ) -> None:
-    _COMMAND_LOG.info(
-        "ir_command timestamp=%d user=%s device=%s command=%s value=%s duration_ms=%.1f result=%s error_reason=%s",
-        int(time.time()),
-        re.sub(r"[^A-Za-z0-9_.@-]", "_", dispatch.authenticated_user)[:64],
-        dispatch.device_id,
-        dispatch.command_id,
-        str(dispatch.value)[:16] if dispatch.value is not None else "none",
-        duration_ms,
-        result,
-        error_reason or "none",
+    ir_command_audit.emit(
+        user=dispatch.authenticated_user,
+        device_id=dispatch.device_id,
+        command_type=dispatch.capability or dispatch.command_id,
+        value=dispatch.value,
+        outcome=outcome,
+        http_status=http_status,
+        result_code=result_code,
+        latency_ms=duration_ms,
+        outbound_attempts=outbound_attempts,
+        retry_count=retry_count,
+        request_id=dispatch.correlation_id,
     )
 
 
 def _log_rejection(
     device_id: str,
     command_id: str | None,
+    value: Any,
+    authenticated_user: str,
+    correlation_id: str,
     started: float,
     error_reason: str,
+    http_status: int,
 ) -> None:
     safe_device = device_id if IDENTIFIER.fullmatch(device_id) else "invalid_device"
     safe_command = command_id if command_id and IDENTIFIER.fullmatch(command_id) else "invalid_command"
-    dispatch = IRDispatchCommand(safe_device, safe_command, "custom", "", 0)
+    dispatch = IRDispatchCommand(
+        safe_device,
+        safe_command,
+        safe_command,
+        "",
+        0,
+        value,
+        authenticated_user,
+        correlation_id,
+    )
     _log_dispatch(
         dispatch,
         (time.monotonic() - started) * 1000,
         "rejected",
         error_reason,
+        http_status=http_status,
     )
 
 
@@ -949,7 +986,21 @@ def _execute_job(driver: IRDriver, job: QueuedCommand) -> Any:
                     "last_response": "sent",
                     "last_error": None,
                 })
-            _log_dispatch(job.dispatch, (time.monotonic() - started) * 1000, "sent", None)
+            outbound_attempts = int(
+                getattr(driver, "_last_outbound_attempts", 0)
+            )
+            result_code = str(
+                getattr(driver, "_last_result_code", "success")
+            )
+            _log_dispatch(
+                job.dispatch,
+                (time.monotonic() - started) * 1000,
+                "success",
+                result_code,
+                http_status=200,
+                outbound_attempts=outbound_attempts,
+                retry_count=max(0, attempts - 1),
+            )
             response = {
                 "ok": True,
                 "device_id": device_id,
@@ -972,6 +1023,7 @@ def _execute_job(driver: IRDriver, job: QueuedCommand) -> Any:
                 (time.monotonic() - started) * 1000,
                 "rejected",
                 "ir_command_rate_limited",
+                http_status=429,
             )
             return JSONResponse(
                 {"detail": "ir_command_rate_limited", "retry_after_sec": 1},
@@ -983,6 +1035,7 @@ def _execute_job(driver: IRDriver, job: QueuedCommand) -> Any:
                 (time.monotonic() - started) * 1000,
                 "rejected",
                 "ir_command_busy",
+                http_status=409,
             )
             return JSONResponse({"detail": "ir_command_busy"}, status_code=409)
         except (TimeoutError, IRTransientError):
@@ -999,8 +1052,13 @@ def _execute_job(driver: IRDriver, job: QueuedCommand) -> Any:
             _log_dispatch(
                 job.dispatch,
                 (time.monotonic() - started) * 1000,
-                "timeout",
-                "ir_command_timeout",
+                "failed",
+                str(getattr(driver, "_last_result_code", "ir_command_timeout")),
+                http_status=504,
+                outbound_attempts=int(
+                    getattr(driver, "_last_outbound_attempts", 0)
+                ),
+                retry_count=max(0, attempts - 1),
             )
             return JSONResponse(
                 {"detail": "ir_command_timeout", "attempts": attempts, "state_quality": "unknown"},
@@ -1017,7 +1075,12 @@ def _execute_job(driver: IRDriver, job: QueuedCommand) -> Any:
                 job.dispatch,
                 (time.monotonic() - started) * 1000,
                 "failed",
-                "ir_command_failed",
+                str(getattr(driver, "_last_result_code", "ir_command_failed")),
+                http_status=502,
+                outbound_attempts=int(
+                    getattr(driver, "_last_outbound_attempts", 0)
+                ),
+                retry_count=max(0, attempts - 1),
             )
             return JSONResponse(
                 {"detail": "ir_command_failed", "attempts": attempts, "state_quality": "unknown"},
@@ -1031,6 +1094,7 @@ def execute_command(
     command_or_request: str | IRCommandRequest,
     timeout: float | None = None,
     authenticated_user: str = "unknown",
+    correlation_id: str = "",
 ):
     started = time.monotonic()
     requested_id = (
@@ -1038,14 +1102,25 @@ def execute_command(
         if isinstance(command_or_request, str)
         else command_or_request.command or command_or_request.capability
     )
+    requested_value = (
+        None
+        if isinstance(command_or_request, str)
+        else command_or_request.value
+    )
     device = _device(device_id)
     if device is None:
-        _log_rejection(device_id, requested_id, started, "ir_device_not_found")
+        _log_rejection(
+            device_id, requested_id, requested_value, authenticated_user,
+            correlation_id, started, "ir_device_not_found", 404,
+        )
         return JSONResponse({"detail": "ir_device_not_found"}, status_code=404)
     try:
         profile = load_profile(device.profile)
     except IRConfigurationError:
-        _log_rejection(device_id, requested_id, started, "ir_profile_missing")
+        _log_rejection(
+            device_id, requested_id, requested_value, authenticated_user,
+            correlation_id, started, "ir_profile_missing", 422,
+        )
         return JSONResponse({"detail": "ir_profile_missing"}, status_code=422)
     request = (
         IRCommandRequest(command=command_or_request)
@@ -1053,15 +1128,24 @@ def execute_command(
     )
     command = _resolve_command(profile, request)
     if command is None:
-        _log_rejection(device_id, requested_id, started, "ir_command_unknown")
+        _log_rejection(
+            device_id, requested_id, requested_value, authenticated_user,
+            correlation_id, started, "ir_command_unknown", 422,
+        )
         return JSONResponse({"detail": "ir_command_unknown"}, status_code=422)
     if command.capability not in device.capabilities:
-        _log_rejection(device_id, command.id, started, "ir_capability_unsupported")
+        _log_rejection(
+            device_id, command.id, command.value, authenticated_user,
+            correlation_id, started, "ir_capability_unsupported", 422,
+        )
         return JSONResponse({"detail": "ir_capability_unsupported"}, status_code=422)
     driver = DRIVERS.get(device.driver)
     status = _runtime_status(device, driver, profile)
     if not device.enabled or not driver or not status["healthy"]:
-        _log_rejection(device_id, command.id, started, "ir_driver_unavailable")
+        _log_rejection(
+            device_id, command.id, command.value, authenticated_user,
+            correlation_id, started, "ir_driver_unavailable", 422,
+        )
         return JSONResponse({"detail": "ir_driver_unavailable"}, status_code=422)
     dispatch = IRDispatchCommand(
         device.id,
@@ -1071,6 +1155,7 @@ def execute_command(
         timeout or DEFAULT_TIMEOUT_SEC,
         command.value,
         authenticated_user,
+        correlation_id,
     )
     return _queue(device.id).submit(
         QueuedCommand(dispatch, profile),
@@ -1096,6 +1181,9 @@ def ir_command(
         payload,
         authenticated_user=str(
             getattr(request.state, "dashboard_user", None) or "unknown"
+        ),
+        correlation_id=str(
+            getattr(request.state, "ir_audit_correlation_id", "")
         ),
     )
 
