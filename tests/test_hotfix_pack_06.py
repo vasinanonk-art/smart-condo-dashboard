@@ -46,13 +46,15 @@ class HotfixPack06Tests(unittest.TestCase):
         self.assertTrue(result["unique"])
         self.assertEqual(result["diagnosticCount"], 0)
 
-    def test_topology_css_does_not_leak_into_tv_remote(self):
+    def test_topology_css_does_not_leak_and_exposes_link_states(self):
         css = self.read("frontend/assets/dashboard_topology.css")
         self.assertNotIn(".tv-", css)
         self.assertNotIn(".remote", css)
         self.assertIn("topology-edge-data_source", css)
         self.assertIn("topology-edge-network_tunnel", css)
-        self.assertIn("topology-bus", css)
+        for state in ("healthy", "warning", "broken", "unknown"):
+            self.assertIn(f".topology-edge.{state}", css)
+        self.assertIn("topology-link-break", css)
 
     def test_asset_order_is_base_then_chart_then_remote_then_topology(self):
         html = self.read("frontend/index.html")

@@ -401,12 +401,40 @@ const nodes=api.normalize({{nodes:api.order.map(id=>({{id,health:'healthy'}}))}}
 const layout=api.layout(nodes,1400);
 const routes=api.routes(layout);
 const keys=routes.map(edge=>`${{edge.from}}>${{edge.to}}:${{edge.cat}}`);
+const widths=[1366,1024,390];
+const responsive=widths.map(width=>{{
+  const current=api.layout(nodes,width);
+  const currentRoutes=api.routes(current);
+  return {{
+    width,
+    height:current.height,
+    overlaps:api.diagnostics(nodes,current,currentRoutes,[]).filter(item=>item.type==='node_overlap').length,
+    missingEdges:api.diagnostics(nodes,current,currentRoutes,[]).filter(item=>item.type==='missing_required_edge').length,
+    nodeCount:Object.keys(current.pos).length
+  }};
+}});
+const mixed=api.normalize({{nodes:[
+  {{id:'internet',health:'healthy'}},
+  {{id:'cloudflare_wan',health:'warning'}},
+  {{id:'condo_router',health:'offline'}},
+  {{id:'tinkerboard',health:'bad'}}
+]}}).nodes;
+const mixedMap=new Map(mixed.map(node=>[node.id,node]));
 process.stdout.write(JSON.stringify({{
   normalized:normalized.nodes,
   unique:new Set(keys).size===keys.length,
   required:keys,
   deterministic:JSON.stringify(api.layout(nodes,1400))===JSON.stringify(layout),
-  diagnosticCount:api.diagnostics(nodes,layout,routes,[]).length
+  diagnosticCount:api.diagnostics(nodes,layout,routes,[]).length,
+  responsive,
+  summary:api.summary(mixed),
+  linkStates:[
+    api.linkHealth('internet','cloudflare_wan',mixedMap),
+    api.linkHealth('cloudflare_wan','condo_router',mixedMap),
+    api.linkHealth('condo_router','tinkerboard',mixedMap)
+  ],
+  statusLabels:mixed.map(api.statusLabel)
+  ,midpoint:api.pathMidpoint([{{x:0,y:0}},{{x:0,y:10}},{{x:30,y:10}},{{x:30,y:20}}])
 }}));
 """
     )

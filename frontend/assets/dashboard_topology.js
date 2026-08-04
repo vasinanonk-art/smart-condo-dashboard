@@ -2,23 +2,403 @@
   'use strict';
   if (window.__dashboardTopologyInstalled) return;
   window.__dashboardTopologyInstalled = true;
-  const safe=v=>window.safeText?window.safeText(v):String(v??''),obj=v=>v&&typeof v==='object'&&!Array.isArray(v)?v:{},arr=v=>Array.isArray(v)?v.map(String):[];
-  const SITE={internet:'cloud',cloudflare_wan:'cloud',condo_router:'condo',tinkerboard:'condo',dashboard:'condo',mqtt:'condo',sonoff:'condo',camera:'condo',electricity:'condo',tapo_ir:'condo',presence:'condo',lg_tv:'condo',tuya:'condo',pm25:'condo',zerotier_condo:'zerotier',zerotier_tunnel:'zerotier',zerotier_home:'zerotier',truenas:'home',home_assistant:'home'};
-  const ORDER=Object.keys(SITE),GROUPS={cloud:['internet','cloudflare_wan'],condo:['condo_router','tinkerboard','dashboard','mqtt','sonoff','camera','electricity','tapo_ir','presence','lg_tv','tuya','pm25'],zerotier:['zerotier_condo','zerotier_tunnel','zerotier_home'],home:['truenas','home_assistant']};
-  const EDGES=[['internet','cloudflare_wan','primary_dependency'],['cloudflare_wan','condo_router','primary_dependency'],['condo_router','tinkerboard','primary_dependency'],['tinkerboard','dashboard','primary_dependency'],['tinkerboard','mqtt','primary_dependency'],['tinkerboard','sonoff','primary_dependency'],['tinkerboard','camera','primary_dependency'],['tinkerboard','electricity','primary_dependency'],['tinkerboard','tapo_ir','primary_dependency'],['mqtt','presence','primary_dependency'],['mqtt','lg_tv','primary_dependency'],['home_assistant','tuya','data_source'],['home_assistant','pm25','data_source'],['tinkerboard','zerotier_condo','network_tunnel'],['zerotier_condo','zerotier_tunnel','network_tunnel'],['zerotier_tunnel','zerotier_home','network_tunnel'],['zerotier_home','truenas','network_tunnel'],['truenas','home_assistant','network_tunnel']];
-  function install(){document.querySelectorAll('.nav,.mobile-nav').forEach(h=>{if(h.querySelector('[data-nav="topology"]'))return;const b=document.createElement('button');b.dataset.nav='topology';b.dataset.short='NC';b.textContent='Topology';h.appendChild(b);});if(document.querySelector('[data-page="topology"]'))return;const s=document.createElement('section');s.className='page';s.dataset.page='topology';s.innerHTML='<div class="topology-summary"><div id="topologyHealth" class="card health-score"></div><div id="topologyRoots" class="root-list"></div></div><div class="card topology-map-card"><div class="card-head"><h2>Live Dependency Graph</h2><button id="topologyFit" class="btn ghost" type="button" disabled>Fit to View</button></div><div id="topologyGraph" class="topology-map"></div></div><section id="topologyDetailCard" class="card topology-detail collapsed"><div class="card-head"><h2>Node Details</h2><button id="topologyDetailClose" class="btn ghost">Close</button></div><div id="topologyDetail"></div></section><div class="card topology-events-card"><div class="card-head"><h2>Recent Events</h2></div><div id="topologyEvents" class="event-list"></div></div>';document.querySelector('.main')?.appendChild(s);}
-  install();const state={data:null,selected:null,fitted:null};const originalRefresh=window.refresh,originalRender=window.renderPage;
-  function normalize(raw){const p=obj(raw?.data||raw),seen=new Set(),nodes=[];(Array.isArray(p.nodes)?p.nodes:[]).forEach((r,i)=>{r=obj(r);const id=String(r.id||`unknown_${i}`);if(seen.has(id))return;seen.add(id);const metadata=obj(r.metadata),diagnostics=obj(r.diagnostics);nodes.push({...r,id,name:String(r.name||r.label||id),health:['healthy','warning','offline'].includes(r.health)?r.health:'unknown',online:r.online===true?true:r.online===false?false:null,dependencies:arr(r.dependencies),dependents:arr(r.dependents),capabilities:arr(r.capabilities),metadata,diagnostics,physical_site:r.physical_site||metadata.physical_site||SITE[id]||'condo'});});return{...p,nodes,root_causes:Array.isArray(p.root_causes)?p.root_causes:[],events:Array.isArray(p.events)?p.events:[]};}
-  async function load(){try{state.data=normalize(await window.get('/api/topology'));}catch(e){console.error('Topology refresh failed',{name:e?.name||'Error'});}}
-  const rect=(id,l)=>{const p=l.pos[id];return p?{x:p[0],y:p[1],w:l.w,h:l.h}:null;},port=(r,s)=>s==='top'?{x:r.x+r.w/2,y:r.y}:s==='bottom'?{x:r.x+r.w/2,y:r.y+r.h}:s==='left'?{x:r.x,y:r.y+r.h/2}:{x:r.x+r.w,y:r.y+r.h/2},path=pts=>pts.map((p,i)=>`${i?'L':'M'}${p.x},${p.y}`).join(' ');
-  function layout(nodes,width){const mobile=width<=640,tablet=width<=1050,present=new Set(nodes.map(n=>n.id)),pos={},w=mobile?Math.min(286,width-28):tablet?138:150,h=54;if(mobile){let y=36;ORDER.filter(id=>present.has(id)).forEach(id=>{pos[id]=[(width-w)/2,y];y+=88;});return{mobile,width,height:y+28,w,h,pos};}const W=Math.max(width,tablet?1180:1380),cx=Math.round(W*.37),zx=Math.round(W*.72),hx=Math.round(W*.89),place=(id,x,y)=>{if(present.has(id))pos[id]=[x-w/2,y];};place('internet',cx,42);place('cloudflare_wan',cx,132);place('condo_router',cx,238);place('tinkerboard',cx,338);place('dashboard',cx-115,458);place('mqtt',cx+115,458);[['sonoff',cx-270],['camera',cx-90],['electricity',cx+90],['tapo_ir',cx+270]].forEach(([id,x])=>place(id,x,584));place('presence',cx+35,708);place('lg_tv',cx+205,708);place('tuya',cx-180,820);place('pm25',cx+20,820);place('zerotier_condo',zx,300);place('zerotier_tunnel',zx,410);place('zerotier_home',zx,520);place('truenas',hx,610);place('home_assistant',hx,730);nodes.filter(n=>!pos[n.id]).forEach((n,i)=>place(n.id,cx+380,850+i*75));return{mobile:false,width:W,height:930,w,h,pos};}
-  function routes(l){const out=[],has=id=>!!l.pos[id],add=(from,to,cat,pts)=>{if(has(from)&&has(to))out.push({from,to,cat,pts,d:path(pts)});};if(l.mobile){EDGES.forEach(([f,t,c],i)=>{if(!has(f)||!has(t))return;const a=rect(f,l),b=rect(t,l),side=c==='network_tunnel'?'right':'left',x=side==='right'?l.width-12:12;add(f,t,c,[port(a,side),{x,y:a.y+a.h/2},{x,y:b.y+b.h/2},port(b,side)]);});return out;}const vertical=(f,t,c='primary_dependency')=>{const a=rect(f,l),b=rect(t,l);if(a&&b)add(f,t,c,[port(a,'bottom'),port(b,'top')]);};vertical('internet','cloudflare_wan');vertical('cloudflare_wan','condo_router');vertical('condo_router','tinkerboard');
-    const branch=(source,children,trunkY)=>{if(!has(source))return;const a=rect(source,l),start=port(a,'bottom'),visible=children.filter(has);if(!visible.length)return;add(source,visible[0],'primary_dependency',[start,{x:start.x,y:trunkY},{x:port(rect(visible[0],l),'top').x,y:trunkY},port(rect(visible[0],l),'top')]);visible.slice(1).forEach((id,index)=>{const end=port(rect(id,l),'top'),lane=trunkY+index*10;add(source,id,'primary_dependency',[start,{x:start.x,y:lane},{x:end.x,y:lane},end]);});};
-    branch('tinkerboard',['dashboard','mqtt'],426);branch('tinkerboard',['sonoff','camera','electricity','tapo_ir'],548);branch('mqtt',['presence','lg_tv'],674);
-    if(has('tinkerboard')&&has('zerotier_condo')){const a=port(rect('tinkerboard',l),'right'),b=port(rect('zerotier_condo',l),'left'),x=b.x-42;add('tinkerboard','zerotier_condo','network_tunnel',[a,{x,y:a.y},{x,y:b.y},b]);}vertical('zerotier_condo','zerotier_tunnel','network_tunnel');vertical('zerotier_tunnel','zerotier_home','network_tunnel');if(has('zerotier_home')&&has('truenas')){const a=port(rect('zerotier_home',l),'right'),b=port(rect('truenas',l),'left'),x=(a.x+b.x)/2;add('zerotier_home','truenas','network_tunnel',[a,{x,y:a.y},{x,y:b.y},b]);}vertical('truenas','home_assistant','network_tunnel');if(has('home_assistant')){['tuya','pm25'].filter(has).forEach((id,i)=>{const a=port(rect('home_assistant',l),'left'),b=port(rect(id,l),'right'),x=a.x-54-i*18;add('home_assistant',id,'data_source',[a,{x,y:a.y},{x,y:b.y},b]);});}return out;}
-  function group(ids,l,label){if(l.mobile)return null;const rs=ids.map(id=>rect(id,l)).filter(Boolean);if(!rs.length)return null;const pad=36,x=Math.min(...rs.map(r=>r.x))-pad,y=Math.min(...rs.map(r=>r.y))-pad,right=Math.max(...rs.map(r=>r.x+r.w))+pad,bottom=Math.max(...rs.map(r=>r.y+r.h))+pad;return{x,y,right,bottom,svg:`<rect class="topology-group" x="${x}" y="${y}" width="${right-x}" height="${bottom-y}" rx="18"/><text class="topology-group-label" x="${x+16}" y="${y+22}">${label}</text>`};}
-  function diagnostics(nodes,l,edges,groups){const ids=new Set(nodes.map(n=>n.id)),errors=[];EDGES.forEach(([f,t])=>{if(ids.has(f)&&ids.has(t)&&!edges.some(e=>e.from===f&&e.to===t))errors.push({type:'missing_required_edge',edge:`${f}->${t}`});});edges.forEach(e=>{if(!e.pts.length||e.pts[0].x==null||e.pts[e.pts.length-1].x==null)errors.push({type:'disconnected_edge',edge:`${e.from}->${e.to}`});});groups.forEach((a,i)=>groups.slice(i+1).forEach(b=>{if(!(a.right+48<=b.x||b.right+48<=a.x||a.bottom+48<=b.y||b.bottom+48<=a.y))errors.push({type:'group_overlap'});}));return errors;}
-  function detail(node){const card=document.getElementById('topologyDetailCard'),host=document.getElementById('topologyDetail');if(!card||!host)return;if(!node){card.classList.add('collapsed');host.innerHTML='';return;}card.classList.remove('collapsed');host.innerHTML=`<div class="topology-detail-grid">${[['Status',node.online==null?'Unknown':node.online?'Online':'Offline'],['Health',node.health],['Physical Site',node.physical_site],['Dependencies',node.dependencies.join(', ')||'None'],['Capabilities',node.capabilities.join(', ')||'None']].map(([k,v])=>`<div class="topology-detail-item"><span>${k}</span><strong>${safe(v)}</strong></div>`).join('')}</div>`;}
-  function render(){const host=document.getElementById('topologyGraph');if(!host||!state.data)return;const nodes=state.data.nodes,l=layout(nodes,Math.max(320,host.clientWidth||1100)),map=new Map(nodes.map(n=>[n.id,n])),edges=routes(l),groups=[group(GROUPS.cloud,l,'CLOUD'),group(GROUPS.condo,l,'CONDO'),group(GROUPS.zerotier,l,'ZEROTIER'),group(GROUPS.home,l,'HOME')].filter(Boolean),xs=[0,l.width],ys=[0,l.height];groups.forEach(g=>{xs.push(g.x,g.right);ys.push(g.y,g.bottom);});edges.forEach(e=>e.pts.forEach(p=>{xs.push(p.x);ys.push(p.y);}));const minX=Math.min(...xs)-24,minY=Math.min(...ys)-24,maxX=Math.max(...xs)+24,maxY=Math.max(...ys)+24;state.fitted={x:minX,y:minY,w:maxX-minX,h:maxY-minY};const health=(f,t)=>{const a=map.get(f),b=map.get(t);return a?.health==='offline'||b?.health==='offline'?'offline':a?.health==='warning'||b?.health==='warning'?'warning':a?.health==='healthy'&&b?.health==='healthy'?'healthy':'unknown';};host.innerHTML=`<svg class="topology-svg" viewBox="${minX} ${minY} ${maxX-minX} ${maxY-minY}">${groups.map(g=>g.svg).join('')}${edges.map(e=>`<path class="topology-edge ${health(e.from,e.to)} topology-edge-${e.cat}" d="${e.d}"/>`).join('')}${nodes.map(n=>{const p=l.pos[n.id];if(!p)return'';return `<g class="topology-node-svg ${n.health}${state.selected===n.id?' selected':''}" data-topology-node="${safe(n.id)}" transform="translate(${p[0]} ${p[1]})"><rect class="topology-node-bg" width="${l.w}" height="${l.h}"/><circle class="topology-node-dot" cx="16" cy="16" r="6"/><text class="topology-node-name" x="29" y="19">${safe(n.name)}</text><text class="topology-node-status" x="15" y="40">${n.online===true?'Online':n.online===false?'Offline':'Unknown'}</text></g>`;}).join('')}</svg>`;host.querySelectorAll('[data-topology-node]').forEach(el=>el.onclick=()=>{state.selected=el.dataset.topologyNode;detail(map.get(state.selected));render();});const fit=document.getElementById('topologyFit');if(fit){fit.disabled=false;fit.onclick=()=>render();}const errors=diagnostics(nodes,l,edges,groups);if(errors.length)console.warn('Topology verification diagnostics',errors);document.getElementById('topologyHealth').innerHTML=`<strong>${safe(state.data.health_score??'—')}</strong><span>Health Score</span>`;document.getElementById('topologyRoots').innerHTML=(state.data.root_causes||[]).map(r=>`<div class="root-cause"><strong>${safe(r.title||r.node||'Topology')}</strong><small>${safe(r.detail||r.reason||'')}</small></div>`).join('')||'<div class="root-cause"><strong>Operational graph</strong><small>All required relationships rendered.</small></div>';document.getElementById('topologyEvents').innerHTML=(state.data.events||[]).slice(0,10).map(e=>`<div class="event-row"><time>${safe(e.time||'')}</time><strong>${safe(e.message||e.event||'')}</strong></div>`).join('');}
-  window.refresh=async function(){await Promise.allSettled([originalRefresh(),load()]);window.renderPage(window.currentPage());};window.renderPage=function(page=window.currentPage()){originalRender(page);if(page==='topology')render();};document.getElementById('topologyDetailClose')?.addEventListener('click',()=>{state.selected=null;detail(null);});let timer;window.addEventListener('resize',()=>{clearTimeout(timer);timer=setTimeout(()=>{if(window.currentPage()==='topology')render();},150);});document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>window.nav(b.dataset.nav));load().then(()=>{if(window.currentPage()==='topology')render();});window.DashboardTopologyModel={edges:EDGES,groups:GROUPS,order:ORDER,normalize,layout,routes,diagnostics};
+
+  const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
+  const object = value => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const array = value => Array.isArray(value) ? value.map(String) : [];
+  const HEALTH = new Set(['healthy', 'warning', 'offline']);
+  const SITE = {
+    internet:'cloud', cloudflare_wan:'cloud', condo_router:'condo', tinkerboard:'condo',
+    dashboard:'condo', mqtt:'condo', sonoff:'condo', camera:'condo', electricity:'condo',
+    tapo_ir:'condo', presence:'condo', lg_tv:'condo', tuya:'condo', pm25:'condo',
+    zerotier_condo:'zerotier', zerotier_tunnel:'zerotier', zerotier_home:'zerotier',
+    truenas:'home', home_assistant:'home'
+  };
+  const ORDER = Object.keys(SITE);
+  const GROUPS = {
+    cloud:['internet','cloudflare_wan'],
+    condo:['condo_router','tinkerboard','dashboard','mqtt','sonoff','camera','electricity','tapo_ir','presence','lg_tv','tuya','pm25'],
+    zerotier:['zerotier_condo','zerotier_tunnel','zerotier_home'],
+    home:['truenas','home_assistant']
+  };
+  const LAYERS = [
+    ['internet'],
+    ['cloudflare_wan'],
+    ['condo_router'],
+    ['tinkerboard'],
+    ['dashboard','mqtt','sonoff','camera','electricity','tapo_ir','zerotier_condo'],
+    ['presence','lg_tv','zerotier_tunnel'],
+    ['zerotier_home'],
+    ['truenas'],
+    ['home_assistant'],
+    ['tuya','pm25']
+  ];
+  const LAYER_LABELS = ['Internet','Edge','Condo network','Dashboard host','Services & devices','Connected devices','Secure tunnel','Home storage','Home automation','Sensor sources'];
+  const ICONS = {
+    internet:'☁', cloudflare_wan:'◆', condo_router:'⌁', tinkerboard:'▣', dashboard:'⌂',
+    mqtt:'⇄', sonoff:'◫', camera:'◉', electricity:'ϟ', tapo_ir:'⌁', presence:'●',
+    lg_tv:'▤', tuya:'◇', pm25:'≈', zerotier_condo:'Z', zerotier_tunnel:'Z',
+    zerotier_home:'Z', truenas:'▥', home_assistant:'⌂'
+  };
+  const EDGES = [
+    ['internet','cloudflare_wan','primary_dependency'],
+    ['cloudflare_wan','condo_router','primary_dependency'],
+    ['condo_router','tinkerboard','primary_dependency'],
+    ['tinkerboard','dashboard','primary_dependency'],
+    ['tinkerboard','mqtt','primary_dependency'],
+    ['tinkerboard','sonoff','primary_dependency'],
+    ['tinkerboard','camera','primary_dependency'],
+    ['tinkerboard','electricity','primary_dependency'],
+    ['tinkerboard','tapo_ir','primary_dependency'],
+    ['mqtt','presence','primary_dependency'],
+    ['mqtt','lg_tv','primary_dependency'],
+    ['home_assistant','tuya','data_source'],
+    ['home_assistant','pm25','data_source'],
+    ['tinkerboard','zerotier_condo','network_tunnel'],
+    ['zerotier_condo','zerotier_tunnel','network_tunnel'],
+    ['zerotier_tunnel','zerotier_home','network_tunnel'],
+    ['zerotier_home','truenas','network_tunnel'],
+    ['truenas','home_assistant','network_tunnel']
+  ];
+
+  function install() {
+    document.querySelectorAll('.nav,.mobile-nav').forEach(host => {
+      if (host.querySelector('[data-nav="topology"]')) return;
+      const button = document.createElement('button');
+      button.dataset.nav = 'topology';
+      button.dataset.short = 'NC';
+      button.textContent = 'Topology';
+      host.appendChild(button);
+    });
+    if (document.querySelector('[data-page="topology"]')) return;
+    const section = document.createElement('section');
+    section.className = 'page';
+    section.dataset.page = 'topology';
+    section.innerHTML = `
+      <div class="topology-summary">
+        <div id="topologyHealth" class="card topology-overview" aria-live="polite"></div>
+        <div id="topologyRoots" class="root-list"></div>
+      </div>
+      <div class="card topology-map-card">
+        <div class="card-head"><div><h2>System Connections</h2><p class="muted">Select a device for technical details</p></div><button id="topologyFit" class="btn ghost" type="button" disabled>Fit to View</button></div>
+        <div id="topologyGraph" class="topology-map"></div>
+      </div>
+      <section id="topologyDetailCard" class="card topology-detail collapsed">
+        <div class="card-head"><h2>Device Details</h2><button id="topologyDetailClose" class="btn ghost" type="button">Close</button></div>
+        <div id="topologyDetail"></div>
+      </section>
+      <div class="card topology-events-card"><div class="card-head"><h2>Recent Events</h2></div><div id="topologyEvents" class="event-list"></div></div>`;
+    document.querySelector('.main')?.appendChild(section);
+  }
+
+  install();
+  const state = {data:null, selected:null, fitted:null};
+  const originalRefresh = window.refresh;
+  const originalRender = window.renderPage;
+
+  function normalize(raw) {
+    const payload = object(raw?.data || raw);
+    const seen = new Set();
+    const nodes = [];
+    (Array.isArray(payload.nodes) ? payload.nodes : []).forEach((candidate, index) => {
+      const record = object(candidate);
+      const id = String(record.id || `unknown_${index}`);
+      if (seen.has(id)) return;
+      seen.add(id);
+      const metadata = object(record.metadata);
+      const diagnostics = object(record.diagnostics);
+      nodes.push({
+        ...record,
+        id,
+        name:String(record.name || record.label || id),
+        health:HEALTH.has(record.health) ? record.health : 'unknown',
+        online:record.online === true ? true : record.online === false ? false : null,
+        dependencies:array(record.dependencies),
+        dependents:array(record.dependents),
+        capabilities:array(record.capabilities),
+        metadata,
+        diagnostics,
+        physical_site:record.physical_site || metadata.physical_site || SITE[id] || 'condo'
+      });
+    });
+    return {...payload, nodes, root_causes:Array.isArray(payload.root_causes) ? payload.root_causes : [], events:Array.isArray(payload.events) ? payload.events : []};
+  }
+
+  async function load() {
+    try {
+      state.data = normalize(await window.get('/api/topology'));
+    } catch (error) {
+      console.error('Topology refresh failed', {name:error?.name || 'Error'});
+    }
+  }
+
+  const rect = (id, layout) => {
+    const point = layout.pos[id];
+    return point ? {x:point[0], y:point[1], w:layout.w, h:layout.h} : null;
+  };
+  const port = (box, side) => side === 'top'
+    ? {x:box.x + box.w / 2, y:box.y}
+    : {x:box.x + box.w / 2, y:box.y + box.h};
+  const path = points => points.map((point, index) => `${index ? 'L' : 'M'}${point.x},${point.y}`).join(' ');
+
+  function layout(nodes, availableWidth) {
+    const width = Math.max(320, Math.round(availableWidth));
+    const mobile = width <= 640;
+    const gapX = mobile ? 12 : 18;
+    const w = mobile ? Math.min(292, width - 32) : width <= 1050 ? 142 : 158;
+    const h = 56;
+    const side = mobile ? 16 : 32;
+    const labelHeight = 24;
+    const rowGap = 14;
+    const layerGap = mobile ? 28 : 30;
+    const maxColumns = Math.max(1, Math.floor((width - side * 2 + gapX) / (w + gapX)));
+    const present = new Set(nodes.map(node => node.id));
+    const layers = LAYERS.map(ids => ids.filter(id => present.has(id)));
+    const unknown = nodes.filter(node => !LAYERS.some(ids => ids.includes(node.id))).map(node => node.id);
+    if (unknown.length) layers.push(unknown);
+    const pos = {};
+    const layerBounds = [];
+    let y = 24;
+    layers.forEach((ids, layerIndex) => {
+      if (!ids.length) return;
+      const columns = Math.min(maxColumns, ids.length);
+      const rows = Math.ceil(ids.length / columns);
+      const layerTop = y;
+      ids.forEach((id, index) => {
+        const row = Math.floor(index / columns);
+        const rowStart = row * columns;
+        const rowCount = Math.min(columns, ids.length - rowStart);
+        const rowWidth = rowCount * w + (rowCount - 1) * gapX;
+        const rowX = Math.max(side, (width - rowWidth) / 2);
+        const column = index - rowStart;
+        pos[id] = [rowX + column * (w + gapX), y + labelHeight + row * (h + rowGap)];
+      });
+      const contentHeight = labelHeight + rows * h + Math.max(0, rows - 1) * rowGap;
+      const layerBottom = layerTop + contentHeight + 14;
+      layerBounds.push({index:layerIndex, label:LAYER_LABELS[layerIndex] || 'Other devices', x:8, y:layerTop, width:width - 16, height:layerBottom - layerTop, ids});
+      y = layerBottom + layerGap;
+    });
+    return {mobile, width, height:Math.max(y - layerGap + 24, 180), w, h, pos, layers:layerBounds};
+  }
+
+  function routes(layout) {
+    const output = [];
+    const has = id => Boolean(layout.pos[id]);
+    EDGES.forEach(([from, to, category], edgeIndex) => {
+      if (!has(from) || !has(to)) return;
+      const source = rect(from, layout);
+      const target = rect(to, layout);
+      const start = port(source, 'bottom');
+      const end = port(target, 'top');
+      const available = Math.max(8, end.y - start.y);
+      const laneOffset = Math.min(18, 6 + (edgeIndex % 4) * 4);
+      const laneY = start.y + Math.min(available / 2, laneOffset);
+      const points = [start, {x:start.x, y:laneY}, {x:end.x, y:laneY}, end];
+      output.push({from, to, cat:category, pts:points, d:path(points)});
+    });
+    return output;
+  }
+
+  function group(_ids, _layout, _label) {
+    return null;
+  }
+
+  function diagnostics(nodes, layout, edges) {
+    const ids = new Set(nodes.map(node => node.id));
+    const errors = [];
+    EDGES.forEach(([from, to]) => {
+      if (ids.has(from) && ids.has(to) && !edges.some(edge => edge.from === from && edge.to === to)) {
+        errors.push({type:'missing_required_edge', edge:`${from}->${to}`});
+      }
+    });
+    edges.forEach(edge => {
+      const first = edge.pts?.[0];
+      const last = edge.pts?.[edge.pts.length - 1];
+      if (!first || !last || first.x == null || first.y == null || last.x == null || last.y == null) {
+        errors.push({type:'disconnected_edge', edge:`${edge.from}->${edge.to}`});
+      }
+    });
+    const boxes = nodes.map(node => ({id:node.id, box:rect(node.id, layout)})).filter(item => item.box);
+    boxes.forEach((first, index) => boxes.slice(index + 1).forEach(second => {
+      const a = first.box;
+      const b = second.box;
+      if (!(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y)) {
+        errors.push({type:'node_overlap', nodes:[first.id, second.id]});
+      }
+    }));
+    return errors;
+  }
+
+  function summary(nodes) {
+    const counts = {healthy:0, warning:0, critical:0, unknown:0};
+    nodes.forEach(node => {
+      if (node.health === 'healthy') counts.healthy += 1;
+      else if (node.health === 'warning') counts.warning += 1;
+      else if (node.health === 'offline') counts.critical += 1;
+      else counts.unknown += 1;
+    });
+    const stateName = counts.critical ? 'Critical' : counts.warning ? 'Attention' : counts.unknown ? 'Unknown' : 'Healthy';
+    const stateClass = counts.critical ? 'critical' : counts.warning ? 'warning' : counts.unknown ? 'unknown' : 'healthy';
+    return {counts, state:stateName, className:stateClass};
+  }
+
+  function linkHealth(from, to, map) {
+    const first = map.get(from);
+    const second = map.get(to);
+    if (first?.health === 'offline' || second?.health === 'offline') return 'broken';
+    if (first?.health === 'warning' || second?.health === 'warning') return 'warning';
+    if (first?.health === 'healthy' && second?.health === 'healthy') return 'healthy';
+    return 'unknown';
+  }
+
+  function statusLabel(node) {
+    if (node.health === 'healthy') return 'Healthy';
+    if (node.health === 'warning') return 'Attention';
+    if (node.health === 'offline') return 'Offline';
+    return 'Unknown';
+  }
+
+  function readable(value, fallback = 'Not available') {
+    if (value == null || value === '') return fallback;
+    if (typeof value === 'object') return fallback;
+    return String(value);
+  }
+
+  function detail(node, names = new Map()) {
+    const card = document.getElementById('topologyDetailCard');
+    const host = document.getElementById('topologyDetail');
+    if (!card || !host) return;
+    if (!node) {
+      card.classList.add('collapsed');
+      host.innerHTML = '';
+      return;
+    }
+    const diagnostics = object(node.diagnostics);
+    const metadata = object(node.metadata);
+    const dependencies = node.dependencies.map(id => names.get(id) || id).join(', ') || 'None';
+    const fields = [
+      ['Status', statusLabel(node)],
+      ['Location', readable(node.physical_site)],
+      ['Dependencies', dependencies],
+      ['Provider', readable(diagnostics.provider || metadata.provider || diagnostics.source || node.source)],
+      ['Protocol', readable(diagnostics.protocol || metadata.protocol || node.protocol)],
+      ['IP address', readable(diagnostics.runtime_ip || diagnostics.configured_ip || metadata.ip_address || node.runtime_ip)],
+      ['Latency', diagnostics.latency_ms != null || node.latency_ms != null ? `${readable(diagnostics.latency_ms ?? node.latency_ms)} ms` : 'Not available'],
+      ['Last error', readable(diagnostics.last_error || diagnostics.error || node.last_error)]
+    ];
+    card.classList.remove('collapsed');
+    host.innerHTML = `<div class="topology-detail-grid">${fields.map(([label, value]) => `<div class="topology-detail-item"><span>${safe(label)}</span><strong>${safe(value)}</strong></div>`).join('')}</div>`;
+  }
+
+  function marker(edge) {
+    if (edge.health !== 'broken') return '';
+    const point = pathMidpoint(edge.pts);
+    const {x, y} = point;
+    return `<g class="topology-link-break" transform="translate(${x} ${y})" aria-hidden="true"><circle r="9"/><path d="M-4,-4 L4,4 M4,-4 L-4,4"/></g>`;
+  }
+
+  function pathMidpoint(points) {
+    const segments = points.slice(1).map((point, index) => {
+      const start = points[index];
+      return {start, point, length:Math.hypot(point.x - start.x, point.y - start.y)};
+    });
+    const target = segments.reduce((sum, segment) => sum + segment.length, 0) / 2;
+    let traversed = 0;
+    for (const segment of segments) {
+      if (traversed + segment.length >= target && segment.length) {
+        const ratio = (target - traversed) / segment.length;
+        return {
+          x:segment.start.x + (segment.point.x - segment.start.x) * ratio,
+          y:segment.start.y + (segment.point.y - segment.start.y) * ratio
+        };
+      }
+      traversed += segment.length;
+    }
+    return points[0] || {x:0, y:0};
+  }
+
+  function render() {
+    const host = document.getElementById('topologyGraph');
+    if (!host || !state.data) return;
+    const nodes = state.data.nodes;
+    const layoutResult = layout(nodes, Math.max(320, host.clientWidth || 1100));
+    const map = new Map(nodes.map(node => [node.id, node]));
+    const names = new Map(nodes.map(node => [node.id, node.name]));
+    const edges = routes(layoutResult).map(edge => ({...edge, health:linkHealth(edge.from, edge.to, map)}));
+    const padding = 8;
+    state.fitted = {x:-padding, y:-padding, w:layoutResult.width + padding * 2, h:layoutResult.height + padding * 2};
+    const layerMarkup = layoutResult.layers.map(layer => `<g class="topology-layer"><rect x="${layer.x}" y="${layer.y}" width="${layer.width}" height="${layer.height}" rx="18"/><text x="${layer.x + 16}" y="${layer.y + 20}">${safe(layer.label)}</text></g>`).join('');
+    const edgeMarkup = edges.map(edge => `<path class="topology-edge ${edge.health} topology-edge-${edge.cat}" data-edge-from="${safe(edge.from)}" data-edge-to="${safe(edge.to)}" d="${edge.d}"/>${marker(edge)}`).join('');
+    const nodeMarkup = nodes.map(node => {
+      const point = layoutResult.pos[node.id];
+      if (!point) return '';
+      return `<g class="topology-node-svg ${node.health}${state.selected === node.id ? ' selected' : ''}" data-topology-node="${safe(node.id)}" tabindex="0" role="button" aria-label="${safe(`${node.name}, ${statusLabel(node)}`)}" transform="translate(${point[0]} ${point[1]})">
+        <rect class="topology-node-bg" width="${layoutResult.w}" height="${layoutResult.h}"/>
+        <text class="topology-node-icon" x="18" y="25">${safe(ICONS[node.id] || '•')}</text>
+        <text class="topology-node-name" x="39" y="22">${safe(node.name)}</text>
+        <circle class="topology-node-dot" cx="45" cy="42" r="4"/>
+        <text class="topology-node-status" x="55" y="45">${safe(statusLabel(node))}</text>
+      </g>`;
+    }).join('');
+    host.innerHTML = `<svg class="topology-svg" viewBox="${state.fitted.x} ${state.fitted.y} ${state.fitted.w} ${state.fitted.h}" width="${layoutResult.width}" height="${layoutResult.height}" preserveAspectRatio="xMidYMin meet" aria-label="System dependency topology">${layerMarkup}${edgeMarkup}${nodeMarkup}</svg>`;
+    host.querySelectorAll('[data-topology-node]').forEach(element => {
+      const select = () => {
+        state.selected = element.dataset.topologyNode;
+        detail(map.get(state.selected), names);
+        render();
+      };
+      element.onclick = select;
+      element.onkeydown = event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          select();
+        }
+      };
+    });
+    const fit = document.getElementById('topologyFit');
+    if (fit) {
+      fit.disabled = false;
+      fit.onclick = () => render();
+    }
+    const errors = diagnostics(nodes, layoutResult, edges);
+    if (errors.length) console.warn('Topology verification diagnostics', errors);
+    const overview = summary(nodes);
+    document.getElementById('topologyHealth').innerHTML = `
+      <div class="topology-overall ${overview.className}"><span>Overall state</span><strong>${safe(overview.state)}</strong></div>
+      <div class="topology-counts">
+        <div><strong>${overview.counts.healthy}</strong><span>Healthy</span></div>
+        <div><strong>${overview.counts.warning}</strong><span>Warning</span></div>
+        <div><strong>${overview.counts.critical}</strong><span>Critical</span></div>
+        <div><strong>${overview.counts.unknown}</strong><span>Unknown</span></div>
+      </div>`;
+    document.getElementById('topologyRoots').innerHTML = (state.data.root_causes || []).map(root => `<div class="root-cause"><strong>${safe(root.title || root.node || 'System notice')}</strong><small>${safe(root.detail || root.reason || '')}</small></div>`).join('') || '<div class="root-cause"><strong>Connections operational</strong><small>No dependency issue is currently reported.</small></div>';
+    document.getElementById('topologyEvents').innerHTML = (state.data.events || []).slice(0, 10).map(event => `<div class="event-row"><time>${safe(event.time || '')}</time><strong>${safe(event.message || event.event || '')}</strong></div>`).join('');
+  }
+
+  window.refresh = async function refreshWithTopology() {
+    await Promise.allSettled([originalRefresh(), load()]);
+    window.renderPage(window.currentPage());
+  };
+  window.renderPage = function renderPageWithTopology(page = window.currentPage()) {
+    originalRender(page);
+    if (page === 'topology') render();
+  };
+  document.getElementById('topologyDetailClose')?.addEventListener('click', () => {
+    state.selected = null;
+    detail(null);
+  });
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (window.currentPage() === 'topology') render();
+    }, 150);
+  });
+  document.querySelectorAll('[data-nav]').forEach(button => {
+    button.onclick = () => window.nav(button.dataset.nav);
+  });
+  load().then(() => {
+    if (window.currentPage() === 'topology') render();
+  });
+  window.DashboardTopologyModel = {edges:EDGES, groups:GROUPS, order:ORDER, normalize, layout, routes, diagnostics, summary, linkHealth, statusLabel, pathMidpoint};
 })();

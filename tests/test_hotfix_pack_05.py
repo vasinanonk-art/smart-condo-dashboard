@@ -36,10 +36,11 @@ class HotfixPack05Tests(unittest.TestCase):
         self.assertEqual(categories, {"primary_dependency", "data_source", "network_tunnel"})
 
     def test_required_topology_dependencies_are_preserved(self):
-        self.assertIn("['tinkerboard','electricity','primary_dependency']", self.topology)
-        self.assertIn("['tinkerboard','tapo_ir','primary_dependency']", self.topology)
-        self.assertIn("['home_assistant','tuya','data_source']", self.topology)
-        self.assertIn("['home_assistant','pm25','data_source']", self.topology)
+        required = set(topology_behavior()["required"])
+        self.assertIn("tinkerboard>electricity:primary_dependency", required)
+        self.assertIn("tinkerboard>tapo_ir:primary_dependency", required)
+        self.assertIn("home_assistant>tuya:data_source", required)
+        self.assertIn("home_assistant>pm25:data_source", required)
 
     def test_layout_is_deterministic_and_grouped(self):
         result = topology_behavior()

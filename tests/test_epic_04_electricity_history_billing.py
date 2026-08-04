@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backend import electricity_history as history
+from frontend_runtime import topology_behavior
 
 
 class ElectricityHistoryTests(unittest.TestCase):
@@ -90,7 +91,8 @@ class Epic04FrontendTests(unittest.TestCase):
         return (self.ROOT / path).read_text(encoding="utf-8")
 
     def test_topology_contains_every_required_edge(self):
-        js = self.read("frontend/assets/dashboard_topology.js")
+        result = topology_behavior()
+        required = {item.split(":", 1)[0] for item in result["required"]}
         for source, target in (
             ("internet", "cloudflare_wan"), ("cloudflare_wan", "condo_router"),
             ("condo_router", "tinkerboard"), ("tinkerboard", "dashboard"),
@@ -102,10 +104,9 @@ class Epic04FrontendTests(unittest.TestCase):
             ("zerotier_condo", "zerotier_tunnel"), ("zerotier_tunnel", "zerotier_home"),
             ("zerotier_home", "truenas"), ("truenas", "home_assistant"),
         ):
-            self.assertIn(f"['{source}','{target}'", js)
-        self.assertIn("missing_required_edge", js)
-        self.assertIn("disconnected_edge", js)
-        self.assertIn("group_overlap", js)
+            self.assertIn(f"{source}>{target}", required)
+        self.assertEqual(result["diagnosticCount"], 0)
+        self.assertTrue(all(item["overlaps"] == 0 for item in result["responsive"]))
 
     def test_electricity_frontend_has_persistent_ranges_and_exports(self):
         js = self.read("frontend/assets/dashboard_electricity.js")

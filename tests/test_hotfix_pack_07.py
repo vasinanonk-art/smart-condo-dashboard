@@ -1,6 +1,8 @@
 from pathlib import Path
 import unittest
 
+from frontend_runtime import topology_behavior
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -9,21 +11,21 @@ class HotfixPack07Tests(unittest.TestCase):
         return (ROOT / path).read_text(encoding="utf-8")
 
     def test_topology_uses_only_operational_edges(self):
-        js = self.read("frontend/assets/dashboard_topology.js")
+        result = topology_behavior()
+        required = set(result["required"])
         for edge in (
-            "['tinkerboard','dashboard'", "['tinkerboard','mqtt'",
-            "['tinkerboard','electricity'", "['tinkerboard','tapo_ir'",
-            "['mqtt','presence'", "['mqtt','lg_tv'",
-            "['home_assistant','tuya'", "['home_assistant','pm25'",
-            "['zerotier_home','truenas'", "['truenas','home_assistant'",
+            "tinkerboard>dashboard:primary_dependency",
+            "tinkerboard>mqtt:primary_dependency",
+            "tinkerboard>electricity:primary_dependency",
+            "tinkerboard>tapo_ir:primary_dependency",
+            "mqtt>presence:primary_dependency",
+            "mqtt>lg_tv:primary_dependency",
+            "home_assistant>tuya:data_source",
+            "home_assistant>pm25:data_source",
+            "zerotier_home>truenas:network_tunnel",
+            "truenas>home_assistant:network_tunnel",
         ):
-            self.assertIn(edge, js)
-        self.assertIn("branch('tinkerboard',['dashboard','mqtt']", js)
-        self.assertIn("branch('tinkerboard',['sonoff','camera','electricity','tapo_ir']", js)
-        self.assertIn("branch('mqtt',['presence','lg_tv']", js)
-        self.assertNotIn("node.data_source", js)
-        self.assertIn("network_tunnel", js)
-        self.assertIn("data_source", js)
+            self.assertIn(edge, required)
 
     def test_presence_timestamp_fallbacks_and_epoch_safety(self):
         js = self.read("frontend/assets/dashboard_presence_ui.js")
