@@ -19,6 +19,7 @@ JOURNAL_SERVICES = (
     "smart-condo-dashboard.service",
     "smart-condo-go2rtc.service",
 )
+GO2RTC_PORTS = (1984, 8554)
 
 
 def _b64(value: bytes) -> str:
@@ -85,6 +86,35 @@ def journal_error_count(service: str, *, since: str) -> int:
         text=True,
     )
     return count_journal_json_entries(output)
+
+
+def verify_go2rtc_listener_output(output: str) -> dict[int, str]:
+    """Validate go2rtc endpoints without depending on ss column positions."""
+    bindings: dict[int, set[str]] = {port: set() for port in GO2RTC_PORTS}
+    for line in output.splitlines():
+        for token in line.split():
+            if ":" not in token:
+                continue
+            host, separator, port_text = token.rpartition(":")
+            if not separator or not port_text.isdigit():
+                continue
+            port = int(port_text)
+            if port not in bindings:
+                continue
+            bindings[port].add(host.removeprefix("[").removesuffix("]"))
+    expected = {"127.0.0.1"}
+    for port, hosts in bindings.items():
+        if hosts != expected:
+            raise ValueError(f"go2rtc_listener_not_loopback:{port}")
+    return {port: "127.0.0.1" for port in GO2RTC_PORTS}
+
+
+def verify_go2rtc_listeners() -> dict[int, str]:
+    output = subprocess.check_output(
+        ["ss", "--listening", "--tcp", "--numeric", "--no-header"],
+        text=True,
+    )
+    return verify_go2rtc_listener_output(output)
 
 
 def _session_cookie() -> str:
@@ -168,6 +198,11 @@ def main() -> int:
     if "quick-action" not in source.lower() and "quickAction" not in source:
         raise RuntimeError("quick_actions_verification_failed")
     results["quick_actions"] = {"status": status, "present": True}
+
+    listeners = verify_go2rtc_listeners()
+    results["go2rtc_listeners"] = {
+        str(port): f"{host}:{port}" for port, host in listeners.items()
+    }
 
     journal_since = os.getenv("RELEASE_VERIFY_SINCE", "-10min")
     for service in JOURNAL_SERVICES:
