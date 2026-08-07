@@ -2,19 +2,17 @@
 
 Smart Condo Dashboard v1.0.0 is the stable production control center for the
 condo automation system. The canonical version is stored in [`VERSION`](VERSION).
-The verified v1.0.0 production baseline is `6e319ae`; the annotated `v1.0.0` tag
-has not yet been created. EPIC 19 Milestone 1 is implemented on `main` in
-`9380848` but has not been deployed.
+The annotated `v1.0.0` tag identifies the verified release commit.
 
 ## Project status
 
 - Version: **1.0.0**
-- Status: production deployed; final release tag pending
+- Status: v1.0.0 release prepared
 - Theme: dark only in v1.0.0
 - Primary UI: iPad-first responsive smart-home control center
 - Backend: FastAPI/Uvicorn on the TinkerBoard
 - Authentication: dashboard session with CSRF protection for writes
-- Post-baseline development: EPIC 19 Milestone 1, live device health
+- Monitoring: live device health with semantic status and optional metrics
 
 Release notes are in
 [`docs/RELEASE_NOTES_v1.0.0.md`](docs/RELEASE_NOTES_v1.0.0.md). Planned work is
@@ -53,6 +51,10 @@ certification pass remains a release follow-up.
 - Home Assistant PM2.5 and configured automation inventory
 - household scenes, favorites, topology, and device registry
 - TP-Link provider and camera inventory: authenticated and read-only
+- Tapo C200: verified ONVIF metadata, authenticated snapshot, and explicitly
+  opened on-demand local live view; PTZ remains disabled
+- Bedroom AC: verified Tuya IR Cloud power and target-temperature controls with
+  assumed-state labeling and structured audit records
 - Tapo H110: bridge/inventory diagnostics only; unverified IR transmission is
   disabled
 - configured camera-control providers where persistent camera configuration is
@@ -90,6 +92,7 @@ The Git checkout and running application are deliberately separate:
 - persistent configuration and state: `/root/.smart-condo-dashboard`
 - environment file: `/etc/default/smart-condo-dashboard`
 - service: `smart-condo-dashboard.service`
+- camera gateway: `smart-condo-go2rtc.service`, loopback only
 
 Never run the service from the Git checkout and never copy persistent state into
 Git. Runtime-only deployment snapshots committed `HEAD`, takes an exclusive

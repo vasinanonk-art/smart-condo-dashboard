@@ -2,25 +2,12 @@
 
 ## [Unreleased]
 
-### EPIC 19 — Live Device Monitoring, Milestone 1
+No changes after v1.0.0.
 
-- Added an authenticated read-only device-health endpoint.
-- Added in-memory heartbeat tracking, online/offline normalization, last-seen
-  timestamps, and provider response-time measurement.
-- Added a design-system Device Health card with green/yellow/red health
-  indicators and one bounded frontend poller.
-- Added unit, authentication, frontend-runtime, and full-suite regression
-  coverage in commit `9380848`.
-
-EPIC 19 Milestone 1 is implemented on `main` but is not part of the v1.0.0
-production baseline at `6e319ae`.
-
-## [1.0.0] - 2026-07-30
+## [1.0.0] - 2026-08-07
 
 Smart Condo Dashboard v1.0.0 establishes the first stable production baseline.
-The verified production source commit is
-`6e319ae37a1797430c26cb7eb6c82104205a2abd`. The annotated `v1.0.0` tag is
-prepared but has not yet been created.
+The annotated `v1.0.0` tag identifies the verified release commit.
 
 ### Smart-home control
 
@@ -38,6 +25,24 @@ prepared but has not yet been created.
   enabling unverified IR transmission or learning.
 - Added MQTT presence, lighting, Home Assistant, scenes, favorites, automation,
   topology, and the safe household device registry.
+- Added verified Bedroom AC power and 18–30°C temperature control through the
+  official Tuya IR Cloud endpoint, with CSRF, rate limits, per-device locking,
+  assumed-state persistence, and structured redacted audit records.
+
+### Monitoring, cameras, topology, and PWA
+
+- Added authenticated device health with normalized online/offline state,
+  last-seen, response time, provider-dependent firmware/model/network metrics,
+  and semantic health indicators.
+- Added verified Tapo C200 ONVIF inventory and authenticated RTSP-derived JPEG
+  snapshots without exposing credentials or stream URLs.
+- Added explicitly opened, on-demand H.264 live view through pinned go2rtc
+  v1.9.14 with loopback-only listeners and transactional provisioning.
+- Added layered topology summaries, non-overlapping nodes, link states, and a
+  lightweight CSS heartbeat for healthy links.
+- Added verified dashboard quick actions without creating new command paths.
+- Added an installable PWA shell that caches only versioned static assets and
+  never caches APIs, authentication, camera media, or operational data.
 
 ### Electricity and tariffs
 
@@ -85,6 +90,8 @@ prepared but has not yet been created.
   every temporary client.
 - Added bounded caches, per-device command locks, deployment locks, and
   recoverable runtime replacement.
+- Reused electricity history reads across summary, topology, and billing-cycle
+  calculations and removed duplicate frontend summary/billing ownership.
 
 ### Security
 
@@ -95,7 +102,7 @@ prepared but has not yet been created.
   IR data, and vendor device identifiers remain outside managed source.
 - Runtime configuration paths prefer root-readable persistent files.
 
-### Bug fixes through `6e319ae`
+### Bug fixes through the v1.0.0 release
 
 - Secured provider debug and runtime diagnostics routes.
 - Corrected canonical tariff route reporting and stale dataset UX.
@@ -113,6 +120,9 @@ prepared but has not yet been created.
 - Fixed PM2.5, temperature, humidity, and electricity scrubbing at both true
   endpoints by accounting for SVG `preserveAspectRatio`, CSS/viewBox scaling,
   and iPad touch coordinates.
+- Restored electricity Settings hydration without duplicate mounts or fetches.
+- Added bounded LG inventory retry backoff and forced websocket cleanup.
+- Made IR command audits and persisted assumed state correlation-consistent.
 
 ### Deployment notes
 
@@ -124,16 +134,19 @@ prepared but has not yet been created.
 - Runtime-only deployment preserves the virtual environment and persistent
   configuration, takes an exclusive lock, verifies local-config checksums, and
   restores the previous runtime if replacement fails.
+- ARMv7 deployment pins and checksum-verifies go2rtc v1.9.14, generates a
+  root-only stream configuration, and rolls back its binary/config/unit/state
+  together with the dashboard runtime on failure.
 - Back up persistent state and `/etc/default/smart-condo-dashboard` before the
   final release tag.
 
 ### Known limitations
 
 - v1.0.0 supports the dark theme only.
-- Camera cards remain configuration-unavailable until persistent camera
-  configuration is restored.
-- TP-Link camera integration is read-only; snapshot, streaming, PTZ,
-  recordings, audio, and motion features remain disabled.
+- Tapo C200 snapshot and on-demand live view require valid persistent camera
+  configuration and local Camera Account credentials.
+- Xiaomi camera capabilities remain Unknown; PTZ, recordings, audio, and
+  motion controls remain disabled.
 - Tapo H110 IR transmit and learning remain disabled without a verified,
   documented command contract.
 - IR state is assumed unless a provider supplies real feedback.
@@ -144,8 +157,8 @@ prepared but has not yet been created.
 
 ### Rollback
 
-The immediate pre-release production commit is
-`eccffee98b21a87f3674b4f14e631299badf2948`.
+The immediate pre-release production rollback commit is
+`0886e10fc0911505933ac577f9c942a8fa060591`.
 
 Do not reset a dirty production checkout. Create a clean recovery worktree at
 the rollback commit, then run the guarded installer:
@@ -154,7 +167,7 @@ the rollback commit, then run the guarded installer:
 cd /opt/smart-condo-dashboard
 git status --short
 git worktree add /opt/smart-condo-dashboard-rollback \
-  eccffee98b21a87f3674b4f14e631299badf2948
+  0886e10fc0911505933ac577f9c942a8fa060591
 cd /opt/smart-condo-dashboard-rollback
 sudo ./install.sh --dry-run
 sudo ./install.sh --runtime-only

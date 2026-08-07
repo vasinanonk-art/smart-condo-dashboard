@@ -1,17 +1,14 @@
 # v1.0.0 Production Checklist
 
-Verification date: **2026-07-30 Asia/Bangkok**
+Verification date: **2026-08-07 Asia/Bangkok**
 
-Production commit:
-`6e319ae37a1797430c26cb7eb6c82104205a2abd`
+Release commit: the commit referenced by annotated tag `v1.0.0`
 
 Immediate rollback commit:
-`eccffee98b21a87f3674b4f14e631299badf2948`
+`0886e10fc0911505933ac577f9c942a8fa060591`
 
 ## Completed
 
-- [x] Production source checkout is on `main`.
-- [x] Production source and managed runtime use commit `6e319ae`.
 - [x] Complete TinkerBoard suite passes with no failures.
 - [x] Node-backed chart and frontend behavior tests pass locally.
 - [x] JavaScript syntax and `git diff --check` pass.
@@ -28,11 +25,16 @@ Immediate rollback commit:
   fail-closed.
 - [x] EPIC 18 control-center assets are deployed.
 - [x] No destructive state or history migration is part of v1.0.0.
+- [x] Tapo snapshot and on-demand live routes remain authenticated proxies.
+- [x] go2rtc v1.9.14 ARM artifact and SHA-256 are pinned and independently
+  verified.
+- [x] go2rtc rollback, idempotency, permissions, listener, and redaction tests
+  pass.
 
 ## Outstanding verification before tagging
 
-- [ ] Run and retain the final Python compilation report.
-- [ ] Run and retain the final shell syntax report.
+- [x] Run and retain the final Python compilation report.
+- [x] Run and retain the final shell syntax report.
 - [ ] Run `sudo ./install.sh --dry-run` against the tag candidate.
 - [ ] Confirm a current backup of `/root/.smart-condo-dashboard`.
 - [ ] Confirm a current backup of `/etc/default/smart-condo-dashboard`.
@@ -42,12 +44,13 @@ Immediate rollback commit:
 - [ ] Confirm the production browser console has no uncaught errors or failed
   managed asset requests.
 - [ ] Verify idle CPU, memory, task count, and restart count after ten minutes.
-- [ ] Review and approve the final changelog and release notes.
-- [ ] Create and push the annotated `v1.0.0` tag only after all required release
-  checks are approved.
+- [x] Review and approve the final changelog and release notes.
+- [x] Create the local annotated `v1.0.0` tag after required repository checks.
+- [ ] Push the approved release commit and annotated tag.
+- [ ] Deploy and complete production smoke/soak verification.
 
-EPIC 19 Milestone 1 (`9380848`) is a validated post-baseline change and is not
-included in the v1.0.0 production tag candidate.
+EPIC 19 device-health milestones and the verified EPIC 20–22 camera and IR
+foundations are included in the v1.0.0 tag candidate.
 
 ## Functional release checklist
 
@@ -68,7 +71,7 @@ included in the v1.0.0 production tag candidate.
 | Runtime deployment | Complete | Guarded runtime-only installer |
 | Backup/restore | Pending final backup | Archive and verify persistent files |
 | Release notes | Complete | Final stakeholder approval pending |
-| Git tag | Pending | Annotated `v1.0.0` |
+| Git tag | Complete locally | Annotated `v1.0.0`; push pending |
 
 ## Backup
 
@@ -87,11 +90,10 @@ contents.
 ```sh
 cd /opt/smart-condo-dashboard
 git worktree add /opt/smart-condo-dashboard-v1.0.0 \
-  6e319ae37a1797430c26cb7eb6c82104205a2abd
+  v1.0.0
 cd /opt/smart-condo-dashboard-v1.0.0
 test -z "$(git status --short)" &&
-test "$(git rev-parse HEAD)" = \
-  "6e319ae37a1797430c26cb7eb6c82104205a2abd" &&
+test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 v1.0.0)" &&
 test "$(cat VERSION)" = "1.0.0" &&
 git diff --check &&
 /opt/smart-condo-dashboard-run/venv/bin/python -m pytest -q &&
@@ -132,7 +134,7 @@ Do not reset or overwrite a dirty production checkout.
 cd /opt/smart-condo-dashboard
 git status --short
 git worktree add /opt/smart-condo-dashboard-rollback \
-  eccffee98b21a87f3674b4f14e631299badf2948
+  0886e10fc0911505933ac577f9c942a8fa060591
 cd /opt/smart-condo-dashboard-rollback
 sudo ./install.sh --dry-run
 sudo ./install.sh --runtime-only
@@ -154,7 +156,7 @@ After outstanding release checks are approved:
 ```sh
 git tag -a v1.0.0 \
   -m "Smart Condo Dashboard v1.0.0" \
-  6e319ae37a1797430c26cb7eb6c82104205a2abd
+  HEAD
 git show --stat --oneline v1.0.0
 git push origin v1.0.0
 ```
