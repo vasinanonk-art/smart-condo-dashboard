@@ -1,0 +1,24 @@
+[Unit]
+Description=Smart Condo go2rtc Camera Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/lib/smart-condo-dashboard/go2rtc -config /etc/smart-condo-dashboard/go2rtc.yaml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/smart-condo-dashboard/go2rtc.yaml
+RestrictSUIDSGID=true
+LockPersonality=true
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target

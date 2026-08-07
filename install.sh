@@ -54,11 +54,34 @@ DEPLOY_STARTED=0
 DEPLOY_COMPLETE=0
 CONFIG_RESTORE_COMPLETE=0
 RUNTIME_ROLLBACK_TMP=
+GO2RTC_ROLLBACK_TMP=
+GO2RTC_BACKUP_READY=0
+KEEP_GO2RTC_BACKUP=0
+provision_go2rtc_transactionally() {
+    case "${GO2RTC_PROVISION_ENABLED:-auto}:$(uname -m)" in
+        0:*|false:*|no:*) echo "go2rtc provisioning explicitly disabled." ;;
+        auto:armv7l|auto:armv7|1:*|true:*|yes:*)
+            GO2RTC_ROLLBACK_TMP=$(mktemp -d "${TMPDIR:-/tmp}/smart-condo-go2rtc-rollback.XXXXXX")
+            "$DEPLOY_SRC/scripts/provision_go2rtc.sh" backup "$GO2RTC_ROLLBACK_TMP"
+            GO2RTC_BACKUP_READY=1
+            GO2RTC_PYTHON="$PY"; export GO2RTC_PYTHON
+            "$DEPLOY_SRC/scripts/provision_go2rtc.sh" provision
+            ;;
+        *) echo "go2rtc provisioning not applicable to this architecture." ;;
+    esac
+}
 deployment_cleanup() {
     cleanup_status=$1
     trap - EXIT HUP INT TERM
     if [ "$DEPLOY_STARTED" -eq 1 ] && [ "$DEPLOY_COMPLETE" -eq 0 ] &&
        [ -n "$RUNTIME_ROLLBACK_TMP" ]; then
+        if [ "$GO2RTC_BACKUP_READY" -eq 1 ] && [ -n "$GO2RTC_ROLLBACK_TMP" ]; then
+            echo "Deployment exited early; restoring the previous go2rtc installation." >&2
+            if ! "$DEPLOY_SRC/scripts/provision_go2rtc.sh" restore "$GO2RTC_ROLLBACK_TMP"; then
+                KEEP_GO2RTC_BACKUP=1
+                echo "ERROR: go2rtc rollback failed; backup retained at: $GO2RTC_ROLLBACK_TMP" >&2
+            fi
+        fi
         echo "Deployment exited early; restoring the previous managed runtime." >&2
         if ! restore_managed_runtime \
             "$APP_RUN" "$RUNTIME_ROLLBACK_TMP/files" "$RUNTIME_ROLLBACK_TMP/manifest"; then
@@ -80,6 +103,9 @@ deployment_cleanup() {
     fi
     rm -rf "$SOURCE_SNAPSHOT_TMP"
     [ -z "$RUNTIME_ROLLBACK_TMP" ] || rm -rf "$RUNTIME_ROLLBACK_TMP"
+    if [ "$KEEP_GO2RTC_BACKUP" -eq 0 ]; then
+        [ -z "$GO2RTC_ROLLBACK_TMP" ] || rm -rf "$GO2RTC_ROLLBACK_TMP"
+    fi
     flock -u 9
     exit "$cleanup_status"
 }
@@ -107,6 +133,11 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo "Dry run: Camera config previously present: $CAMERA_WAS_PRESENT"
     echo "Dry run: Sonoff config previously present: $SONOFF_WAS_PRESENT"
     echo "Dry run: local configuration preservation verified."
+    case "${GO2RTC_PROVISION_ENABLED:-auto}:$(uname -m)" in
+        0:*|false:*|no:*) echo "Dry run: go2rtc provisioning explicitly disabled." ;;
+        auto:armv7l|auto:armv7|1:*|true:*|yes:*) "$DEPLOY_SRC/scripts/provision_go2rtc.sh" dry-run ;;
+        *) echo "Dry run: go2rtc provisioning not applicable to this architecture." ;;
+    esac
     exit 0
 fi
 
@@ -168,6 +199,7 @@ if [ "$SONOFF_WAS_PRESENT" -eq 1 ] && ! runtime_config_present \
 fi
 
 if [ "$RUNTIME_ONLY" -eq 1 ]; then
+    provision_go2rtc_transactionally
     echo "Runtime-only deployment: virtual environment and dependencies were not modified."
     systemctl restart smart-condo-dashboard
     DEPLOY_COMPLETE=1
@@ -193,6 +225,8 @@ fi
 "$PY" -m pip install --upgrade pip
 "$PY" -m pip install -r "$APP_RUN/backend/requirements.txt"
 "$PY" -c "from pywebostv.connection import WebOSClient; assert WebOSClient.PROMPTED == 1 and WebOSClient.REGISTERED == 2"
+
+provision_go2rtc_transactionally
 
 install -m 0644 "$DEPLOY_SRC/systemd/smart-condo-dashboard.service" /etc/systemd/system/smart-condo-dashboard.service
 

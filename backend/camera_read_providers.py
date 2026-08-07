@@ -361,7 +361,7 @@ def _rtsp_snapshot(uri: str, credentials: tuple[str, str]) -> Response:
 
 
 def _go2rtc_base_url() -> str | None:
-    value = os.getenv("GO2RTC_API_URL", "").strip().rstrip("/")
+    value = os.getenv("GO2RTC_API_URL", "http://127.0.0.1:1984").strip().rstrip("/")
     if not value:
         return None
     parsed = urllib.parse.urlsplit(value)

@@ -37,8 +37,11 @@ authenticated dashboard:
 - redacted camera inventory
 - clear `Not Supported` presentation
 
-No cloud login, operational camera command, snapshot, streaming, PTZ, recording,
-scene, or undocumented API was activated.
+The verified Bedroom Tapo C200 provides authenticated, backend-proxied JPEG
+snapshots and an explicitly opened on-demand H.264 live view. The live gateway
+uses pinned go2rtc v1.9.14 with loopback-only API/RTSP listeners and root-only
+credentials. PTZ, recording, motion, microphone, speaker, scenes, and
+undocumented APIs remain disabled; the Xiaomi camera remains Unknown.
 
 ## EPIC 18 — Smart Condo Control Center redesign
 

@@ -41,6 +41,7 @@ def _authenticated_client(monkeypatch):
 def _install_env(source, run_root, persistent, lock_file):
     return {
         **os.environ,
+        "GO2RTC_PROVISION_ENABLED": "0",
         "APP_SRC": str(source),
         "APP_RUN": str(run_root),
         "PERSISTENT_CONFIG_ROOT": str(persistent),

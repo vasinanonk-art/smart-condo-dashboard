@@ -21,21 +21,40 @@ Configure the service environment:
 CAMERA_CONFIG_FILE=/root/.smart-condo-dashboard/cameras.local.json
 TAPO_C200_USERNAME=<Tapo Camera Account username>
 TAPO_C200_PASSWORD=<Tapo Camera Account password>
-GO2RTC_API_URL=http://127.0.0.1:1984
-GO2RTC_TAPO_C200_STREAM=tapo_c200_main
 ```
 
 The Tapo credentials must be created under **Advanced Settings → Camera
 Account** in the Tapo application. They are camera-local ONVIF credentials,
 not the TP-Link cloud account. Never put their values in the JSON file.
 
-The go2rtc API and RTSP listeners must bind to loopback only. Its root-owned
-configuration should define `tapo_c200_main` from the verified 1920×1080 ONVIF
-RTSP URI and may reserve `tapo_c200_sub` for future use. The dashboard connects
+Runtime-only deployment provisions the pinned official go2rtc v1.9.14 ARM
+artifact on ARMv7 after validating its SHA-256 checksum. The installer reads
+the existing environment file as data (it never shell-sources it), performs a
+bounded read-only ONVIF profile lookup, and writes the resulting main-stream
+source to `/etc/smart-condo-dashboard/go2rtc.yaml` as `root:root` mode `0600`.
+The binary is installed outside Git at
+`/usr/local/lib/smart-condo-dashboard/go2rtc` and managed by the dedicated
+`smart-condo-go2rtc.service` unit.
+The service receives only the config-file path as an argument and suppresses
+go2rtc process output so an upstream error cannot echo the credential-bearing
+source URI into the journal.
+
+The go2rtc API and RTSP listeners bind only to `127.0.0.1:1984` and
+`127.0.0.1:8554`; WebRTC listening is disabled. The dashboard connects
 only to the main stream and proxies fragmented MP4 through its authenticated
 camera route; neither go2rtc management endpoints nor RTSP credentials are
 browser-accessible. The camera producer starts when Live View is opened and is
 released when the dialog closes or the browser disconnects.
+
+The public camera ID is derived from the persistent schema and is currently
+`tapo-c220` (a compatibility identifier retained for the physical C200). Its
+routes are `/api/camera-control/tapo-c220/snapshot` and
+`/api/camera-control/tapo-c220/live`.
+
+Provisioning is transactional with the managed runtime. Failure restores the
+previous binary, root-only config, systemd unit and active/enabled state before
+the existing installer restores the previous dashboard runtime. Reinstalling
+the same binary, config and unit does not restart go2rtc.
 
 The Xiaomi camera is intentionally configured as an unverified `auto`
 candidate with no protocol ports or credentials. Until a supported protocol is
