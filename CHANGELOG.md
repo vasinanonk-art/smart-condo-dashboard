@@ -2,7 +2,23 @@
 
 ## [Unreleased]
 
-No changes after v1.0.0.
+No changes after v1.0.1.
+
+## [1.0.1] - 2026-08-07
+
+Smart Condo Dashboard v1.0.1 supersedes the published v1.0.0 release tag with
+the same application feature set and corrected production release validation.
+
+### Deployment verification
+
+- Aligned the release verifier with the documented camera inventory envelope,
+  which exposes camera records under `cameras`.
+- Added explicit checks for loaded and configured camera inventory, the stable
+  Tapo public identifier, verified state, snapshot, and live-stream capability.
+- Replaced human-readable journal parsing with quiet JSON journal output so an
+  empty journal is not misreported as an error.
+- Added regression coverage for empty, single-error, and multiple-error journal
+  results.
 
 ## [1.0.0] - 2026-08-07
 
