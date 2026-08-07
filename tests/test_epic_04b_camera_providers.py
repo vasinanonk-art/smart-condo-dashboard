@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import bcrypt
 from fastapi.testclient import TestClient
+from fastapi.responses import Response
 
 from backend.app_entry import app
 from backend import camera_read_providers as providers
@@ -121,7 +122,7 @@ def test_tapo_onvif_discovery_is_per_camera_and_secret_safe(monkeypatch, tmp_pat
     assert item["model"] == "C220" and item["firmware"] == "1.2.3"
     assert item["serial"] == "***5678"
     assert item["capabilities"]["onvif_profiles"] is True
-    assert item["capabilities"]["snapshot"] is False
+    assert item["capabilities"]["snapshot"] is True
     assert item["capabilities"]["ptz_move"] is False
     assert item["capabilities"]["presets"] is False
     assert item["capabilities"]["live_stream"] is False
@@ -290,6 +291,78 @@ def test_snapshot_rejects_device_supplied_cross_host_uri(monkeypatch):
         assert str(exc) == "snapshot_unavailable"
     else:
         raise AssertionError("cross-host snapshot URI was accepted")
+
+
+def test_onvif_snapshot_falls_back_to_verified_rtsp_frame(monkeypatch):
+    spec = providers.CameraSpec(
+        id="camera-one", display_name="Camera One", room="unknown",
+        vendor="TP-Link", model="C200", host="camera.local", enabled=True,
+        provider="onvif", rtsp_port=554, onvif_port=2020, stream_path=None,
+        username_env="CAMERA_ONE_USERNAME", password_env="CAMERA_ONE_PASSWORD",
+        declared_capabilities=frozenset({"snapshot"}), verification_status="verified",
+    )
+    profile = SimpleNamespace(
+        token="minor-profile",
+        Name="minorStream",
+        VideoEncoderConfiguration=SimpleNamespace(
+            Encoding="H264",
+            Resolution=SimpleNamespace(Width=640, Height=360),
+        ),
+    )
+    media = SimpleNamespace(
+        GetProfiles=lambda: [profile],
+        GetSnapshotUri=lambda request: (_ for _ in ()).throw(RuntimeError("unsupported")),
+        GetStreamUri=lambda request: SimpleNamespace(Uri="rtsp://camera.local/stream2"),
+    )
+    monkeypatch.setattr(
+        providers, "_onvif_client",
+        lambda camera: SimpleNamespace(create_media_service=lambda: media),
+    )
+    monkeypatch.setattr(providers, "_credentials", lambda camera: ("user", "password"))
+    calls = []
+    monkeypatch.setattr(
+        providers,
+        "_rtsp_snapshot",
+        lambda uri, credentials: calls.append((uri, credentials)) or Response(
+            b"\xff\xd8jpeg\xff\xd9", media_type="image/jpeg"
+        ),
+    )
+
+    response = providers._snapshot_onvif(spec)
+
+    assert response.media_type == "image/jpeg"
+    assert calls == [("rtsp://camera.local/stream2", ("user", "password"))]
+
+
+def test_rtsp_snapshot_keeps_credentials_out_of_process_arguments(monkeypatch):
+    captured = {}
+
+    class Process:
+        returncode = 0
+
+        def __init__(self, arguments, **options):
+            captured["arguments"] = arguments
+            captured["pass_fds"] = options["pass_fds"]
+            options["stdout"].write(b"\xff\xd8jpeg\xff\xd9")
+
+        def wait(self, timeout):
+            captured["timeout"] = timeout
+            return 0
+
+    monkeypatch.setattr(providers.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(providers.subprocess, "Popen", Process)
+
+    response = providers._rtsp_snapshot(
+        "rtsp://camera.local/stream2", ("private-user", "private-password")
+    )
+
+    rendered = repr(captured["arguments"])
+    assert "private-user" not in rendered
+    assert "private-password" not in rendered
+    assert "rtsp://" not in rendered
+    assert captured["pass_fds"]
+    assert captured["timeout"] == providers.NETWORK_TIMEOUT_SEC + 4.0
+    assert response.body == b"\xff\xd8jpeg\xff\xd9"
 
 
 def test_stable_household_camera_alias_resolves_strict_inventory_id(monkeypatch, tmp_path):

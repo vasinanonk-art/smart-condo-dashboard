@@ -7,7 +7,7 @@
       "room": "bed_room",
       "vendor": "TP-Link Tapo",
       "model": "C200",
-      "host": "192.168.1.46",
+      "host": "192.168.1.43",
       "enabled": true,
       "provider": "onvif",
       "rtsp_port": 554,
@@ -17,8 +17,8 @@
         "username_env": "TAPO_C200_USERNAME",
         "password_env": "TAPO_C200_PASSWORD"
       },
-      "declared_capabilities": [],
-      "verification_status": "unverified"
+      "declared_capabilities": ["snapshot"],
+      "verification_status": "verified"
     },
     {
       "id": "xiaomi-camera-1",

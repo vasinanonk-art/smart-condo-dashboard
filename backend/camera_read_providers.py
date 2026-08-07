@@ -5,7 +5,10 @@ import copy
 import importlib.util
 import json
 import os
+import shutil
 import socket
+import subprocess
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -233,6 +236,30 @@ def _safe_snapshot_uri(media: Any, profile_token: Any, host: str | None) -> str 
     return uri
 
 
+def _safe_stream_uri(media: Any, profile_token: Any, host: str | None) -> str | None:
+    if not profile_token or not host:
+        return None
+    uri_result = media.GetStreamUri({
+        "StreamSetup": {
+            "Stream": "RTP-Unicast",
+            "Transport": {"Protocol": "RTSP"},
+        },
+        "ProfileToken": profile_token,
+    })
+    uri = str(getattr(uri_result, "Uri", "") or "")
+    parsed_uri = urllib.parse.urlsplit(uri)
+    if (
+        parsed_uri.scheme != "rtsp"
+        or not parsed_uri.hostname
+        or parsed_uri.hostname.casefold() != host.casefold()
+        or parsed_uri.username is not None
+        or parsed_uri.password is not None
+        or any(char in uri for char in ("\r", "\n", "'", "\\"))
+    ):
+        return None
+    return uri
+
+
 def _profile_projection(profile: Any) -> Dict[str, Any]:
     video = getattr(profile, "VideoEncoderConfiguration", None)
     resolution = getattr(video, "Resolution", None)
@@ -244,6 +271,91 @@ def _profile_projection(profile: Any) -> Dict[str, Any]:
         "width": width if isinstance(width, int) and 0 < width <= 16384 else None,
         "height": height if isinstance(height, int) and 0 < height <= 16384 else None,
     }
+
+
+def _rtsp_snapshot_source(media: Any, profiles: list[Any], host: str | None):
+    candidates = []
+    for profile in profiles[:16]:
+        try:
+            uri = _safe_stream_uri(media, getattr(profile, "token", None), host)
+        except Exception:
+            continue
+        if uri is None:
+            continue
+        projection = _profile_projection(profile)
+        width = projection.get("width")
+        height = projection.get("height")
+        pixels = width * height if isinstance(width, int) and isinstance(height, int) else 2**31
+        candidates.append((pixels, uri))
+    return min(candidates, key=lambda item: item[0])[1] if candidates else None
+
+
+def _authenticated_rtsp_uri(uri: str, credentials: tuple[str, str]) -> str:
+    parsed = urllib.parse.urlsplit(uri)
+    if parsed.scheme != "rtsp" or not parsed.hostname:
+        raise ValueError("invalid_stream_uri")
+    username, password = credentials
+    host = parsed.hostname
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("invalid_stream_uri") from exc
+    if port:
+        host = f"{host}:{port}"
+    netloc = (
+        f"{urllib.parse.quote(username, safe='')}:"
+        f"{urllib.parse.quote(password, safe='')}@{host}"
+    )
+    path = urllib.parse.quote(parsed.path, safe="%/:@-._~!$&()*+,;=")
+    query = urllib.parse.quote(parsed.query, safe="%=&/:@-._~!$()*+,;")
+    return urllib.parse.urlunsplit(("rtsp", netloc, path, query, ""))
+
+
+def _rtsp_snapshot(uri: str, credentials: tuple[str, str]) -> Response:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise LookupError("snapshot_provider_unavailable")
+    authenticated_uri = _authenticated_rtsp_uri(uri, credentials)
+    playlist = f"ffconcat version 1.0\nfile '{authenticated_uri}'\n".encode("utf-8")
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, playlist)
+    finally:
+        os.close(write_fd)
+    try:
+        with tempfile.TemporaryFile() as output:
+            process = subprocess.Popen(
+                [
+                    ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error",
+                    "-f", "concat", "-safe", "0",
+                    "-protocol_whitelist",
+                    "file,pipe,tcp,udp,rtp,rtsp,http,https,tls,crypto",
+                    "-i", f"pipe:{read_fd}", "-map", "0:v:0", "-frames:v", "1",
+                    "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.DEVNULL,
+                pass_fds=(read_fd,),
+            )
+            try:
+                process.wait(timeout=NETWORK_TIMEOUT_SEC + 4.0)
+            except subprocess.TimeoutExpired as exc:
+                process.kill()
+                process.wait(timeout=1.0)
+                raise TimeoutError("camera_timeout") from exc
+            if process.returncode != 0:
+                raise LookupError("snapshot_unavailable")
+            size = output.tell()
+            if size <= 4 or size > MAX_SNAPSHOT_BYTES:
+                raise ValueError("invalid_snapshot_response")
+            output.seek(0)
+            content = output.read(MAX_SNAPSHOT_BYTES + 1)
+    finally:
+        os.close(read_fd)
+    if not (content.startswith(b"\xff\xd8") and content.endswith(b"\xff\xd9")):
+        raise ValueError("invalid_snapshot_response")
+    return Response(content, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
@@ -267,6 +379,11 @@ def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
                     discovered.add("snapshot")
             except Exception:
                 snapshot_available = False
+        rtsp_snapshot_available = bool(
+            _rtsp_snapshot_source(media, raw_profiles, spec.host)
+            and shutil.which("ffmpeg")
+        )
+        snapshot_available = snapshot_available or rtsp_snapshot_available
         ptz_available = False
         try:
             ptz = camera.create_ptz_service()
@@ -278,6 +395,11 @@ def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
             ptz_available = False
         result["capabilities"]["onvif_profiles"] = bool(raw_profiles)
         result["capabilities"]["firmware_info"] = True
+        result["capabilities"]["snapshot"] = bool(
+            snapshot_available
+            and spec.verification_status == "verified"
+            and "snapshot" in spec.declared_capabilities
+        )
         manufacturer = _safe_text(getattr(information, "Manufacturer", None))
         result.update({
             "vendor": manufacturer or result["vendor"],
@@ -441,13 +563,19 @@ def _snapshot_onvif(spec: CameraSpec):
     profiles = list(media.GetProfiles() or [])
     if not profiles:
         raise LookupError("snapshot_unavailable")
-    profile_token = getattr(profiles[0], "token", None)
-    uri = _safe_snapshot_uri(media, profile_token, spec.host)
-    if uri is None:
-        raise LookupError("snapshot_unavailable")
     credentials = _credentials(spec)
     if credentials is None:
         raise LookupError("snapshot_unavailable")
+    profile_token = getattr(profiles[0], "token", None)
+    try:
+        uri = _safe_snapshot_uri(media, profile_token, spec.host)
+    except Exception:
+        uri = None
+    if uri is None:
+        rtsp_uri = _rtsp_snapshot_source(media, profiles, spec.host)
+        if rtsp_uri is None:
+            raise LookupError("snapshot_unavailable")
+        return _rtsp_snapshot(rtsp_uri, credentials)
     username, password = credentials
     manager = urllib.request.HTTPPasswordMgrWithDefaultRealm()
     manager.add_password(None, uri, username, password)
