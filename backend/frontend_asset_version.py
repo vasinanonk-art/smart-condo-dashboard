@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Callable
 
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from backend import app as app_module
 
@@ -81,11 +81,26 @@ def dashboard_login() -> HTMLResponse:
     return render_html("login.html")
 
 
+def service_worker() -> Response:
+    content = (FRONTEND_DIR / "service-worker.js").read_text(encoding="utf-8")
+    content = content.replace(TOKEN, BUILD_VERSION)
+    return Response(
+        content,
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Service-Worker-Allowed": "/",
+        },
+    )
+
+
 def _install() -> None:
     if getattr(app_module, "_frontend_asset_version_installed", False):
         return
     _replace_route("/", dashboard_index)
     _replace_route("/login", dashboard_login)
+    if not any(getattr(route, "path", None) == "/service-worker.js" for route in app.routes):
+        app.add_api_route("/service-worker.js", service_worker, methods=["GET"], include_in_schema=False)
     try:
         from backend import dashboard_auth
 
