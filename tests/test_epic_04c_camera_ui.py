@@ -87,6 +87,17 @@ def test_camera_ui_is_capability_driven_and_has_no_write_commands():
     assert "data-camera-action=\"zoom\"" not in SOURCE
 
 
+def test_live_view_is_on_demand_and_releases_media_on_close():
+    assert "function openCameraLiveView(device, identifier)" in SOURCE
+    assert "video.src = `/api/camera-control/${identifier}/live`" in SOURCE
+    assert "if (button.dataset.cameraAction === 'live')" in SOURCE
+    assert "video.removeAttribute('src')" in SOURCE
+    assert "video.load()" in SOURCE
+    assert "dialog.addEventListener('cancel'" in SOURCE
+    assert "/api/streams" not in SOURCE
+    assert "rtsp://" not in SOURCE.lower()
+
+
 def test_camera_ui_shows_verified_details_and_exact_unavailable_reasons():
     for label in ("Vendor", "Model", "Last update", "Capabilities"):
         assert f"<span>{label}</span>" in SOURCE

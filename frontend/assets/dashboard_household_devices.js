@@ -238,6 +238,38 @@
     bindIrCommands(host);
   }
 
+  function openCameraLiveView(device, identifier) {
+    document.querySelector('.household-camera-live-dialog button')?.click();
+    const dialog = document.createElement('dialog');
+    dialog.className = 'household-camera-live-dialog';
+    dialog.setAttribute('aria-label', `${device.display_name} live view`);
+    dialog.innerHTML = `<div class="household-camera-live-shell">
+      <header><strong>${safe(device.display_name)}</strong><button type="button" aria-label="Close live view">Close</button></header>
+      <video controls autoplay muted playsinline aria-label="${safe(`${device.display_name} live video`)}"></video>
+    </div>`;
+    document.body.appendChild(dialog);
+    const video = dialog.querySelector('video');
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      if (dialog.open) dialog.close();
+      dialog.remove();
+    };
+    dialog.querySelector('button').addEventListener('click', close);
+    dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+    dialog.addEventListener('click', event => { if (event.target === dialog) close(); });
+    video.addEventListener('error', () => {
+      if (!closed) UI.toast('Live view is unavailable.', 'error');
+    }, {once:true});
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+    video.src = `/api/camera-control/${identifier}/live`;
+  }
+
   function renderCameras() {
     const host = document.getElementById('cameraControls');
     if (!host) return;
@@ -293,18 +325,19 @@
         window.open(`/api/camera-control/${identifier}/snapshot`, '_blank', 'noopener');
         return;
       }
+      if (button.dataset.cameraAction === 'live') {
+        const device = state.devices.find(item => item.id === button.dataset.householdCamera);
+        if (device) openCameraLiveView(device, identifier);
+        return;
+      }
       button.disabled = true;
       try {
-        const resource = button.dataset.cameraAction === 'presets' ? 'presets' : 'stream';
+        const resource = 'presets';
         const response = await fetch(`/api/camera-control/${identifier}/${resource}`);
         if (!response.ok) throw new Error('Camera information is unavailable');
         const payload = await response.json();
-        if (resource === 'presets') {
-          const names = (payload.presets || []).map(item => item.name).filter(Boolean);
-          UI.toast(names.length ? `Presets: ${names.join(', ')}` : 'No presets are available.', 'success');
-        } else {
-          UI.toast(payload.stream?.available ? 'Live view is available.' : 'Live view is unavailable.', payload.stream?.available ? 'success' : 'error');
-        }
+        const names = (payload.presets || []).map(item => item.name).filter(Boolean);
+        UI.toast(names.length ? `Presets: ${names.join(', ')}` : 'No presets are available.', 'success');
       } catch (error) {
         UI.toast(error.message, 'error');
       } finally {

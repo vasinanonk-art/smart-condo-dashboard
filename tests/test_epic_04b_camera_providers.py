@@ -365,6 +365,86 @@ def test_rtsp_snapshot_keeps_credentials_out_of_process_arguments(monkeypatch):
     assert response.body == b"\xff\xd8jpeg\xff\xd9"
 
 
+def test_go2rtc_boundary_accepts_loopback_only(monkeypatch):
+    for value in (
+        "http://camera.local:1984",
+        "https://127.0.0.1:1984",
+        "http://user:password@127.0.0.1:1984",
+        "http://127.0.0.1:1984/api",
+    ):
+        monkeypatch.setenv("GO2RTC_API_URL", value)
+        assert providers._go2rtc_base_url() is None
+    monkeypatch.setenv("GO2RTC_API_URL", "http://127.0.0.1:1984")
+    assert providers._go2rtc_base_url() == "http://127.0.0.1:1984"
+
+
+def test_live_proxy_streams_and_releases_upstream(monkeypatch):
+    class Headers:
+        @staticmethod
+        def get_content_type():
+            return "video/mp4"
+
+    class Upstream:
+        status = 200
+        headers = Headers()
+        chunks = [b"first", b"second", b""]
+        closed = False
+
+        def read(self, size):
+            return self.chunks.pop(0)
+
+        def close(self):
+            self.closed = True
+
+    upstream = Upstream()
+    requested = []
+    monkeypatch.setenv("GO2RTC_API_URL", "http://127.0.0.1:1984")
+    monkeypatch.setenv("GO2RTC_TAPO_C200_STREAM", "tapo_c200_main")
+    monkeypatch.setattr(
+        providers.urllib.request,
+        "urlopen",
+        lambda request, timeout: requested.append(request.full_url) or upstream,
+    )
+    monkeypatch.setattr(
+        providers,
+        "StreamingResponse",
+        lambda content, **kwargs: SimpleNamespace(content=content, **kwargs),
+    )
+    spec = providers.CameraSpec(
+        id="tapo-c220", display_name="Camera", room="bed_room",
+        vendor="TP-Link", model="C200", host="camera.local", enabled=True,
+        provider="onvif", rtsp_port=554, onvif_port=2020, stream_path=None,
+        username_env="USER_ENV", password_env="PASSWORD_ENV",
+        declared_capabilities=frozenset({"live_stream"}), verification_status="verified",
+    )
+
+    response = providers._go2rtc_live_response(spec)
+
+    assert list(response.content) == [b"first", b"second"]
+    assert upstream.closed is True
+    assert response.media_type == "video/mp4"
+    assert len(requested) == 1
+    assert requested[0].startswith("http://127.0.0.1:1984/api/stream.mp4?")
+    assert "rtsp" not in requested[0]
+    assert "password" not in requested[0]
+
+
+def test_live_route_remains_fail_closed_without_verified_runtime(monkeypatch):
+    monkeypatch.setattr(providers, "_spec", lambda camera_id: None)
+    assert providers.camera_live_readonly("missing").status_code == 404
+
+    spec = providers.CameraSpec(
+        id="tapo-c220", display_name="Camera", room="bed_room",
+        vendor="TP-Link", model="C200", host="camera.local", enabled=True,
+        provider="onvif", rtsp_port=554, onvif_port=2020, stream_path=None,
+        username_env="USER_ENV", password_env="PASSWORD_ENV",
+        declared_capabilities=frozenset({"snapshot"}), verification_status="verified",
+    )
+    monkeypatch.setattr(providers, "_spec", lambda camera_id: spec)
+    monkeypatch.setattr(providers, "_go2rtc_live_available", lambda camera: True)
+    assert providers.camera_live_readonly("camera-1").status_code == 422
+
+
 def test_stable_household_camera_alias_resolves_strict_inventory_id(monkeypatch, tmp_path):
     _install_config(monkeypatch, tmp_path, _verified_onvif(id="tapo-c220"))
     assert providers._spec("camera-1").id == "tapo-c220"
@@ -386,5 +466,6 @@ def test_camera_read_routes_require_dashboard_authentication(monkeypatch):
         "/api/camera-control/camera-one/profiles",
         "/api/camera-control/camera-one/presets",
         "/api/camera-control/camera-one/snapshot",
+        "/api/camera-control/camera-one/live",
     ):
         assert client.get(path).status_code == 401

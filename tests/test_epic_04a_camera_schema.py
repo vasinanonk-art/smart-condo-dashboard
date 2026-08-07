@@ -42,7 +42,7 @@ def test_migration_template_contains_known_inventory_without_invented_values():
     assert xiaomi["provider"] == "auto"
     assert xiaomi["credentials"] is None
     assert all(item["enabled"] is True for item in validated["cameras"])
-    assert tapo["declared_capabilities"] == ["snapshot"]
+    assert tapo["declared_capabilities"] == ["live_stream", "snapshot"]
     assert tapo["verification_status"] == "verified"
     assert xiaomi["declared_capabilities"] == []
     assert xiaomi["verification_status"] == "unverified"

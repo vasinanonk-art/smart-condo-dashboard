@@ -22,6 +22,48 @@
   background: #101820;
 }
 
+.household-camera-live-dialog {
+  width: min(92vw, 1100px);
+  max-width: none;
+  padding: 0;
+  border: 1px solid var(--sc-color-border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--sc-radius-lg, 24px);
+  color: inherit;
+  background: var(--sc-color-bg, #09090b);
+}
+
+.household-camera-live-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.household-camera-live-shell {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.household-camera-live-shell header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.household-camera-live-shell button {
+  min-width: 72px;
+  min-height: 44px;
+}
+
+.household-camera-live-shell video {
+  display: block;
+  width: 100%;
+  max-height: min(76vh, 720px);
+  aspect-ratio: 16 / 9;
+  border-radius: var(--sc-radius-md, 16px);
+  background: #000;
+}
+
 .household-ir-group {
   display: grid;
   grid-column: 1 / -1;

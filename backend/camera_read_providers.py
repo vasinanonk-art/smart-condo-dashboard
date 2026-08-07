@@ -5,6 +5,7 @@ import copy
 import importlib.util
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -16,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict
 
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from backend import app as app_module
 from backend.camera_inventory_schema import CameraConfigError
@@ -33,6 +34,7 @@ PUBLIC_CAMERA_ALIASES = {
     "camera-2": "xiaomi-camera-1",
     "camera-3": "xiaomi-camera-2",
 }
+_STREAM_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
 @dataclass(frozen=True)
@@ -358,6 +360,82 @@ def _rtsp_snapshot(uri: str, credentials: tuple[str, str]) -> Response:
     return Response(content, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
+def _go2rtc_base_url() -> str | None:
+    value = os.getenv("GO2RTC_API_URL", "").strip().rstrip("/")
+    if not value:
+        return None
+    parsed = urllib.parse.urlsplit(value)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        return None
+    return value
+
+
+def _go2rtc_stream_name(spec: CameraSpec) -> str | None:
+    if spec.id != "tapo-c220":
+        return None
+    value = os.getenv("GO2RTC_TAPO_C200_STREAM", "tapo_c200_main").strip()
+    return value if _STREAM_NAME.fullmatch(value) else None
+
+
+def _go2rtc_live_available(spec: CameraSpec) -> bool:
+    base_url = _go2rtc_base_url()
+    stream_name = _go2rtc_stream_name(spec)
+    if not base_url or not stream_name:
+        return False
+    query = urllib.parse.urlencode({"src": stream_name})
+    request = urllib.request.Request(f"{base_url}/api/streams?{query}", method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=min(2.0, NETWORK_TIMEOUT_SEC)) as response:
+            if response.status != 200 or not response.headers.get_content_type().endswith("json"):
+                return False
+            payload = json.loads(response.read(256_001))
+    except Exception:
+        return False
+    return isinstance(payload, dict) and (
+        stream_name in payload
+        or "producers" in payload
+        or "consumers" in payload
+    )
+
+
+def _go2rtc_live_response(spec: CameraSpec):
+    base_url = _go2rtc_base_url()
+    stream_name = _go2rtc_stream_name(spec)
+    if not base_url or not stream_name:
+        raise LookupError("live_stream_unavailable")
+    query = urllib.parse.urlencode({"src": stream_name, "video": "h264"})
+    request = urllib.request.Request(f"{base_url}/api/stream.mp4?{query}", method="GET")
+    upstream = urllib.request.urlopen(request, timeout=NETWORK_TIMEOUT_SEC + 4.0)
+    content_type = upstream.headers.get_content_type()
+    if upstream.status != 200 or content_type != "video/mp4":
+        upstream.close()
+        raise LookupError("live_stream_unavailable")
+
+    def content():
+        try:
+            while chunk := upstream.read(64 * 1024):
+                yield chunk
+        finally:
+            upstream.close()
+
+    return StreamingResponse(
+        content(),
+        media_type="video/mp4",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
     result = _base_result(spec, "onvif", None)
     started = time.monotonic()
@@ -400,6 +478,12 @@ def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
             and spec.verification_status == "verified"
             and "snapshot" in spec.declared_capabilities
         )
+        live_available = bool(
+            spec.verification_status == "verified"
+            and "live_stream" in spec.declared_capabilities
+            and _go2rtc_live_available(spec)
+        )
+        result["capabilities"]["live_stream"] = live_available
         manufacturer = _safe_text(getattr(information, "Manufacturer", None))
         result.update({
             "vendor": manufacturer or result["vendor"],
@@ -418,8 +502,8 @@ def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
             "last_update": int(time.time()),
             "unavailable_reason": None,
             "stream": {
-                "available": False,
-                "access": "unavailable",
+                "available": live_available,
+                "access": "authenticated_proxy" if live_available else "unavailable",
             },
         })
         return result
@@ -612,6 +696,26 @@ def camera_snapshot_readonly(camera_id: str):
         return JSONResponse({"detail": "snapshot_unavailable"}, status_code=502)
 
 
+def camera_live_readonly(camera_id: str):
+    spec = _spec(camera_id)
+    if spec is None:
+        return JSONResponse({"detail": "camera_not_found"}, status_code=404)
+    if (
+        not spec.enabled
+        or spec.verification_status != "verified"
+        or "live_stream" not in spec.declared_capabilities
+        or spec.provider not in {"auto", "onvif"}
+        or not _go2rtc_live_available(spec)
+    ):
+        return JSONResponse({"detail": "live_stream_unavailable"}, status_code=422)
+    try:
+        return _go2rtc_live_response(spec)
+    except (TimeoutError, socket.timeout):
+        return JSONResponse({"detail": "camera_timeout"}, status_code=504)
+    except Exception:
+        return JSONResponse({"detail": "live_stream_unavailable"}, status_code=502)
+
+
 @app.get("/api/camera-control/{camera_id}/status")
 def camera_status_route(camera_id: str):
     return camera_status_readonly(camera_id)
@@ -635,3 +739,8 @@ def camera_presets_route(camera_id: str):
 _replace_endpoint("/api/camera-control/devices", {"GET"}, camera_devices_readonly)
 _replace_endpoint("/api/camera-control/{camera_id}/snapshot", {"GET"}, camera_snapshot_readonly)
 _replace_endpoint("/api/cameras", {"GET"}, cameras_runtime)
+app.add_api_route(
+    "/api/camera-control/{camera_id}/live",
+    camera_live_readonly,
+    methods=["GET"],
+)

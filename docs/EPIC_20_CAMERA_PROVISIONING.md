@@ -1,8 +1,9 @@
 # EPIC 20 Camera Provisioning
 
 EPIC 20 provisions production camera inventory for bounded, read-only
-discovery. It does not enable snapshots, streams, PTZ, recordings, motion,
-microphone, or speaker controls.
+discovery. The verified Tapo C200 supports an authenticated snapshot and an
+on-demand live view. PTZ, recordings, motion, microphone, and speaker controls
+remain disabled.
 
 ## Persistent configuration
 
@@ -20,11 +21,21 @@ Configure the service environment:
 CAMERA_CONFIG_FILE=/root/.smart-condo-dashboard/cameras.local.json
 TAPO_C200_USERNAME=<Tapo Camera Account username>
 TAPO_C200_PASSWORD=<Tapo Camera Account password>
+GO2RTC_API_URL=http://127.0.0.1:1984
+GO2RTC_TAPO_C200_STREAM=tapo_c200_main
 ```
 
 The Tapo credentials must be created under **Advanced Settings → Camera
 Account** in the Tapo application. They are camera-local ONVIF credentials,
 not the TP-Link cloud account. Never put their values in the JSON file.
+
+The go2rtc API and RTSP listeners must bind to loopback only. Its root-owned
+configuration should define `tapo_c200_main` from the verified 1920×1080 ONVIF
+RTSP URI and may reserve `tapo_c200_sub` for future use. The dashboard connects
+only to the main stream and proxies fragmented MP4 through its authenticated
+camera route; neither go2rtc management endpoints nor RTSP credentials are
+browser-accessible. The camera producer starts when Live View is opened and is
+released when the dialog closes or the browser disconnects.
 
 The Xiaomi camera is intentionally configured as an unverified `auto`
 candidate with no protocol ports or credentials. Until a supported protocol is
