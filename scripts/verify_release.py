@@ -7,6 +7,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import subprocess
 import time
 import urllib.request
@@ -14,6 +15,10 @@ from typing import Any, Mapping
 
 BASE_URL = "http://127.0.0.1:8090"
 TAPO_PUBLIC_ID = "tapo-c220"
+JOURNAL_SERVICES = (
+    "smart-condo-dashboard.service",
+    "smart-condo-go2rtc.service",
+)
 
 
 def _b64(value: bytes) -> str:
@@ -43,6 +48,43 @@ def verified_tapo_camera(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     if capabilities.get("live_stream") is not True:
         raise ValueError("tapo_live_stream_not_verified")
     return camera
+
+
+def count_journal_json_entries(output: str) -> int:
+    """Count machine-readable journal records, never human status text."""
+    count = 0
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError("journal_output_not_json") from exc
+        if not isinstance(record, dict):
+            raise ValueError("journal_record_invalid")
+        count += 1
+    return count
+
+
+def journal_error_count(service: str, *, since: str) -> int:
+    if service not in JOURNAL_SERVICES:
+        raise ValueError("journal_service_not_allowed")
+    output = subprocess.check_output(
+        [
+            "journalctl",
+            "--quiet",
+            "--output=json",
+            "--priority=err",
+            "--unit",
+            service,
+            "--since",
+            since,
+            "--no-pager",
+        ],
+        text=True,
+    )
+    return count_journal_json_entries(output)
 
 
 def _session_cookie() -> str:
@@ -126,6 +168,13 @@ def main() -> int:
     if "quick-action" not in source.lower() and "quickAction" not in source:
         raise RuntimeError("quick_actions_verification_failed")
     results["quick_actions"] = {"status": status, "present": True}
+
+    journal_since = os.getenv("RELEASE_VERIFY_SINCE", "-10min")
+    for service in JOURNAL_SERVICES:
+        error_count = journal_error_count(service, since=journal_since)
+        if error_count:
+            raise RuntimeError(f"journal_errors:{service}:{error_count}")
+        results[f"journal:{service}"] = {"errors": 0}
     print(json.dumps(results, sort_keys=True))
     return 0
 
