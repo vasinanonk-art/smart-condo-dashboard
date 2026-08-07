@@ -71,56 +71,79 @@
     return [...groups.entries()].map(([group, controls]) => `<section class="household-ir-group" data-ir-group="${safe(group)}">${controls}</section>`).join('');
   }
 
-  function bindIrCommands(host) {
-    const send = async (control, body) => {
-      if (control.dataset.householdIrConfirm === 'true' && !window.confirm('Send this IR command?')) return;
-      const target = control.dataset.householdIrDevice;
-      if (!target || state.inFlight.has(target)) return;
-      state.inFlight.add(target);
-      const controls = [...host.querySelectorAll('[data-household-ir-device]')]
-        .filter(item => item.dataset.householdIrDevice === target);
-      controls.forEach(item => { item.disabled = true; });
-      try {
-        const response = await fetch(`/api/ir/${encodeURIComponent(target)}/command`, {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify(body),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(payload.detail || 'IR command failed');
-        const device = state.devices.find(item => item.id === target);
-        if (device && payload.last_commanded) {
-          device.state = device.state || {};
-          device.state.ir_diagnostics = device.state.ir_diagnostics || {};
-          device.state.ir_diagnostics.last_commanded = payload.last_commanded;
-          device.state.ir_diagnostics.last_commanded_at = payload.last_commanded_at || null;
-          device.state.ir_diagnostics.last_commanded_correlation_id = payload.last_commanded_correlation_id || null;
-          device.state.ir_diagnostics.physical_state_confirmed = false;
-        }
-        UI.toast('Command sent; IR state is not physically confirmed.', 'success');
-        render();
-      } catch (error) {
-        UI.toast(error.message, 'error');
-      } finally {
-        state.inFlight.delete(target);
-        controls.forEach(item => { item.disabled = false; });
+  async function sendIrCommand(control, body, host = document) {
+    if (control.dataset.householdIrConfirm === 'true' && !window.confirm('Send this IR command?')) return false;
+    const target = control.dataset.householdIrDevice;
+    if (!target || state.inFlight.has(target)) return false;
+    state.inFlight.add(target);
+    const controls = [...host.querySelectorAll('[data-household-ir-device]')]
+      .filter(item => item.dataset.householdIrDevice === target);
+    if (!controls.includes(control)) controls.push(control);
+    controls.forEach(item => { item.disabled = true; });
+    try {
+      const response = await fetch(`/api/ir/${encodeURIComponent(target)}/command`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || 'IR command failed');
+      const device = state.devices.find(item => item.id === target);
+      if (device && payload.last_commanded) {
+        device.state = device.state || {};
+        device.state.ir_diagnostics = device.state.ir_diagnostics || {};
+        device.state.ir_diagnostics.last_commanded = payload.last_commanded;
+        device.state.ir_diagnostics.last_commanded_at = payload.last_commanded_at || null;
+        device.state.ir_diagnostics.last_commanded_correlation_id = payload.last_commanded_correlation_id || null;
+        device.state.ir_diagnostics.physical_state_confirmed = false;
       }
-    };
+      UI.toast('Command sent; IR state is not physically confirmed.', 'success');
+      render();
+      return true;
+    } catch (error) {
+      UI.toast(error.message, 'error');
+      return false;
+    } finally {
+      state.inFlight.delete(target);
+      controls.forEach(item => { item.disabled = false; });
+    }
+  }
+
+  function bindIrCommands(host) {
     host?.querySelectorAll('[data-household-ir-command]').forEach(button => button.addEventListener('click', () => {
-      send(button, {command:button.dataset.householdIrCommand});
+      sendIrCommand(button, {command:button.dataset.householdIrCommand}, host);
     }));
     host?.querySelectorAll('select[data-household-ir-capability]').forEach(select => select.addEventListener('change', () => {
-      if (select.value !== '') send(select, {capability:select.dataset.householdIrCapability, value:select.value});
+      if (select.value !== '') sendIrCommand(select, {capability:select.dataset.householdIrCapability, value:select.value}, host);
     }));
     host?.querySelectorAll('input[type="range"][data-household-ir-capability]').forEach(input => {
       input.addEventListener('input', () => {
         const output = input.closest('label')?.querySelector('output');
         if (output) output.textContent = `${input.value}${input.dataset.householdIrUnit || ''}`;
       });
-      input.addEventListener('change', () => send(input, {
+      input.addEventListener('change', () => sendIrCommand(input, {
         capability:input.dataset.householdIrCapability,
         value:Number(input.value),
-      }));
+      }, host));
+    });
+  }
+
+  function quickActionState() {
+    const device = state.devices.find(item => item.id === 'bed-room-air-conditioner');
+    const capabilities = Array.isArray(device?.capabilities?.ir) ? device.capabilities.ir : [];
+    const commands = capabilities.flatMap(capability => Array.isArray(capability.commands) ? capability.commands : []);
+    const supports = command => commands.some(item => item.id === command);
+    const temperature = capabilities.find(item => item.id === 'temperature');
+    const supportsTemperature26 = Array.isArray(temperature?.commands)
+      && temperature.commands.some(item => item.value === 26);
+    const usable = device?.online === true;
+    return Object.freeze({
+      powerOn:usable && supports('power_on'),
+      powerOff:usable && supports('power_off'),
+      temperature26:usable && supportsTemperature26,
+      reason:device
+        ? (device.online === false ? 'Bedroom AC is offline.' : 'Bedroom AC availability is not confirmed.')
+        : 'Bedroom AC is unavailable.',
     });
   }
 
@@ -153,6 +176,9 @@
         }
       }
       render();
+      if (typeof window.CustomEvent === 'function') {
+        window.dispatchEvent?.(new window.CustomEvent('smart-condo:household-devices-updated'));
+      }
     } catch (error) {
       console.warn('Household device registry unavailable:', error.message);
     } finally {
@@ -357,6 +383,11 @@
     originalRenderPage(page);
     render();
   };
-  window.DashboardHouseholdDevices = Object.freeze({bindIrCommands, irActions});
+  window.DashboardHouseholdDevices = Object.freeze({
+    bindIrCommands,
+    irActions,
+    quickActionState,
+    sendIrCommand,
+  });
   load();
 })();

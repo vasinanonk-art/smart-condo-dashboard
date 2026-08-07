@@ -665,3 +665,61 @@ Promise.all([first,duplicate]).then(async values=>{{
 }}).catch(error=>{{console.error(error);process.exit(1);}});
 """
     )
+
+
+def quick_actions_behavior():
+    source = json.dumps(str(ROOT / "frontend/assets/dashboard_home.js"))
+    return run_node(
+        f"""
+const fs=require('fs'),vm=require('vm');
+const listeners={{}};
+const calls={{nav:[],open:[],ir:[]}};
+const host={{
+  buttons:[],
+  set innerHTML(value){{
+    this._html=value;
+    this.buttons=[...value.matchAll(/<button([^>]*)>/g)].map(([,attributes])=>{{
+      const dataset={{}};
+      for(const match of attributes.matchAll(/data-([a-z-]+)=\"([^\"]*)\"/g)){{
+        dataset[match[1].replace(/-([a-z])/g,(_,letter)=>letter.toUpperCase())]=match[2];
+      }}
+      return {{dataset,disabled:/\\sdisabled(?:\\s|>)/.test(`${{attributes}}>`),addEventListener:(name,handler)=>{{listeners[`${{dataset.quickAction}}:${{dataset.command||dataset.page||dataset.cameraId||''}}:${{name}}`]=handler;}}}};
+    }});
+  }},
+  get innerHTML(){{return this._html||'';}},
+  querySelectorAll:selector=>selector==='[data-quick-action]'?host.buttons:[],
+}};
+let acAvailable=true;
+const household={{
+  quickActionState:()=>acAvailable?{{powerOn:true,powerOff:true,temperature26:true,reason:''}}:{{powerOn:false,powerOff:false,temperature26:false,reason:'Bedroom AC is unavailable.'}},
+  sendIrCommand:async(control,body,root)=>calls.ir.push({{device:control.dataset.householdIrDevice,confirm:control.dataset.householdIrConfirm,body,sameRoot:root===host}}),
+}};
+const UI={{quickAction:options=>`<button${{options.disabled?' disabled':''}} ${{options.attributes}}><span>${{options.label}}</span></button>`}};
+const elements={{homeQuickActions:host}};
+const window={{
+  SmartCondoUI:UI,DashboardHouseholdDevices:household,
+  nav:page=>calls.nav.push(page),open:(url,target,features)=>calls.open.push({{url,target,features}}),
+  addEventListener:()=>{{}},currentPage:()=> 'overview',S:{{}},
+}};
+const document={{getElementById:id=>elements[id]||null}};
+const context={{window,document,console,encodeURIComponent,Number,Date}};vm.createContext(context);
+vm.runInContext(fs.readFileSync({source},'utf8'),context);
+const camera={{id:'bedroom-camera',name:'Bedroom Camera',online:true,capabilities:{{snapshot:true}}}};
+window.SmartCondoHome.renderQuickActions({{cameras:[camera]}});
+const enabledCount=host.buttons.filter(button=>!button.disabled).length;
+(async()=>{{
+  await listeners['ir:power_on:click']();
+  await listeners['ir:power_off:click']();
+  await listeners['temperature::click']();
+  await listeners['camera:bedroom-camera:click']();
+  await listeners['nav:electricity:click']();
+  await listeners['nav:topology:click']();
+  acAvailable=false;
+  window.SmartCondoHome.renderQuickActions({{cameras:[{{...camera,capabilities:{{snapshot:false}}}}]}});
+  process.stdout.write(JSON.stringify({{
+    enabledCount,disabledCount:host.buttons.filter(button=>button.disabled).length,
+    calls,labels:[...host.innerHTML.matchAll(/<span>([^<]+)<\\/span>/g)].map(match=>match[1]),
+  }}));
+}})().catch(error=>{{console.error(error);process.exit(1);}});
+"""
+    )

@@ -221,6 +221,58 @@
     )).join('');
   }
 
+  function bedroomCamera(state) {
+    return (state.cameras || []).find(camera => (
+      String(camera.name || camera.display_name || '').toLowerCase().includes('bedroom')
+      || String(camera.id || '').toLowerCase().includes('bedroom')
+    ));
+  }
+
+  function renderQuickActions(state) {
+    const ui = window.SmartCondoUI;
+    const host = element('homeQuickActions');
+    if (!ui || !host) return;
+    const household = window.DashboardHouseholdDevices;
+    const ac = household?.quickActionState?.() || {
+      powerOn:false, powerOff:false, temperature26:false,
+      reason:'Bedroom AC controls are unavailable.',
+    };
+    const camera = bedroomCamera(state);
+    const snapshotAvailable = Boolean(camera?.online === true && camera.capabilities?.snapshot);
+    const actions = [
+      {label:'AC On', iconName:'power', enabled:ac.powerOn, kind:'ir', command:'power_on', confirm:true, reason:ac.reason},
+      {label:'AC Off', iconName:'power-off', enabled:ac.powerOff, kind:'ir', command:'power_off', confirm:true, reason:ac.reason},
+      {label:'AC 26°', iconName:'thermometer', enabled:ac.temperature26, kind:'temperature', reason:ac.reason},
+      {label:'Bedroom Camera', iconName:'camera', enabled:snapshotAvailable, kind:'camera', cameraId:camera?.id ? encodeURIComponent(camera.id) : '', reason:camera?.online === false ? 'Bedroom Camera is offline.' : camera ? 'Snapshot is unavailable.' : 'Bedroom Camera is unavailable.'},
+      {label:'Electricity', iconName:'zap', enabled:true, kind:'nav', page:'electricity'},
+      {label:'Home Status', iconName:'network', enabled:true, kind:'nav', page:'topology'},
+    ];
+    host.innerHTML = actions.map(action => (
+      `<div class="home-quick-action-item">${ui.quickAction({
+        label:action.label,
+        iconName:action.iconName,
+        disabled:!action.enabled,
+        attributes:`data-quick-action="${action.kind}"${action.command ? ` data-command="${action.command}"` : ''}${action.page ? ` data-page="${action.page}"` : ''}${action.cameraId ? ` data-camera-id="${action.cameraId}"` : ''}${action.confirm ? ' data-confirm="true"' : ''} aria-label="${action.enabled ? action.label : `${action.label}. ${action.reason}`}"${action.enabled ? '' : ` title="${action.reason}"`}`,
+      })}${action.enabled ? '' : `<small>${action.reason}</small>`}</div>`
+    )).join('');
+    host.querySelectorAll('[data-quick-action]').forEach(button => button.addEventListener('click', async () => {
+      if (button.dataset.quickAction === 'nav') {
+        window.nav?.(button.dataset.page);
+        return;
+      }
+      if (button.dataset.quickAction === 'camera') {
+        window.open(`/api/camera-control/${button.dataset.cameraId}/snapshot`, '_blank', 'noopener');
+        return;
+      }
+      const body = button.dataset.quickAction === 'temperature'
+        ? {capability:'temperature', value:26}
+        : {command:button.dataset.command};
+      button.dataset.householdIrDevice = 'bed-room-air-conditioner';
+      button.dataset.householdIrConfirm = button.dataset.confirm || 'false';
+      await household?.sendIrCommand?.(button, body, host);
+    }));
+  }
+
   function organizeUtilityBar() {
     const row = document.querySelector('.home-utility-controls');
     const details = element('homeUtilityStatusDetails');
@@ -317,6 +369,7 @@
     ensureChartToolbar('overviewPmChart');
     drawEnergyChart();
     renderSecondaryWidgets(state);
+    renderQuickActions(state);
     renderDevices(state);
     renderOverviewSummary();
     renderCameraControls();
@@ -330,6 +383,10 @@
     todaySummary,
     organizeUtilityBar,
     drawEnergyChart,
+    renderQuickActions,
     render,
+  });
+  window.addEventListener('smart-condo:household-devices-updated', () => {
+    if (window.currentPage?.() === 'overview' && window.S) renderQuickActions(window.S);
   });
 })();
