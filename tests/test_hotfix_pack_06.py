@@ -52,7 +52,7 @@ class HotfixPack06Tests(unittest.TestCase):
         self.assertNotIn(".remote", css)
         self.assertIn("topology-edge-data_source", css)
         self.assertIn("topology-edge-network_tunnel", css)
-        for state in ("healthy", "warning", "broken", "unknown"):
+        for state in ("healthy", "warning", "critical", "unknown"):
             self.assertIn(f".topology-edge.{state}", css)
         self.assertIn("topology-link-break", css)
 

@@ -401,7 +401,7 @@ const nodes=api.normalize({{nodes:api.order.map(id=>({{id,health:'healthy'}}))}}
 const layout=api.layout(nodes,1400);
 const routes=api.routes(layout);
 const keys=routes.map(edge=>`${{edge.from}}>${{edge.to}}:${{edge.cat}}`);
-const widths=[1366,1024,390];
+const widths=[1366,1024,768,390];
 const responsive=widths.map(width=>{{
   const current=api.layout(nodes,width);
   const currentRoutes=api.routes(current);
@@ -429,9 +429,10 @@ process.stdout.write(JSON.stringify({{
   responsive,
   summary:api.summary(mixed),
   linkStates:[
+    api.linkHealth('internet','internet',mixedMap),
     api.linkHealth('internet','cloudflare_wan',mixedMap),
     api.linkHealth('cloudflare_wan','condo_router',mixedMap),
-    api.linkHealth('condo_router','tinkerboard',mixedMap)
+    api.linkHealth('internet','tinkerboard',mixedMap)
   ],
   statusLabels:mixed.map(api.statusLabel)
   ,midpoint:api.pathMidpoint([{{x:0,y:0}},{{x:0,y:10}},{{x:30,y:10}},{{x:30,y:20}}])

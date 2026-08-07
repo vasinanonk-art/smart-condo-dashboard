@@ -245,7 +245,7 @@
   function linkHealth(from, to, map) {
     const first = map.get(from);
     const second = map.get(to);
-    if (first?.health === 'offline' || second?.health === 'offline') return 'broken';
+    if (first?.health === 'offline' || second?.health === 'offline') return 'critical';
     if (first?.health === 'warning' || second?.health === 'warning') return 'warning';
     if (first?.health === 'healthy' && second?.health === 'healthy') return 'healthy';
     return 'unknown';
@@ -291,7 +291,7 @@
   }
 
   function marker(edge) {
-    if (edge.health !== 'broken') return '';
+    if (edge.health !== 'critical') return '';
     const point = pathMidpoint(edge.pts);
     const {x, y} = point;
     return `<g class="topology-link-break" transform="translate(${x} ${y})" aria-hidden="true"><circle r="9"/><path d="M-4,-4 L4,4 M4,-4 L-4,4"/></g>`;
