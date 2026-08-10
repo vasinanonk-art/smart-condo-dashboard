@@ -229,8 +229,7 @@ def _cycle_metadata(payload: Mapping[str, Any], now_ts: Optional[int] = None) ->
     }
 
 
-def _authoritative_record(period: str, now_ts: Optional[int] = None) -> Dict[str, Any]:
-    payload = billing.billing_cycle_payload(period)
+def _authoritative_record_from_payload(payload: Mapping[str, Any], now_ts: Optional[int] = None) -> Dict[str, Any]:
     start_ts = int(payload["billing_period_start"])
     end_ts = int(payload["billing_period_end"])
     calculated_cost = _finite_nonnegative(payload.get("actual_partial_cost"), "calculated_cost")
@@ -254,12 +253,15 @@ def _authoritative_record(period: str, now_ts: Optional[int] = None) -> Dict[str
     })
 
 
+def _authoritative_record(period: str, now_ts: Optional[int] = None) -> Dict[str, Any]:
+    return _authoritative_record_from_payload(billing.billing_cycle_payload(period), now_ts)
+
+
 def _find(records: list[Dict[str, Any]], cycle_id: str) -> Optional[Dict[str, Any]]:
     return next((item for item in records if item["cycle_id"] == cycle_id), None)
 
 
-def _upsert_authoritative(period: str, now_ts: Optional[int] = None) -> Dict[str, Any]:
-    candidate = _authoritative_record(period, now_ts)
+def _upsert_authoritative_record(candidate: Dict[str, Any]) -> Dict[str, Any]:
     with _LOCK:
         store = _load_store()
         existing = _find(store["records"], candidate["cycle_id"])
@@ -268,6 +270,10 @@ def _upsert_authoritative(period: str, now_ts: Optional[int] = None) -> Dict[str
             _save_store(store)
             return copy.deepcopy(candidate)
         return copy.deepcopy(existing)
+
+
+def _upsert_authoritative(period: str, now_ts: Optional[int] = None) -> Dict[str, Any]:
+    return _upsert_authoritative_record(_authoritative_record(period, now_ts))
 
 
 def _audit(request: Request, action: str, cycle_id: str, result: str) -> None:
@@ -394,7 +400,21 @@ def current_reconciliation() -> Dict[str, Any]:
     previous_id = cycle_identity(int(previous["billing_period_start"]), int(previous["billing_period_end"]))
     with _LOCK:
         record = _find(_load_store()["records"], previous_id)
-    return {"active_cycle": _cycle_metadata(active), "latest_closed_cycle": copy.deepcopy(record), "latest_closed_cycle_id": previous_id}
+    bootstrap_status = "existing"
+    if record is None:
+        try:
+            candidate = _authoritative_record_from_payload(previous)
+        except ValueError:
+            bootstrap_status = "unavailable"
+        else:
+            record = _upsert_authoritative_record(candidate)
+            bootstrap_status = "created"
+    return {
+        "active_cycle": _cycle_metadata(active),
+        "latest_closed_cycle": copy.deepcopy(record),
+        "latest_closed_cycle_id": previous_id,
+        "bootstrap_status": bootstrap_status,
+    }
 
 
 @app.get("/api/electricity/reconciliation")

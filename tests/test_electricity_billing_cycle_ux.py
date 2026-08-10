@@ -32,6 +32,8 @@ api.state.billing={{actual_partial_cost:616.19,actual_partial_usage_kwh:168.17,p
 const closed={{cycle_id:'2026-07-02_2026-08-02',cycle_start:'2026-07-02',cycle_end:'2026-08-02',due_date:'2026-08-13',calculated_cost:2846.2,actual_bill_amount:null,difference_amount:null,difference_percent:null,payment_status:'unpaid',paid_at:null}};
 api.state.reconciliation={{active_cycle:{{cycle_end:'2026-09-02',days_until_cycle_end:23,projection_quality:{{start_coverage:'incomplete'}}}},latest_closed_cycle:closed}};
 const cycle=api.summaryCards();const daily=api.dailySummaryCards();const absent=api.reconciliationPanel();
+api.state.billing.coverage.missing_start=false;api.state.reconciliation.active_cycle.projection_quality.start_coverage='complete';
+const completeStartCycle=api.summaryCards();
 closed.actual_bill_amount=2872.43;closed.difference_amount=26.23;closed.difference_percent=0.92;
 const entered=api.reconciliationPanel();
 const dueSoon=api.dueState({{due_date:'2026-08-13',payment_status:'unpaid'}},'2026-08-10').label;
@@ -42,7 +44,7 @@ window.nextReconciliation={{active_cycle:{{}},latest_closed_cycle:{{...closed,pa
   await api.reconciliationRequest('/api/electricity/reconciliation/2026-07-02_2026-08-02','PUT',{{actual_bill_amount:2872.43}});
   await api.reconciliationRequest('/api/electricity/reconciliation/2026-07-02_2026-08-02/paid','POST');
   await api.reconciliationRequest('/api/electricity/reconciliation/2026-07-02_2026-08-02/unpaid','POST');
-  process.stdout.write(JSON.stringify({{cycle,daily,absent,entered,dueSoon,dueToday,overdue,requests,state:api.state.reconciliation}}));
+  process.stdout.write(JSON.stringify({{cycle,completeStartCycle,daily,absent,entered,dueSoon,dueToday,overdue,requests,state:api.state.reconciliation}}));
 }})().catch(error=>{{console.error(error);process.exit(1);}});
 """
     )
@@ -58,6 +60,8 @@ def test_cycle_first_cards_use_authoritative_cycle_fields():
     assert "Cycle Usage" in cycle and "168.17" in cycle
     assert "Cycle Ends In" in cycle and "23" in cycle and "2 Sept" in cycle
     assert "Estimate · limited data" in cycle
+    assert "Estimate · limited data" not in result["completeStartCycle"]
+    assert '<em class="electricity-estimate">Estimate</em>' in result["completeStartCycle"]
     assert "estimated_month_end_bill" not in JS
 
 

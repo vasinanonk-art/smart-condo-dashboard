@@ -178,6 +178,17 @@ def test_projection_quality_marks_incomplete_start_without_changing_projection()
     assert reconciliation._projection_quality(payload(projected=None))["projection_status"] == "unavailable"
 
 
+def test_projection_quality_complete_start_is_normal_with_partial_cycle_coverage():
+    source = payload(missing_start=False, projected=1400)
+    source["coverage"]["coverage_percent"] = 28.84
+    assert reconciliation._projection_quality(source) == {
+        "start_coverage": "complete",
+        "projection_status": "available",
+        "projection_reliability": "normal",
+        "coverage_percent": 28.84,
+    }
+
+
 def test_api_auth_csrf_update_paid_unpaid_and_calculated_fields_protected(store, monkeypatch):
     record = create_previous(monkeypatch)
     client, csrf = authenticated_client(monkeypatch)
@@ -204,6 +215,70 @@ def test_current_status_adds_days_and_keeps_latest_closed_separate(store, monkey
     assert body["latest_closed_cycle"]["cycle_id"] == record["cycle_id"]
     assert body["active_cycle"]["cycle_end"] == "2026-10-02"
     assert isinstance(body["active_cycle"]["days_until_cycle_end"], int)
+
+
+def test_first_read_bootstraps_latest_closed_cycle_only_and_is_idempotent(store, monkeypatch):
+    values = {
+        "current_billing_cycle": payload("2026-09-02T00:00:00", "2026-10-02T00:00:00", cost=50, kwh=10),
+        "previous_billing_cycle": payload("2026-08-02T00:00:00", "2026-09-02T00:00:00", cost=1286.86, kwh=311.14),
+    }
+    monkeypatch.setattr(billing, "billing_cycle_payload", lambda period: values[period])
+
+    first = reconciliation.current_reconciliation()
+    second = reconciliation.current_reconciliation()
+    records = reconciliation._load_store()["records"]
+
+    assert first["bootstrap_status"] == "created"
+    assert second["bootstrap_status"] == "existing"
+    assert first["latest_closed_cycle"]["cycle_id"] == "2026-08-02_2026-09-02"
+    assert first["latest_closed_cycle"]["due_date"] == "2026-09-13"
+    assert first["latest_closed_cycle"]["calculated_cost"] == 1286.86
+    assert first["latest_closed_cycle"]["calculated_kwh"] == 311.14
+    assert first["latest_closed_cycle"]["reminder_events"] == []
+    assert [item["cycle_id"] for item in records] == ["2026-08-02_2026-09-02"]
+    assert records == reconciliation._load_store()["records"]
+
+
+def test_bootstrap_restart_and_due_reminder_deduplication(store, monkeypatch):
+    values = {
+        "current_billing_cycle": payload("2026-08-02T00:00:00", "2026-09-02T00:00:00"),
+        "previous_billing_cycle": payload("2026-07-02T00:00:00", "2026-08-02T00:00:00"),
+    }
+    monkeypatch.setattr(billing, "billing_cycle_payload", lambda period: values[period])
+    reconciliation.current_reconciliation()
+    assert reconciliation.current_reconciliation()["bootstrap_status"] == "existing"
+
+    now = ts("2026-08-13T03:00:00")
+    first = reconciliation.process_daily_reminders({"notifications": []}, now)
+    second = reconciliation.process_daily_reminders(first, now)
+    assert [item["id"] for item in second["notifications"]] == [
+        "electricity.2026-07-02_2026-08-02.due_today_day_13"
+    ]
+
+
+def test_bootstrap_year_rollover_uses_closed_cycle_and_day_13_due_date(store, monkeypatch):
+    values = {
+        "current_billing_cycle": payload("2027-01-02T00:00:00", "2027-02-02T00:00:00"),
+        "previous_billing_cycle": payload("2026-12-02T00:00:00", "2027-01-02T00:00:00"),
+    }
+    monkeypatch.setattr(billing, "billing_cycle_payload", lambda period: values[period])
+    result = reconciliation.current_reconciliation()["latest_closed_cycle"]
+    assert result["cycle_id"] == "2026-12-02_2027-01-02"
+    assert result["due_date"] == "2027-01-13"
+
+
+@pytest.mark.parametrize(("cost", "kwh"), [(None, 100), (100, None)])
+def test_bootstrap_unavailable_closed_calculation_does_not_create_zero_record(store, monkeypatch, cost, kwh):
+    values = {
+        "current_billing_cycle": payload("2026-09-02T00:00:00", "2026-10-02T00:00:00"),
+        "previous_billing_cycle": payload(cost=cost, kwh=kwh),
+    }
+    monkeypatch.setattr(billing, "billing_cycle_payload", lambda period: values[period])
+    result = reconciliation.current_reconciliation()
+    assert result["bootstrap_status"] == "unavailable"
+    assert result["latest_closed_cycle"] is None
+    assert result["latest_closed_cycle_id"] == "2026-08-02_2026-09-02"
+    assert not store.exists()
 
 
 def test_reconciliation_is_separate_from_history_tariff_and_maintenance_paths():
