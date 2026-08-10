@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import time
+import urllib.error
 import urllib.request
 from typing import Any, Mapping
 
@@ -20,6 +21,10 @@ JOURNAL_SERVICES = (
     "smart-condo-go2rtc.service",
 )
 GO2RTC_PORTS = (1984, 8554)
+DASHBOARD_SERVICE = "smart-condo-dashboard.service"
+READINESS_PATH = "/api/auth/status"
+READINESS_TIMEOUT_SEC = 30.0
+READINESS_RETRY_SEC = 0.25
 
 
 def _b64(value: bytes) -> str:
@@ -117,6 +122,63 @@ def verify_go2rtc_listeners() -> dict[int, str]:
     return verify_go2rtc_listener_output(output)
 
 
+def dashboard_service_active() -> bool:
+    return subprocess.run(
+        ["systemctl", "is-active", "--quiet", DASHBOARD_SERVICE],
+        check=False,
+    ).returncode == 0
+
+
+def wait_for_dashboard_ready(
+    *,
+    timeout: float = READINESS_TIMEOUT_SEC,
+    retry_interval: float = READINESS_RETRY_SEC,
+    service_active=dashboard_service_active,
+    open_url=urllib.request.urlopen,
+    monotonic=time.monotonic,
+    sleep=time.sleep,
+) -> dict[str, Any]:
+    if timeout <= 0 or retry_interval <= 0:
+        raise ValueError("invalid_readiness_bounds")
+    started = monotonic()
+    deadline = started + timeout
+    attempts = 0
+    request = urllib.request.Request(
+        BASE_URL + READINESS_PATH,
+        headers={"User-Agent": "release-verifier/1.0"},
+    )
+    while True:
+        if not service_active():
+            raise RuntimeError("dashboard_service_exited_before_ready")
+        attempts += 1
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise RuntimeError("dashboard_readiness_timeout")
+        try:
+            with open_url(request, timeout=min(2.0, remaining)) as response:
+                status = int(response.status)
+                content_type = response.headers.get("Content-Type", "")
+                content = response.read(4096)
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(f"dashboard_readiness_unexpected_http:{exc.code}") from exc
+        except (urllib.error.URLError, ConnectionError, TimeoutError):
+            pass
+        else:
+            if status != 200 or not content_type.startswith("application/json"):
+                raise RuntimeError(f"dashboard_readiness_unexpected_http:{status}")
+            try:
+                payload = json.loads(content)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise RuntimeError("dashboard_readiness_invalid_payload") from exc
+            if not isinstance(payload, dict) or not isinstance(payload.get("configured"), bool) or not isinstance(payload.get("authenticated"), bool):
+                raise RuntimeError("dashboard_readiness_invalid_payload")
+            return {"status": status, "attempts": attempts, "elapsed_sec": round(monotonic() - started, 3)}
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise RuntimeError("dashboard_readiness_timeout")
+        sleep(min(retry_interval, remaining))
+
+
 def _session_cookie() -> str:
     pid = subprocess.check_output(
         ["systemctl", "show", "-p", "MainPID", "--value", "smart-condo-dashboard.service"],
@@ -151,8 +213,9 @@ def _fetch(cookie: str, path: str, *, limit: int = 2_000_000) -> tuple[int, str,
 
 
 def main() -> int:
+    readiness = wait_for_dashboard_ready()
     cookie = _session_cookie()
-    results: dict[str, Any] = {}
+    results: dict[str, Any] = {"dashboard_readiness": readiness}
     payloads: dict[str, Any] = {}
     for path in (
         "/api/auth/status",
