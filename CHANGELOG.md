@@ -2,7 +2,18 @@
 
 ## [Unreleased]
 
-No changes after v1.0.6.
+No changes after v1.0.7.
+
+## [1.0.7] - 2026-08-11
+
+### Electricity reconciliation and UX
+
+- Add optional actual MEA usage entry with server-calculated usage difference
+  and variance while preserving legacy reconciliation records.
+- Clarify the current-cycle projection as a current-pace estimate and keep the
+  authoritative current-cycle cost visually primary.
+- Present compact, responsive energy-usage and bill-amount reconciliation with
+  partial-data warnings and independently editable actual values.
 
 ## [1.0.6] - 2026-08-10
 
