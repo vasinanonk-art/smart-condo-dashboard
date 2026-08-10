@@ -2,7 +2,19 @@
 
 ## [Unreleased]
 
-No changes after v1.0.4.
+No changes after v1.0.5.
+
+## [1.0.5] - 2026-08-10
+
+### Electricity reconciliation coverage safety
+
+- Preserve and enrich legacy reconciliation records with authoritative
+  closed-cycle coverage metadata without changing stored financial, payment,
+  due-date, or reminder values.
+- Mark incomplete Dashboard Calculated values as partial data and carry the
+  warning into difference and variance comparisons.
+- Treat unavailable coverage as unavailable rather than presenting a stored
+  calculated value as a complete billing-cycle result.
 
 ## [1.0.4] - 2026-08-10
 
