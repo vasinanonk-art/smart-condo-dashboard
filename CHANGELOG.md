@@ -2,7 +2,21 @@
 
 ## [Unreleased]
 
-No changes after v1.0.3.
+No changes after v1.0.4.
+
+## [1.0.4] - 2026-08-10
+
+### Electricity billing reconciliation
+
+- Add persistent closed-cycle reconciliation with actual MEA bill, variance,
+  payment status, due-date, audit, and deterministic reminder support.
+- Redesign the Electricity summary around authoritative current billing-cycle
+  cost, usage, projection, and remaining days while retaining daily detail.
+- Bootstrap the latest authoritative closed cycle on first reconciliation read
+  so mid-cycle deployments are immediately usable without creating an open-cycle
+  record or duplicate notification.
+- Distinguish complete start coverage from genuinely limited projection data
+  without changing billing-cycle, tariff, history, or projection calculations.
 
 ## [1.0.3] - 2026-08-10
 
