@@ -28,7 +28,7 @@ def payload(start="2026-08-02T00:00:00", end="2026-09-02T00:00:00", cost=1000.0,
         "actual_partial_usage_kwh": kwh,
         "projected_cycle_bill": projected,
         "projection_status": "available" if projected is not None else "insufficient_projection_history",
-        "coverage": {"missing_start": missing_start, "coverage_percent": 50.0},
+        "coverage": {"missing_start": missing_start, "coverage_percent": 50.0, "complete": not missing_start, "coverage_complete": not missing_start},
     }
 
 
@@ -104,6 +104,55 @@ def test_actual_bill_update_due_override_and_differences(store, monkeypatch):
     assert updated["difference_amount"] == 100
     assert updated["difference_percent"] == 10
     assert updated["due_date"] == "2026-09-15"
+
+
+def test_existing_v1_record_is_enriched_idempotently_without_financial_or_state_changes(store, monkeypatch):
+    previous = payload(cost=1286.86, kwh=311.14, missing_start=True)
+    previous["coverage"]["coverage_percent"] = 52.55
+    values = {
+        "current_billing_cycle": payload("2026-08-02T00:00:00", "2026-09-02T00:00:00"),
+        "previous_billing_cycle": previous,
+    }
+    monkeypatch.setattr(billing, "billing_cycle_payload", lambda period: values[period])
+    record = reconciliation._upsert_authoritative("previous_billing_cycle")
+    record = reconciliation._update_record(record["cycle_id"], {"actual_bill_amount": 1300})
+    raw = json.loads(store.read_text())
+    raw["records"][0].pop("coverage")
+    raw["records"][0]["reminder_events"] = ["due_soon_day_10"]
+    store.write_text(json.dumps(raw))
+    unchanged = {key: raw["records"][0][key] for key in (
+        "calculated_cost", "calculated_kwh", "actual_bill_amount", "difference_amount",
+        "difference_percent", "due_date", "payment_status", "paid_at", "reminder_events",
+    )}
+
+    first = reconciliation.current_reconciliation()["latest_closed_cycle"]
+    first_bytes = store.read_bytes()
+    second = reconciliation.current_reconciliation()["latest_closed_cycle"]
+
+    assert first["coverage"] == {"status": "incomplete", "percent": 52.55, "start_complete": False}
+    assert {key: first[key] for key in unchanged} == unchanged
+    assert second == first
+    assert store.read_bytes() == first_bytes
+    assert json.loads(first_bytes)["records"][0]["coverage"] == first["coverage"]
+
+
+def test_existing_record_with_unavailable_authoritative_coverage_stays_readable(store, monkeypatch):
+    record = create_previous(monkeypatch)
+    raw = json.loads(store.read_text())
+    raw["records"][0].pop("coverage")
+    store.write_text(json.dumps(raw))
+    previous = payload()
+    previous["coverage"] = {}
+    values = {
+        "current_billing_cycle": payload("2026-09-02T00:00:00", "2026-10-02T00:00:00"),
+        "previous_billing_cycle": previous,
+    }
+    monkeypatch.setattr(billing, "billing_cycle_payload", lambda period: values[period])
+    result = reconciliation.current_reconciliation()["latest_closed_cycle"]
+    assert result["coverage"] == {"status": "unavailable", "percent": None, "start_complete": None}
+    assert result["calculated_cost"] == record["calculated_cost"]
+    assert result["calculated_kwh"] == record["calculated_kwh"]
+    assert "coverage" not in json.loads(store.read_text())["records"][0]
 
 
 def test_zero_calculated_cost_has_safe_difference_percent(store, monkeypatch):
@@ -189,6 +238,18 @@ def test_projection_quality_complete_start_is_normal_with_partial_cycle_coverage
     }
 
 
+def test_closed_cycle_coverage_uses_authoritative_flags_not_percent_thresholds():
+    complete = payload()
+    complete["coverage"]["coverage_percent"] = 28.84
+    incomplete = payload(missing_start=True)
+    incomplete["coverage"]["coverage_percent"] = 52.55
+    unavailable = payload()
+    unavailable["coverage"] = {}
+    assert reconciliation._coverage_from_payload(complete) == {"status": "complete", "percent": 28.84, "start_complete": True}
+    assert reconciliation._coverage_from_payload(incomplete) == {"status": "incomplete", "percent": 52.55, "start_complete": False}
+    assert reconciliation._coverage_from_payload(unavailable) == {"status": "unavailable", "percent": None, "start_complete": None}
+
+
 def test_api_auth_csrf_update_paid_unpaid_and_calculated_fields_protected(store, monkeypatch):
     record = create_previous(monkeypatch)
     client, csrf = authenticated_client(monkeypatch)
@@ -234,6 +295,7 @@ def test_first_read_bootstraps_latest_closed_cycle_only_and_is_idempotent(store,
     assert first["latest_closed_cycle"]["due_date"] == "2026-09-13"
     assert first["latest_closed_cycle"]["calculated_cost"] == 1286.86
     assert first["latest_closed_cycle"]["calculated_kwh"] == 311.14
+    assert first["latest_closed_cycle"]["coverage"] == {"status": "complete", "percent": 50.0, "start_complete": True}
     assert first["latest_closed_cycle"]["reminder_events"] == []
     assert [item["cycle_id"] for item in records] == ["2026-08-02_2026-09-02"]
     assert records == reconciliation._load_store()["records"]

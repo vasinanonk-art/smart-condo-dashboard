@@ -97,6 +97,49 @@ def _differences(actual: Optional[float], calculated: float) -> tuple[Optional[f
     return difference, percent
 
 
+def _validate_coverage(raw: Any) -> Dict[str, Any]:
+    if raw is None:
+        return {"status": "unavailable", "percent": None, "start_complete": None}
+    if not isinstance(raw, Mapping) or set(raw) != {"status", "percent", "start_complete"}:
+        raise ValueError("invalid_reconciliation_coverage")
+    status = str(raw.get("status") or "")
+    if status not in {"complete", "incomplete", "unavailable"}:
+        raise ValueError("invalid_reconciliation_coverage")
+    percent = raw.get("percent")
+    if percent is not None:
+        percent = _finite_nonnegative(percent, "coverage_percent")
+        if percent > 100:
+            raise ValueError("invalid_reconciliation_coverage")
+    start_complete = raw.get("start_complete")
+    if start_complete is not None and not isinstance(start_complete, bool):
+        raise ValueError("invalid_reconciliation_coverage")
+    if status == "unavailable" and (percent is not None or start_complete is not None):
+        raise ValueError("invalid_reconciliation_coverage")
+    return {"status": status, "percent": percent, "start_complete": start_complete}
+
+
+def _coverage_from_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    coverage = payload.get("coverage")
+    if not isinstance(coverage, Mapping):
+        return _validate_coverage(None)
+    percent = coverage.get("coverage_percent")
+    try:
+        percent = None if percent is None else _finite_nonnegative(percent, "coverage_percent")
+    except ValueError:
+        percent = None
+    if percent is not None and percent > 100:
+        percent = None
+    start_complete = None if "missing_start" not in coverage else not bool(coverage.get("missing_start"))
+    complete = coverage.get("coverage_complete", coverage.get("complete"))
+    if complete is True:
+        status = "complete"
+    elif complete is False or percent is not None or start_complete is False:
+        status = "incomplete"
+    else:
+        return _validate_coverage(None)
+    return _validate_coverage({"status": status, "percent": percent, "start_complete": start_complete})
+
+
 def _validate_record(raw: Any) -> Dict[str, Any]:
     if not isinstance(raw, Mapping):
         raise ValueError("invalid_reconciliation_record")
@@ -105,7 +148,7 @@ def _validate_record(raw: Any) -> Dict[str, Any]:
         "calculated_kwh", "actual_bill_amount", "difference_amount",
         "difference_percent", "payment_status", "paid_at", "recorded_at", "updated_at",
     }
-    if not required.issubset(raw) or set(raw) - required - {"reminder_events"}:
+    if not required.issubset(raw) or set(raw) - required - {"reminder_events", "coverage"}:
         raise ValueError("invalid_reconciliation_fields")
     start = _valid_date(raw.get("cycle_start"), "cycle_start")
     end = _valid_date(raw.get("cycle_end"), "cycle_end")
@@ -155,6 +198,7 @@ def _validate_record(raw: Any) -> Dict[str, Any]:
         "due_date": due,
         "calculated_cost": calculated_cost,
         "calculated_kwh": calculated_kwh,
+        "coverage": _validate_coverage(raw.get("coverage")),
         "actual_bill_amount": actual,
         "difference_amount": difference,
         "difference_percent": percent,
@@ -242,6 +286,7 @@ def _authoritative_record_from_payload(payload: Mapping[str, Any], now_ts: Optio
         "due_date": due_date_for_cycle_end(end_ts),
         "calculated_cost": calculated_cost,
         "calculated_kwh": calculated_kwh,
+        "coverage": _coverage_from_payload(payload),
         "actual_bill_amount": None,
         "difference_amount": None,
         "difference_percent": None,
@@ -269,6 +314,9 @@ def _upsert_authoritative_record(candidate: Dict[str, Any]) -> Dict[str, Any]:
             store["records"].append(candidate)
             _save_store(store)
             return copy.deepcopy(candidate)
+        if candidate["coverage"]["status"] != "unavailable" and existing["coverage"] != candidate["coverage"]:
+            existing["coverage"] = copy.deepcopy(candidate["coverage"])
+            _save_store(store)
         return copy.deepcopy(existing)
 
 
@@ -398,8 +446,13 @@ def current_reconciliation() -> Dict[str, Any]:
     active = billing.billing_cycle_payload("current_billing_cycle")
     previous = billing.billing_cycle_payload("previous_billing_cycle")
     previous_id = cycle_identity(int(previous["billing_period_start"]), int(previous["billing_period_end"]))
+    authoritative_coverage = _coverage_from_payload(previous)
     with _LOCK:
-        record = _find(_load_store()["records"], previous_id)
+        store = _load_store()
+        record = _find(store["records"], previous_id)
+        if record is not None and authoritative_coverage["status"] != "unavailable" and record["coverage"] != authoritative_coverage:
+            record["coverage"] = authoritative_coverage
+            _save_store(store)
     bootstrap_status = "existing"
     if record is None:
         try:

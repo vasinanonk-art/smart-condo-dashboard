@@ -29,13 +29,17 @@ const context={{window,document,console,fetch,URL,URLSearchParams,Intl,Date,Form
 vm.createContext(context);vm.runInContext(fs.readFileSync({source},'utf8'),context);
 const api=window.DashboardElectricityHistory;
 api.state.billing={{actual_partial_cost:616.19,actual_partial_usage_kwh:168.17,projected_cycle_bill:2709.25,projected_cycle_usage_kwh:605.0087,billing_period_label:'2 Aug 2026 – 1 Sep 2026',coverage:{{missing_start:true}}}};
-const closed={{cycle_id:'2026-07-02_2026-08-02',cycle_start:'2026-07-02',cycle_end:'2026-08-02',due_date:'2026-08-13',calculated_cost:2846.2,actual_bill_amount:null,difference_amount:null,difference_percent:null,payment_status:'unpaid',paid_at:null}};
+const closed={{cycle_id:'2026-07-02_2026-08-02',cycle_start:'2026-07-02',cycle_end:'2026-08-02',due_date:'2026-08-13',calculated_cost:1286.86,actual_bill_amount:null,difference_amount:null,difference_percent:null,payment_status:'unpaid',paid_at:null,coverage:{{status:'incomplete',percent:52.55,start_complete:false}}}};
 api.state.reconciliation={{active_cycle:{{cycle_end:'2026-09-02',days_until_cycle_end:23,projection_quality:{{start_coverage:'incomplete'}}}},latest_closed_cycle:closed}};
 const cycle=api.summaryCards();const daily=api.dailySummaryCards();const absent=api.reconciliationPanel();
 api.state.billing.coverage.missing_start=false;api.state.reconciliation.active_cycle.projection_quality.start_coverage='complete';
 const completeStartCycle=api.summaryCards();
-closed.actual_bill_amount=2872.43;closed.difference_amount=26.23;closed.difference_percent=0.92;
+closed.actual_bill_amount=1300;closed.difference_amount=13.14;closed.difference_percent=1.02;
 const entered=api.reconciliationPanel();
+closed.coverage={{status:'complete',percent:100,start_complete:true}};
+const completeReconciliation=api.reconciliationPanel();
+closed.coverage={{status:'unavailable',percent:null,start_complete:null}};
+const unavailableReconciliation=api.reconciliationPanel();
 const dueSoon=api.dueState({{due_date:'2026-08-13',payment_status:'unpaid'}},'2026-08-10').label;
 const dueToday=api.dueState({{due_date:'2026-08-13',payment_status:'unpaid'}},'2026-08-13').label;
 const overdue=api.dueState({{due_date:'2026-08-13',payment_status:'unpaid'}},'2026-08-14').label;
@@ -44,7 +48,7 @@ window.nextReconciliation={{active_cycle:{{}},latest_closed_cycle:{{...closed,pa
   await api.reconciliationRequest('/api/electricity/reconciliation/2026-07-02_2026-08-02','PUT',{{actual_bill_amount:2872.43}});
   await api.reconciliationRequest('/api/electricity/reconciliation/2026-07-02_2026-08-02/paid','POST');
   await api.reconciliationRequest('/api/electricity/reconciliation/2026-07-02_2026-08-02/unpaid','POST');
-  process.stdout.write(JSON.stringify({{cycle,completeStartCycle,daily,absent,entered,dueSoon,dueToday,overdue,requests,state:api.state.reconciliation}}));
+  process.stdout.write(JSON.stringify({{cycle,completeStartCycle,daily,absent,entered,completeReconciliation,unavailableReconciliation,dueSoon,dueToday,overdue,requests,state:api.state.reconciliation}}));
 }})().catch(error=>{{console.error(error);process.exit(1);}});
 """
     )
@@ -78,8 +82,21 @@ def test_reconciliation_absent_entered_difference_variance_and_due_date():
     result = ux_runtime()
     assert "Not entered" in result["absent"]
     assert "Enter Actual Bill" in result["absent"]
-    for value in ("฿2,872.43", "+฿26.23", "+0.92%", "13 Aug 2026", "Unpaid"):
+    assert "฿1,286.86" in result["absent"]
+    assert "Partial data · 52.55% coverage" in result["absent"]
+    for value in ("฿1,300.00", "+฿13.14", "+1.02%", "13 Aug 2026", "Unpaid"):
         assert value in result["entered"]
+    assert result["entered"].count("Based on partial dashboard data") == 2
+
+
+def test_complete_and_unavailable_reconciliation_coverage_states():
+    result = ux_runtime()
+    assert "Partial data" not in result["completeReconciliation"]
+    assert "Based on partial dashboard data" not in result["completeReconciliation"]
+    unavailable = result["unavailableReconciliation"]
+    assert "฿1,286.86" not in unavailable
+    assert unavailable.count("Not available") >= 3
+    assert "฿0.00" not in unavailable
 
 
 def test_due_visual_states_and_authoritative_mutation_refresh():

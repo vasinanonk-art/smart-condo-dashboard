@@ -642,15 +642,21 @@
     const status = dueState(record);
     const actual = number(record.actual_bill_amount);
     const calculated = number(record.calculated_cost);
+    const coverageStatus = record.coverage?.status || 'unavailable';
+    const coveragePercent = number(record.coverage?.percent);
+    const incompleteCoverage = coverageStatus === 'incomplete';
+    const calculatedAvailable = calculated !== null && coverageStatus !== 'unavailable';
+    const coverageWarning = incompleteCoverage ? `Partial data${coveragePercent === null ? '' : ` · ${coveragePercent.toFixed(2)}% coverage`}` : '';
+    const comparisonWarning = incompleteCoverage ? '<small class="electricity-reconciliation-warning">Based on partial dashboard data</small>' : '';
     const paidAt = record.paid_at ? localTime(record.paid_at) : null;
     return `<section class="electricity-reconciliation"><div class="electricity-section-head"><div><h2>Bill Reconciliation</h2><small>Latest closed billing cycle · separate from live current-cycle values</small></div><span class="electricity-payment-badge ${safe(status.cls)}">${safe(status.label)}</span></div>
       ${state.reconciliationMutationError ? `<div class="electricity-panel-state error">${safe(state.reconciliationMutationError)}</div>` : ''}
       <dl class="electricity-reconciliation-grid">
         <div><dt>Billing Period</dt><dd>${safe(closedPeriod(record))}</dd></div>
-        <div><dt>Dashboard Calculated</dt><dd>${calculated === null ? 'Not available' : safe(money(calculated))}</dd></div>
+        <div><dt>Dashboard Calculated</dt><dd>${calculatedAvailable ? safe(money(calculated)) : 'Not available'}${coverageWarning ? `<small class="electricity-reconciliation-warning">${safe(coverageWarning)}</small>` : ''}</dd></div>
         <div><dt>Actual MEA Bill</dt><dd>${actual === null ? 'Not entered' : safe(money(actual))}</dd></div>
-        <div><dt>Difference</dt><dd>${actual === null ? 'Not available' : safe(signedMoney(record.difference_amount))}</dd></div>
-        <div><dt>Variance</dt><dd>${actual === null ? 'Not available' : safe(signedPercent(record.difference_percent))}</dd></div>
+        <div><dt>Difference</dt><dd>${actual === null || !calculatedAvailable ? 'Not available' : safe(signedMoney(record.difference_amount))}${actual !== null && calculatedAvailable ? comparisonWarning : ''}</dd></div>
+        <div><dt>Variance</dt><dd>${actual === null || !calculatedAvailable ? 'Not available' : safe(signedPercent(record.difference_percent))}${actual !== null && calculatedAvailable ? comparisonWarning : ''}</dd></div>
         <div><dt>Due Date</dt><dd>${safe(formatDateOnly(record.due_date, {year:true}))}</dd></div>
         <div><dt>Payment Status</dt><dd>${safe(record.payment_status === 'paid' ? 'Paid' : 'Unpaid')}${paidAt ? `<small>${safe(paidAt)}</small>` : ''}</dd></div>
       </dl>
