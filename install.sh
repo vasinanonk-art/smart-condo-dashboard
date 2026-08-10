@@ -1,7 +1,8 @@
 #!/bin/sh
 set -eu
 
-APP_SRC="${APP_SRC:-/opt/smart-condo-dashboard}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+APP_SRC="${APP_SRC:-$SCRIPT_DIR}"
 APP_RUN="${APP_RUN:-/opt/smart-condo-dashboard-run}"
 PERSISTENT_CONFIG_ROOT="${PERSISTENT_CONFIG_ROOT:-/root/.smart-condo-dashboard}"
 INSTALL_LOCK_FILE="${INSTALL_LOCK_FILE:-/run/lock/smart-condo-dashboard-install.lock}"

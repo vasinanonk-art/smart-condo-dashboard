@@ -2,6 +2,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import bcrypt
@@ -178,6 +179,7 @@ def test_runtime_only_deployment_updates_managed_tree_without_touching_venv(tmp_
 
     assert result.returncode == 0, result.stderr
     assert (run_root / "backend" / "version.txt").read_text() == "repository-version"
+    assert (run_root / "VERSION").read_text() == "1.0.0\n"
     assert venv_marker.read_text() == "unchanged"
     assert local_config.read_text() == '{"preserve": true}'
     assert subprocess.check_output(
@@ -201,6 +203,63 @@ def test_runtime_only_deployment_updates_managed_tree_without_touching_venv(tmp_
     ) == source_status_before
     assert venv_marker.read_text() == "unchanged"
     assert local_config.read_text() == '{"preserve": true}'
+
+
+def test_runtime_only_uses_invoked_release_worktree_and_propagates_version(tmp_path):
+    release = tmp_path / "smart-condo-dashboard-v1.0.2"
+    run_root = tmp_path / "run"
+    persistent = tmp_path / "persistent"
+    fake_bin = tmp_path / "bin"
+    shutil.copytree(ROOT, release, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+    (release / "VERSION").write_text("1.0.2\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=release, check=True)
+    subprocess.run(["git", "config", "user.email", "release-test@example.invalid"], cwd=release, check=True)
+    subprocess.run(["git", "config", "user.name", "Release Test"], cwd=release, check=True)
+    subprocess.run(["git", "add", "."], cwd=release, check=True)
+    subprocess.run(["git", "commit", "-qm", "v1.0.2 fixture"], cwd=release, check=True)
+    (run_root / "config").mkdir(parents=True)
+    (run_root / "venv").mkdir()
+    (run_root / "venv" / "preserve-me").write_text("unchanged", encoding="utf-8")
+    (run_root / "VERSION").write_text("1.0.1\n", encoding="utf-8")
+    local_config = run_root / "config" / "camera.local.json"
+    local_config.write_text('{"preserve": true}', encoding="utf-8")
+    persistent.mkdir()
+    fake_bin.mkdir()
+    fake_systemctl = fake_bin / "systemctl"
+    fake_systemctl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_systemctl.chmod(0o755)
+    fake_flock = fake_bin / "flock"
+    fake_flock.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_flock.chmod(0o755)
+    environment = {
+        **os.environ,
+        "GO2RTC_PROVISION_ENABLED": "0",
+        "APP_RUN": str(run_root),
+        "PERSISTENT_CONFIG_ROOT": str(persistent),
+        "INSTALL_LOCK_FILE": str(tmp_path / "install.lock"),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+
+    result = subprocess.run(
+        ["sh", str(release / "install.sh"), "--runtime-only"],
+        cwd=tmp_path,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (run_root / "VERSION").read_text(encoding="utf-8") == "1.0.2\n"
+    reported = subprocess.check_output(
+        [sys.executable, "-c", "from backend.version import __version__; print(__version__)"],
+        cwd=run_root,
+        env={**os.environ, "PYTHONPATH": str(run_root)},
+        text=True,
+    ).strip()
+    assert reported == "1.0.2"
+    assert (run_root / "venv" / "preserve-me").read_text(encoding="utf-8") == "unchanged"
+    assert local_config.read_text(encoding="utf-8") == '{"preserve": true}'
 
 
 def test_deploy_guard_fails_when_preserved_config_is_missing(tmp_path):
@@ -387,6 +446,7 @@ def test_interrupted_managed_runtime_can_be_restored_without_touching_venv(tmp_p
     (run_root / "venv").mkdir()
     (run_root / "venv" / "marker").write_text("preserved")
     (run_root / "sonoff_client.py").write_text("old mirror")
+    (run_root / "VERSION").write_text("1.0.1\n")
 
     preserve = _run_guard(
         'preserve_managed_runtime "$2" "$3" "$4"',
@@ -401,6 +461,7 @@ def test_interrupted_managed_runtime_can_be_restored_without_touching_venv(tmp_p
     (run_root / "backend" / "partial.txt").write_text("partial deploy")
     (run_root / "scripts").mkdir()
     (run_root / "scripts" / "new.txt").write_text("must disappear")
+    (run_root / "VERSION").write_text("1.0.2\n")
 
     restore = _run_guard(
         'restore_managed_runtime "$2" "$3" "$4"',
@@ -413,6 +474,7 @@ def test_interrupted_managed_runtime_can_be_restored_without_touching_venv(tmp_p
     assert not (run_root / "backend" / "partial.txt").exists()
     assert not (run_root / "scripts").exists()
     assert (run_root / "venv" / "marker").read_text() == "preserved"
+    assert (run_root / "VERSION").read_text() == "1.0.1\n"
 
 
 def test_checksum_verification_rejects_altered_config(tmp_path):

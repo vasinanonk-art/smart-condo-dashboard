@@ -154,6 +154,7 @@ def test_runtime_deployment_rolls_back_go2rtc_and_dashboard_on_failure(tmp_path)
     subprocess.run(["git", "commit", "-qm", "fixture"], cwd=source, check=True)
 
     (run / "backend").mkdir(parents=True); (run / "backend/version.txt").write_text("old-runtime")
+    (run / "VERSION").write_text("0.9.9\n")
     (run / "config").mkdir(); (run / "venv/bin").mkdir(parents=True)
     (run / "venv/bin/python").symlink_to(sys.executable)
     binary, config, unit = tmp_path / "old/go2rtc", tmp_path / "old/go2rtc.yaml", tmp_path / "old/go2rtc.service"
@@ -183,6 +184,7 @@ def test_runtime_deployment_rolls_back_go2rtc_and_dashboard_on_failure(tmp_path)
     result = subprocess.run(["sh", str(ROOT / "install.sh"), "--runtime-only"], env=env, text=True, capture_output=True)
     assert result.returncode != 0
     assert (run / "backend/version.txt").read_text() == "old-runtime"
+    assert (run / "VERSION").read_text() == "0.9.9\n"
     assert (binary.read_bytes(), config.read_bytes(), unit.read_bytes()) == (b"old-bin", b"old-config", b"old-unit")
     assert "restoring the previous go2rtc installation" in result.stderr
     assert "restoring the previous managed runtime" in result.stderr
