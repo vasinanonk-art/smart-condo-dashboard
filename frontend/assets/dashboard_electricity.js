@@ -11,6 +11,11 @@
     tariff: null,
     tariffSync: null,
     billingCycle: null,
+    reconciliation: null,
+    reconciliationError: null,
+    reconciliationMutationError: null,
+    reconciliationSaving: false,
+    billEntryOpen: false,
     history: null,
     range: '24h',
     live: [],
@@ -129,7 +134,7 @@
 
   function money(value) {
     const parsed = number(value);
-    return parsed === null ? 'Not available' : `฿${parsed.toFixed(2)}`;
+    return parsed === null ? 'Not available' : `฿${new Intl.NumberFormat('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}).format(parsed)}`;
   }
 
   function metric(label, value, unit = '', secondary = false) {
@@ -185,10 +190,20 @@
     catch (error) { console.error('Electricity billing failed', {name: error?.name || 'Error'}); }
   }
 
+  async function loadReconciliation() {
+    try {
+      state.reconciliation = await window.get('/api/electricity/reconciliation/current');
+      state.reconciliationError = null;
+    } catch (error) {
+      state.reconciliation = null;
+      state.reconciliationError = 'Bill reconciliation is unavailable.';
+    }
+  }
+
   function refreshBilling() {
     if (!state.billingOwnerActive) return Promise.resolve();
     if (state.billingInFlight) return state.billingInFlight;
-    state.billingInFlight = Promise.allSettled([loadBillingCycleStatus(), loadBilling()])
+    state.billingInFlight = Promise.allSettled([loadBillingCycleStatus(), loadBilling(), loadReconciliation()])
       .then(results => {
         if (state.billingOwnerActive) window.renderPage(window.currentPage());
         return results;
@@ -543,6 +558,26 @@
   }
 
   function summaryCards() {
+    const billing = state.billing || {};
+    const active = state.reconciliation?.active_cycle || {};
+    const cost = number(billing.actual_partial_cost);
+    const projectedCost = number(billing.projected_cycle_bill);
+    const usage = number(billing.actual_partial_usage_kwh);
+    const projectedUsage = number(billing.projected_cycle_usage_kwh);
+    const days = number(active.days_until_cycle_end);
+    const missingStart = billing.coverage?.missing_start === true || active.projection_quality?.start_coverage === 'incomplete';
+    const projectionAvailable = projectedCost !== null;
+    const period = billing.billing_period_label || 'Not available';
+    const endDate = active.cycle_end ? formatDateOnly(active.cycle_end) : localDate(billing.billing_period_end);
+    return `<section class="electricity-cycle-summary" aria-label="Current billing cycle summary">
+      <article class="electricity-cycle-card primary"><span>Current Cycle Cost</span><strong>${cost === null ? '—' : safe(money(cost))}</strong><small>${safe(period)}</small></article>
+      <article class="electricity-cycle-card projected"><span>Projected Bill</span><strong>${projectionAvailable ? safe(money(projectedCost)) : '—'}</strong><small>${projectionAvailable && projectedUsage !== null ? `~${safe(projectedUsage.toFixed(2))} kWh projected` : 'Projection unavailable'}</small>${missingStart && projectionAvailable ? '<em class="electricity-estimate limited">Estimate · limited data</em>' : projectionAvailable ? '<em class="electricity-estimate">Estimate</em>' : ''}</article>
+      <article class="electricity-cycle-card"><span>Cycle Usage</span><strong>${usage === null ? '—' : `${safe(usage.toFixed(2))}<small>kWh</small>`}</strong><small>Accumulated this billing cycle</small></article>
+      <article class="electricity-cycle-card"><span>Cycle Ends In</span><strong>${days === null ? '—' : `${safe(Math.max(0, Math.ceil(days)))}<small>days</small>`}</strong><small>${endDate === 'Not available' ? 'Cycle end not available' : `Cycle ends ${safe(endDate)}`}</small></article>
+    </section>`;
+  }
+
+  function dailySummaryCards() {
     const comparison = state.comparison || {};
     const current = comparison.current || {};
     const percentage = number(comparison.percentage_difference);
@@ -550,12 +585,116 @@
     const peak = state.todayPeak;
     const trendClass = percentage === null ? 'neutral' : percentage > 0 ? 'up' : percentage < 0 ? 'down' : 'neutral';
     const trend = percentage === null ? 'Not available' : `${percentage > 0 ? '▲ +' : percentage < 0 ? '▼ ' : ''}${percentage.toFixed(1)}%`;
-    return `<section class="electricity-analytics-summary${state.comparisonLoading ? ' is-loading' : ''}" aria-label="Today electricity summary">
+    return `<section class="electricity-daily-summary" aria-label="Daily electricity details"><div class="electricity-section-head"><div><h2>Daily Details</h2><small>Supporting usage context; not the billing-cycle total</small></div></div><div class="electricity-analytics-summary${state.comparisonLoading ? ' is-loading' : ''}">
       <article class="electricity-summary-card"><span>Today</span><strong>${hasCurrent ? safe(Number(current.total_energy_kwh || 0).toFixed(2)) : 'Not available'}${hasCurrent ? '<small>kWh</small>' : ''}</strong></article>
       <article class="electricity-summary-card"><span>Estimated Cost</span><strong>${hasCurrent ? safe(money(current.total_cost_thb)) : 'Not available'}</strong></article>
-      <article class="electricity-summary-card"><span>Today’s Peak</span><strong>${peak ? `${safe(number(peak.energy_kwh).toFixed(2))}<small>kWh</small>` : 'Not available'}</strong><small>${peak ? safe(localClock(peak.timestamp)) : 'No valid interval'}</small></article>
+      <article class="electricity-summary-card"><span>Peak Hour Consumption</span><strong>${peak ? `${safe(number(peak.energy_kwh).toFixed(2))}<small>kWh</small>` : 'Not available'}</strong><small>${peak ? safe(localClock(peak.timestamp)) : 'No valid interval'}</small></article>
       <article class="electricity-summary-card comparison ${trendClass}"><span>Comparison</span><strong>${safe(trend)}</strong><small>Compared with yesterday</small></article>
+    </div></section>`;
+  }
+
+  function formatDateOnly(value, options = {}) {
+    if (!value) return 'Not available';
+    const parsed = new Date(`${String(value).slice(0, 10)}T00:00:00+07:00`);
+    if (!Number.isFinite(parsed.getTime())) return 'Not available';
+    return new Intl.DateTimeFormat('en-GB', {timeZone:'Asia/Bangkok', day:'numeric', month:'short', ...(options.year ? {year:'numeric'} : {})}).format(parsed);
+  }
+
+  function closedPeriod(record) {
+    if (!record?.cycle_start || !record?.cycle_end) return 'Not available';
+    const inclusiveEnd = new Date(`${record.cycle_end}T00:00:00+07:00`);
+    inclusiveEnd.setDate(inclusiveEnd.getDate() - 1);
+    return `${formatDateOnly(record.cycle_start)} – ${new Intl.DateTimeFormat('en-GB', {timeZone:'Asia/Bangkok', day:'numeric', month:'short'}).format(inclusiveEnd)}`;
+  }
+
+  function signedMoney(value) {
+    const parsed = number(value);
+    if (parsed === null) return 'Not available';
+    return `${parsed > 0 ? '+' : parsed < 0 ? '−' : ''}${money(Math.abs(parsed))}`;
+  }
+
+  function signedPercent(value) {
+    const parsed = number(value);
+    if (parsed === null) return 'Not available';
+    return `${parsed > 0 ? '+' : parsed < 0 ? '−' : ''}${Math.abs(parsed).toFixed(2)}%`;
+  }
+
+  function bangkokToday() {
+    return new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Bangkok', year:'numeric', month:'2-digit', day:'2-digit'}).format(new Date());
+  }
+
+  function dueState(record, todayValue = bangkokToday()) {
+    if (record?.payment_status === 'paid') return {label:'Paid', cls:'paid'};
+    if (!record?.due_date) return {label:'Not available', cls:'neutral'};
+    const due = Date.parse(`${record.due_date}T00:00:00Z`);
+    const today = Date.parse(`${todayValue}T00:00:00Z`);
+    const days = Math.round((due - today) / 86400000);
+    if (days < 0) return {label:'Overdue', cls:'overdue'};
+    if (days === 0) return {label:'Due Today', cls:'today'};
+    if (days <= 3) return {label:'Due Soon', cls:'soon'};
+    return {label:'Unpaid', cls:'unpaid'};
+  }
+
+  function reconciliationPanel() {
+    if (state.reconciliationError) return `<section class="electricity-reconciliation"><div class="electricity-section-head"><div><h2>Bill Reconciliation</h2><small>Latest closed billing cycle</small></div></div><div class="electricity-panel-state error">${safe(state.reconciliationError)}</div></section>`;
+    const record = state.reconciliation?.latest_closed_cycle;
+    if (!record) return '<section class="electricity-reconciliation"><div class="electricity-section-head"><div><h2>Bill Reconciliation</h2><small>Latest closed billing cycle</small></div></div><div class="electricity-panel-state">No closed-cycle reconciliation is available yet.</div></section>';
+    const status = dueState(record);
+    const actual = number(record.actual_bill_amount);
+    const calculated = number(record.calculated_cost);
+    const paidAt = record.paid_at ? localTime(record.paid_at) : null;
+    return `<section class="electricity-reconciliation"><div class="electricity-section-head"><div><h2>Bill Reconciliation</h2><small>Latest closed billing cycle · separate from live current-cycle values</small></div><span class="electricity-payment-badge ${safe(status.cls)}">${safe(status.label)}</span></div>
+      ${state.reconciliationMutationError ? `<div class="electricity-panel-state error">${safe(state.reconciliationMutationError)}</div>` : ''}
+      <dl class="electricity-reconciliation-grid">
+        <div><dt>Billing Period</dt><dd>${safe(closedPeriod(record))}</dd></div>
+        <div><dt>Dashboard Calculated</dt><dd>${calculated === null ? 'Not available' : safe(money(calculated))}</dd></div>
+        <div><dt>Actual MEA Bill</dt><dd>${actual === null ? 'Not entered' : safe(money(actual))}</dd></div>
+        <div><dt>Difference</dt><dd>${actual === null ? 'Not available' : safe(signedMoney(record.difference_amount))}</dd></div>
+        <div><dt>Variance</dt><dd>${actual === null ? 'Not available' : safe(signedPercent(record.difference_percent))}</dd></div>
+        <div><dt>Due Date</dt><dd>${safe(formatDateOnly(record.due_date, {year:true}))}</dd></div>
+        <div><dt>Payment Status</dt><dd>${safe(record.payment_status === 'paid' ? 'Paid' : 'Unpaid')}${paidAt ? `<small>${safe(paidAt)}</small>` : ''}</dd></div>
+      </dl>
+      ${state.billEntryOpen ? `<form class="electricity-bill-entry" data-reconciliation-form><label>Actual MEA bill amount (THB)<input name="actual_bill_amount" inputmode="decimal" type="number" min="0" step="0.01" required value="${actual === null ? '' : safe(actual.toFixed(2))}"></label><div><button class="btn primary" type="submit" ${state.reconciliationSaving ? 'disabled' : ''}>${state.reconciliationSaving ? 'Saving…' : 'Save Actual Bill'}</button><button class="btn ghost" type="button" data-reconciliation-cancel>Cancel</button></div></form>` : ''}
+      <div class="electricity-reconciliation-actions"><button class="btn ghost" data-reconciliation-enter ${state.reconciliationSaving ? 'disabled' : ''}>${actual === null ? 'Enter Actual Bill' : 'Update Actual Bill'}</button>${record.payment_status === 'paid' ? `<button class="btn ghost" data-reconciliation-unpaid ${state.reconciliationSaving ? 'disabled' : ''}>Mark as Unpaid</button>` : `<button class="btn primary" data-reconciliation-paid ${state.reconciliationSaving ? 'disabled' : ''}>Mark as Paid</button>`}</div>
     </section>`;
+  }
+
+  async function reconciliationRequest(path, method, body) {
+    state.reconciliationSaving = true;
+    state.reconciliationMutationError = null;
+    render();
+    try {
+      const response = await fetch(path, {method, credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:body === undefined ? undefined : JSON.stringify(body)});
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || 'Reconciliation update failed.');
+      await loadReconciliation();
+      state.billEntryOpen = false;
+    } catch (error) {
+      state.reconciliationMutationError = error?.message || 'Reconciliation update failed.';
+    } finally {
+      state.reconciliationSaving = false;
+      render();
+    }
+  }
+
+  function bindReconciliation() {
+    const record = state.reconciliation?.latest_closed_cycle;
+    if (!record) return;
+    const enter = document.querySelector('[data-reconciliation-enter]');
+    if (enter) enter.onclick = () => { state.billEntryOpen = true; state.reconciliationMutationError = null; render(); };
+    const cancel = document.querySelector('[data-reconciliation-cancel]');
+    if (cancel) cancel.onclick = () => { state.billEntryOpen = false; render(); };
+    const form = document.querySelector('[data-reconciliation-form]');
+    if (form) form.onsubmit = event => {
+      event.preventDefault();
+      const value = number(new FormData(form).get('actual_bill_amount'));
+      if (value === null || value < 0) { state.reconciliationMutationError = 'Enter a valid non-negative THB amount.'; render(); return; }
+      reconciliationRequest(`/api/electricity/reconciliation/${encodeURIComponent(record.cycle_id)}`, 'PUT', {actual_bill_amount:value});
+    };
+    const paid = document.querySelector('[data-reconciliation-paid]');
+    if (paid) paid.onclick = () => reconciliationRequest(`/api/electricity/reconciliation/${encodeURIComponent(record.cycle_id)}/paid`, 'POST');
+    const unpaid = document.querySelector('[data-reconciliation-unpaid]');
+    if (unpaid) unpaid.onclick = () => reconciliationRequest(`/api/electricity/reconciliation/${encodeURIComponent(record.cycle_id)}/unpaid`, 'POST');
   }
 
   function statisticCard(label, item, detail = '') {
@@ -692,6 +831,8 @@
 
     host.innerHTML = `
       ${summaryCards()}
+      ${dailySummaryCards()}
+      ${reconciliationPanel()}
       ${state.comparisonError ? `<div class="electricity-history-message error">${safe(state.comparisonError)}</div>` : ''}
       ${statisticsPanel()}
       <section class="electricity-history-card">
@@ -719,16 +860,16 @@
         <div class="electricity-secondary-grid">${metric('Status / Health', healthName(payload.health, payload), '', true)}${metric('Last Update', localTime(payload.last_update || diagnostics.last_success), '', true)}${metric('Runtime IP', runtimeIp, '', true)}${metric('Poll Latency', pollLatency, pollLatency == null ? '' : 'ms', true)}${metric('Data Source', sourceName(source), '', true)}</div>
       </details>
       <section class="electricity-cost-card">
-        <div class="card-head"><div><h2>Electricity Cost</h2><small>Billing cycle cuts on day ${safe(billing.billing_cycle_day || 2)} of each month</small></div></div>
+        <div class="card-head"><div><h2>Billing Estimate Details</h2><small>Billing cycle cuts on day ${safe(billing.billing_cycle_day || 2)} of each month</small></div></div>
         ${billingCoverageWarning(billing)}
         ${!tariff.valid || billing.configured === false ? tariffEmpty() : `
-          <div class="electricity-cost-grid">${metric(actualUsageLabel, billing.actual_partial_usage_kwh ?? billing.usage_kwh, 'kWh', true)}${metric(actualCostLabel, billing.actual_partial_cost ?? billing.total, 'THB', true)}${metric('Projected cycle usage', billing.projected_cycle_usage_kwh, 'kWh', true)}${metric('Projected cycle bill', billing.projected_cycle_bill, 'THB', true)}</div>
           <div class="electricity-billing-breakdown">${[['Energy charge', billing.base_energy_charge], ['Ft', billing.ft_charge], ['Service charge', billing.service_charge], ['VAT', billing.vat], ['Total for available data', billing.actual_partial_cost ?? billing.total]].map(([label, value]) => `<div><span>${label}</span><strong>${value == null ? 'Not available' : `${Number(value).toFixed(2)} THB`}</strong></div>`).join('')}</div>
           <div class="electricity-note">${safe(tariff.tariff_name || billing.tariff_name || 'Configured tariff')} · ${safe(tariff.effective_date || billing.effective_date || 'No effective date')} · Source: ${safe(sync.source || 'manual')} · ${safe(sync.status || 'manual_update_required')} · Estimated from configured tariff. This is not an official utility invoice.</div>
         `}
       </section>
       <details class="electricity-diagnostics"><summary>Advanced Diagnostics</summary><div class="electricity-diagnostics-grid">${safeDiag.map(key => `<div class="electricity-diagnostic"><span>${safe(key)}</span><strong>${safe(key.includes('_ts') || key === 'last_success' ? localTime(diagnostics[key]) : diagnostics[key] ?? 'Not available')}</strong></div>`).join('')}</div></details>`;
     bind();
+    bindReconciliation();
     installChartInteraction();
   }
 
@@ -803,6 +944,8 @@
   window.DashboardElectricityHistory = {
     state, historyRequest, csvExport, axisLabelStride, splitSegments,
     movingAverage, analyticsStatistics, tooltipContent, bucketLabel,
+    summaryCards, dailySummaryCards, reconciliationPanel, dueState,
+    reconciliationRequest,
   };
   window.DashboardElectricityBilling = {
     activate: activateBilling,

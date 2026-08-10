@@ -14,7 +14,7 @@ def test_summary_and_statistics_cards_use_cached_payloads():
     for label in (
         "Today",
         "Estimated Cost",
-        "Today’s Peak",
+        "Peak Hour Consumption",
         "Comparison",
         "Compared with yesterday",
         "Highest Day",

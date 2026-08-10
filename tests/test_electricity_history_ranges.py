@@ -340,7 +340,7 @@ def test_frontend_has_comparison_metrics_server_csv_and_distinct_states():
         Path(__file__).resolve().parents[1] / "frontend/assets/dashboard_electricity.js"
     ).read_text(encoding="utf-8")
     for label in (
-        "Today", "Compared with yesterday", "Today’s Peak",
+        "Today", "Compared with yesterday", "Peak Hour Consumption",
         "Average Daily", "Average Hourly", "Maximum Interval", "Minimum Interval",
     ):
         assert label in source
