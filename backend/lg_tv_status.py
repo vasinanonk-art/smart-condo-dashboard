@@ -150,6 +150,39 @@ def _call(control: Any, names: tuple[str, ...], default: Any = None, timeout: Op
     return default
 
 
+def _close_client(client: Any) -> None:
+    try:
+        client.close()
+    except Exception as exc:
+        log.debug("LG WebOS client close failed: %s", _safe_code(exc))
+    thread = getattr(client, "_th", None)
+    try:
+        alive = bool(thread is not None and thread.is_alive())
+    except Exception:
+        alive = False
+    if alive:
+        try:
+            thread.join(timeout=0.5)
+        except Exception as exc:
+            log.debug("LG WebOS client join failed: %s", _safe_code(exc))
+        try:
+            alive = bool(thread.is_alive())
+        except Exception:
+            alive = False
+    if not alive:
+        return
+    force_close = getattr(client, "close_connection", None)
+    if callable(force_close):
+        try:
+            force_close()
+        except Exception as exc:
+            log.debug("LG WebOS client force-close failed: %s", _safe_code(exc))
+    try:
+        thread.join(timeout=0.5)
+    except Exception as exc:
+        log.debug("LG WebOS client final join failed: %s", _safe_code(exc))
+
+
 def _collect_live(key: str, timeout: float = 8.0) -> Dict[str, Any]:
     from pywebostv.connection import WebOSClient
     from pywebostv.controls import ApplicationControl, MediaControl, SourceControl, SystemControl
@@ -219,18 +252,7 @@ def _collect_live(key: str, timeout: float = 8.0) -> Dict[str, Any]:
         }
     finally:
         if client is not None:
-            try:
-                client.close()
-            except Exception as close_error:
-                log.warning("Failed to close LG WebOS client: %s", _safe_code(close_error))
-            websocket_thread = getattr(client, "_th", None)
-            if websocket_thread is not None and websocket_thread.is_alive():
-                try:
-                    websocket_thread.join(timeout=0.5)
-                    if websocket_thread.is_alive():
-                        log.warning("LG WebOS client thread did not stop after close")
-                except Exception as join_error:
-                    log.warning("Failed to join LG WebOS client thread: %s", _safe_code(join_error))
+            _close_client(client)
 
 
 def _persist() -> None:
@@ -283,7 +305,7 @@ def _poll_once() -> Dict[str, Any]:
                 failures = int(_CACHE.get("consecutive_failures") or 0) + 1
                 _CACHE.update({"online": False, "power_state": "starting" if wake else "standby" if intentional else "offline",
                                "connection_state": "connecting" if wake else "standby" if intentional else "unreachable",
-                               "last_error": None if intentional or wake else "tv_unreachable",
+                               "last_error": None,
                                "consecutive_failures": failures, "stale": True})
             _transition("LG_STANDBY" if intentional else "LG_RECONNECTING" if wake else "LG_OFFLINE")
             result = "standby" if intentional else "tv_unreachable"
@@ -305,16 +327,24 @@ def _poll_once() -> Dict[str, Any]:
         _transition("LG_PAIRING_REQUIRED"); result = "pairing_required"
     except Exception as exc:
         code = _safe_code(exc)
+        expected_offline = code in {"status_timeout", "tv_unreachable", "websocket_connect_failed"}
         with STATE_LOCK:
-            _CACHE.update({"online": False, "connection_state": "websocket_error", "last_error": code,
-                           "consecutive_failures": int(_CACHE.get("consecutive_failures") or 0) + 1, "stale": True})
-        _RUNTIME["last_connection_error"] = code; _transition("LG_RECONNECTING"); result = code
+            _CACHE.update({"online": False,
+                           "power_state": "offline" if expected_offline else "unknown",
+                           "connection_state": "unreachable" if expected_offline else "websocket_error",
+                           "last_error": None if expected_offline else code,
+                           "consecutive_failures": int(_CACHE.get("consecutive_failures") or 0) + 1,
+                           "stale": True})
+        _RUNTIME["last_connection_error"] = None if expected_offline else code
+        _transition("LG_OFFLINE" if expected_offline else "LG_RECONNECTING")
+        result = code
     finally:
         completed = int(time.time())
         duration_ms = int((time.monotonic() - started) * 1000)
         _RUNTIME.update({"refresh_running": False, "last_poll_completed": completed,
                          "last_poll_duration_ms": duration_ms, "last_poll_result": result})
-        log.info("LG timing status_refresh_ms=%d result=%s", duration_ms, result)
+        timing_log = log.debug if result in {"status_timeout", "tv_unreachable", "websocket_connect_failed"} else log.info
+        timing_log("LG timing status_refresh_ms=%d result=%s", duration_ms, result)
         POLL_LOCK.release()
     return {"started": True, "state": result}
 
