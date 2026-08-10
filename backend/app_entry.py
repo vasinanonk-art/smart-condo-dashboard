@@ -140,6 +140,10 @@ from backend import topology_location_model as _topology_location_model  # noqa:
 # valid nodes available when one optional provider or enrichment fails.
 from backend import topology_hotfix as _topology_hotfix  # noqa: F401,E402
 
+# Add bill reconciliation and reminders through the existing persistent root and
+# daily maintenance owner. This does not create another scheduler.
+from backend import electricity_reconciliation as _electricity_reconciliation  # noqa: F401,E402
+
 # Install authentication last so it protects every dashboard and extension route.
 from backend import dashboard_auth as _dashboard_auth  # noqa: F401,E402
 
