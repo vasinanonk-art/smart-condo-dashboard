@@ -106,6 +106,59 @@ def test_actual_bill_update_due_override_and_differences(store, monkeypatch):
     assert updated["due_date"] == "2026-09-15"
 
 
+def test_legacy_record_without_actual_usage_fields_remains_valid(store, monkeypatch):
+    record = create_previous(monkeypatch)
+    raw = json.loads(store.read_text())
+    for field in ("actual_usage_kwh", "usage_difference_kwh", "usage_variance_percent"):
+        raw["records"][0].pop(field)
+    store.write_text(json.dumps(raw))
+
+    loaded = reconciliation._load_store()["records"][0]
+
+    assert loaded["cycle_id"] == record["cycle_id"]
+    assert loaded["calculated_kwh"] == 250
+    assert loaded["actual_usage_kwh"] is None
+    assert loaded["usage_difference_kwh"] is None
+    assert loaded["usage_variance_percent"] is None
+
+
+def test_actual_usage_and_bill_can_be_saved_independently_or_together(store, monkeypatch):
+    record = create_previous(monkeypatch)
+    usage_only = reconciliation._update_record(record["cycle_id"], {"actual_usage_kwh": 275.1234})
+    assert usage_only["actual_usage_kwh"] == 275.1234
+    assert usage_only["actual_bill_amount"] is None
+    assert usage_only["usage_difference_kwh"] == 25.1234
+    assert usage_only["usage_variance_percent"] == 10.05
+
+    bill_only = reconciliation._update_record(record["cycle_id"], {"actual_bill_amount": 1100})
+    assert bill_only["actual_usage_kwh"] == 275.1234
+    assert bill_only["actual_bill_amount"] == 1100
+    assert bill_only["difference_amount"] == 100
+
+    both = reconciliation._update_record(record["cycle_id"], {"actual_usage_kwh": 240, "actual_bill_amount": 950})
+    assert both["actual_usage_kwh"] == 240
+    assert both["actual_bill_amount"] == 950
+    assert both["usage_difference_kwh"] == -10
+    assert both["usage_variance_percent"] == -4
+
+    restarted = reconciliation._load_store()["records"][0]
+    assert restarted == both
+
+
+@pytest.mark.parametrize("value", [-1, float("inf"), float("nan"), True, "bad", 1_000_000.0001])
+def test_invalid_or_unreasonably_large_actual_usage_is_rejected(store, monkeypatch, value):
+    record = create_previous(monkeypatch)
+    with pytest.raises(ValueError, match="invalid_actual_usage_kwh"):
+        reconciliation._update_record(record["cycle_id"], {"actual_usage_kwh": value})
+
+
+def test_usage_difference_is_unavailable_for_invalid_calculated_baseline():
+    assert reconciliation._usage_differences(10, None) == (None, None)
+    assert reconciliation._usage_differences(10, float("nan")) == (None, None)
+    assert reconciliation._usage_differences(10, -1) == (None, None)
+    assert reconciliation._usage_differences(10, 0) == (10, None)
+
+
 def test_existing_v1_record_is_enriched_idempotently_without_financial_or_state_changes(store, monkeypatch):
     previous = payload(cost=1286.86, kwh=311.14, missing_start=True)
     previous["coverage"]["coverage_percent"] = 52.55
@@ -259,8 +312,13 @@ def test_api_auth_csrf_update_paid_unpaid_and_calculated_fields_protected(store,
     assert client.put(f"/api/electricity/reconciliation/{record['cycle_id']}", json={"actual_bill_amount": 1100}).status_code == 403
     response = write(client, csrf, "PUT", f"/api/electricity/reconciliation/{record['cycle_id']}", {"actual_bill_amount": 1100, "calculated_cost": 1})
     assert response.status_code == 422
-    response = write(client, csrf, "PUT", f"/api/electricity/reconciliation/{record['cycle_id']}", {"actual_bill_amount": 1100})
-    assert response.status_code == 200 and response.json()["record"]["calculated_cost"] == 1000
+    response = write(client, csrf, "PUT", f"/api/electricity/reconciliation/{record['cycle_id']}", {"actual_usage_kwh": 275, "calculated_kwh": 1})
+    assert response.status_code == 422
+    response = write(client, csrf, "PUT", f"/api/electricity/reconciliation/{record['cycle_id']}", {"actual_bill_amount": 1100, "actual_usage_kwh": 275})
+    assert response.status_code == 200
+    assert response.json()["record"]["calculated_cost"] == 1000
+    assert response.json()["record"]["calculated_kwh"] == 250
+    assert response.json()["record"]["usage_difference_kwh"] == 25
     assert write(client, csrf, "POST", f"/api/electricity/reconciliation/{record['cycle_id']}/paid").json()["record"]["payment_status"] == "paid"
     assert write(client, csrf, "POST", f"/api/electricity/reconciliation/{record['cycle_id']}/unpaid").json()["record"]["payment_status"] == "unpaid"
 

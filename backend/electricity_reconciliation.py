@@ -29,6 +29,7 @@ _RATE_LOCK = threading.Lock()
 _WRITE_ATTEMPTS: Dict[str, deque[float]] = defaultdict(deque)
 _WRITE_LIMIT = 30
 _WRITE_WINDOW_SEC = 60.0
+MAX_ACTUAL_USAGE_KWH = 1_000_000.0
 _REMINDER_KINDS = {"cycle_closed", "due_soon_day_10", "due_today_day_13"}
 
 
@@ -97,6 +98,34 @@ def _differences(actual: Optional[float], calculated: float) -> tuple[Optional[f
     return difference, percent
 
 
+def _actual_usage(value: Any, *, nullable: bool = False) -> Optional[float]:
+    if value is None and nullable:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("invalid_actual_usage_kwh")
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_actual_usage_kwh") from exc
+    if not math.isfinite(result) or result < 0 or result > MAX_ACTUAL_USAGE_KWH:
+        raise ValueError("invalid_actual_usage_kwh")
+    return round(result, 4)
+
+
+def _usage_differences(actual: Optional[float], calculated: Any) -> tuple[Optional[float], Optional[float]]:
+    if actual is None or isinstance(calculated, bool):
+        return None, None
+    try:
+        baseline = float(calculated)
+    except (TypeError, ValueError):
+        return None, None
+    if not math.isfinite(baseline) or baseline < 0:
+        return None, None
+    difference = round(actual - baseline, 4)
+    percent = None if baseline == 0 else round(difference / baseline * 100.0, 2)
+    return difference, percent
+
+
 def _validate_coverage(raw: Any) -> Dict[str, Any]:
     if raw is None:
         return {"status": "unavailable", "percent": None, "start_complete": None}
@@ -148,7 +177,8 @@ def _validate_record(raw: Any) -> Dict[str, Any]:
         "calculated_kwh", "actual_bill_amount", "difference_amount",
         "difference_percent", "payment_status", "paid_at", "recorded_at", "updated_at",
     }
-    if not required.issubset(raw) or set(raw) - required - {"reminder_events", "coverage"}:
+    additive = {"reminder_events", "coverage", "actual_usage_kwh", "usage_difference_kwh", "usage_variance_percent"}
+    if not required.issubset(raw) or set(raw) - required - additive:
         raise ValueError("invalid_reconciliation_fields")
     start = _valid_date(raw.get("cycle_start"), "cycle_start")
     end = _valid_date(raw.get("cycle_end"), "cycle_end")
@@ -159,6 +189,7 @@ def _validate_record(raw: Any) -> Dict[str, Any]:
     calculated_cost = _finite_nonnegative(raw.get("calculated_cost"), "calculated_cost")
     calculated_kwh = _finite_nonnegative(raw.get("calculated_kwh"), "calculated_kwh")
     actual = _finite_nonnegative(raw.get("actual_bill_amount"), "actual_bill_amount", nullable=True)
+    actual_usage = _actual_usage(raw.get("actual_usage_kwh"), nullable=True)
     payment = str(raw.get("payment_status") or "")
     if payment not in {"paid", "unpaid"}:
         raise ValueError("invalid_payment_status")
@@ -191,6 +222,27 @@ def _validate_record(raw: Any) -> Dict[str, Any]:
             raise ValueError("invalid_difference_percent")
     elif percent is not None:
         raise ValueError("invalid_difference_percent")
+    usage_difference, usage_percent = _usage_differences(actual_usage, calculated_kwh)
+    raw_usage_difference = raw.get("usage_difference_kwh")
+    if raw_usage_difference is not None:
+        try:
+            raw_usage_difference = round(float(raw_usage_difference), 4)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid_usage_difference_kwh") from exc
+        if not math.isfinite(raw_usage_difference) or usage_difference is None or raw_usage_difference != usage_difference:
+            raise ValueError("invalid_usage_difference_kwh")
+    elif usage_difference is not None:
+        raise ValueError("invalid_usage_difference_kwh")
+    raw_usage_percent = raw.get("usage_variance_percent")
+    if raw_usage_percent is not None:
+        try:
+            raw_usage_percent = round(float(raw_usage_percent), 2)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid_usage_variance_percent") from exc
+        if not math.isfinite(raw_usage_percent) or usage_percent is None or raw_usage_percent != usage_percent:
+            raise ValueError("invalid_usage_variance_percent")
+    elif usage_percent is not None:
+        raise ValueError("invalid_usage_variance_percent")
     return {
         "cycle_id": expected_id,
         "cycle_start": start,
@@ -202,6 +254,9 @@ def _validate_record(raw: Any) -> Dict[str, Any]:
         "actual_bill_amount": actual,
         "difference_amount": difference,
         "difference_percent": percent,
+        "actual_usage_kwh": actual_usage,
+        "usage_difference_kwh": usage_difference,
+        "usage_variance_percent": usage_percent,
         "payment_status": payment,
         "paid_at": paid_at,
         "recorded_at": recorded,
@@ -290,6 +345,9 @@ def _authoritative_record_from_payload(payload: Mapping[str, Any], now_ts: Optio
         "actual_bill_amount": None,
         "difference_amount": None,
         "difference_percent": None,
+        "actual_usage_kwh": None,
+        "usage_difference_kwh": None,
+        "usage_variance_percent": None,
         "payment_status": "unpaid",
         "paid_at": None,
         "recorded_at": timestamp,
@@ -343,7 +401,7 @@ def _rate_limit(request: Request) -> None:
 
 
 def _update_record(cycle_id: str, changes: Mapping[str, Any], now_ts: Optional[int] = None) -> Dict[str, Any]:
-    allowed = {"actual_bill_amount", "due_date", "payment_status"}
+    allowed = {"actual_bill_amount", "actual_usage_kwh", "due_date", "payment_status"}
     if not changes or set(changes) - allowed:
         raise ValueError("invalid_reconciliation_update")
     with _LOCK:
@@ -357,6 +415,8 @@ def _update_record(cycle_id: str, changes: Mapping[str, Any], now_ts: Optional[i
             record = previous
         if "actual_bill_amount" in changes:
             record["actual_bill_amount"] = _finite_nonnegative(changes["actual_bill_amount"], "actual_bill_amount", nullable=True)
+        if "actual_usage_kwh" in changes:
+            record["actual_usage_kwh"] = _actual_usage(changes["actual_usage_kwh"], nullable=True)
         if "due_date" in changes:
             record["due_date"] = _valid_date(changes["due_date"], "due_date")
         if "payment_status" in changes:
@@ -368,6 +428,9 @@ def _update_record(cycle_id: str, changes: Mapping[str, Any], now_ts: Optional[i
         difference, percent = _differences(record.get("actual_bill_amount"), record["calculated_cost"])
         record["difference_amount"] = difference
         record["difference_percent"] = percent
+        usage_difference, usage_percent = _usage_differences(record.get("actual_usage_kwh"), record["calculated_kwh"])
+        record["usage_difference_kwh"] = usage_difference
+        record["usage_variance_percent"] = usage_percent
         record["updated_at"] = _iso_now(now_ts)
         validated = _validate_record(record)
         store["records"] = [validated if item["cycle_id"] == cycle_id else item for item in store["records"]]
@@ -480,7 +543,7 @@ def reconciliation_history() -> Dict[str, Any]:
 @app.put("/api/electricity/reconciliation/{cycle_id}")
 def save_actual_bill(cycle_id: str, request: Request, payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     _rate_limit(request)
-    if set(payload) - {"actual_bill_amount", "due_date"}:
+    if set(payload) - {"actual_bill_amount", "actual_usage_kwh", "due_date"}:
         _audit(request, "update", cycle_id, "rejected")
         raise HTTPException(status_code=422, detail="invalid_reconciliation_update")
     try:

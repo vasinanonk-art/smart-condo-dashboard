@@ -13,7 +13,7 @@ CSS = (ROOT / "frontend/assets/dashboard_electricity.css").read_text(encoding="u
 def test_summary_and_statistics_cards_use_cached_payloads():
     for label in (
         "Today",
-        "Estimated Cost",
+        "Estimated Daily Cost",
         "Peak Hour Consumption",
         "Comparison",
         "Compared with yesterday",

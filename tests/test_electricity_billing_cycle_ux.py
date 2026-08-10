@@ -29,12 +29,13 @@ const context={{window,document,console,fetch,URL,URLSearchParams,Intl,Date,Form
 vm.createContext(context);vm.runInContext(fs.readFileSync({source},'utf8'),context);
 const api=window.DashboardElectricityHistory;
 api.state.billing={{actual_partial_cost:616.19,actual_partial_usage_kwh:168.17,projected_cycle_bill:2709.25,projected_cycle_usage_kwh:605.0087,billing_period_label:'2 Aug 2026 – 1 Sep 2026',coverage:{{missing_start:true}}}};
-const closed={{cycle_id:'2026-07-02_2026-08-02',cycle_start:'2026-07-02',cycle_end:'2026-08-02',due_date:'2026-08-13',calculated_cost:1286.86,actual_bill_amount:null,difference_amount:null,difference_percent:null,payment_status:'unpaid',paid_at:null,coverage:{{status:'incomplete',percent:52.55,start_complete:false}}}};
-api.state.reconciliation={{active_cycle:{{cycle_end:'2026-09-02',days_until_cycle_end:23,projection_quality:{{start_coverage:'incomplete'}}}},latest_closed_cycle:closed}};
+const closed={{cycle_id:'2026-07-02_2026-08-02',cycle_start:'2026-07-02',cycle_end:'2026-08-02',due_date:'2026-08-13',calculated_cost:1286.86,calculated_kwh:311.14,actual_bill_amount:null,difference_amount:null,difference_percent:null,actual_usage_kwh:null,usage_difference_kwh:null,usage_variance_percent:null,payment_status:'unpaid',paid_at:null,coverage:{{status:'incomplete',percent:52.55,start_complete:false}}}};
+api.state.reconciliation={{active_cycle:{{cycle_start:'2026-08-02',cycle_end:'2026-09-02',days_until_cycle_end:23,projection_quality:{{start_coverage:'incomplete'}}}},latest_closed_cycle:closed}};
 const cycle=api.summaryCards();const daily=api.dailySummaryCards();const absent=api.reconciliationPanel();
 api.state.billing.coverage.missing_start=false;api.state.reconciliation.active_cycle.projection_quality.start_coverage='complete';
 const completeStartCycle=api.summaryCards();
 closed.actual_bill_amount=1300;closed.difference_amount=13.14;closed.difference_percent=1.02;
+closed.actual_usage_kwh=320;closed.usage_difference_kwh=8.86;closed.usage_variance_percent=2.85;
 const entered=api.reconciliationPanel();
 closed.coverage={{status:'complete',percent:100,start_complete:true}};
 const completeReconciliation=api.reconciliationPanel();
@@ -59,8 +60,10 @@ def test_cycle_first_cards_use_authoritative_cycle_fields():
     cycle = result["cycle"]
     assert "Current Cycle Cost" in cycle and "฿616.19" in cycle
     assert "2 Aug 2026 – 1 Sep 2026" in cycle
-    assert "Projected Bill" in cycle and "฿2,709.25" in cycle
+    assert "Current-Pace Bill Estimate" in cycle and "฿2,709.25" in cycle
+    assert ">Projected Bill<" not in cycle
     assert "605.01 kWh projected" in cycle
+    assert "Based on usage since 2 Aug" in cycle
     assert "Cycle Usage" in cycle and "168.17" in cycle
     assert "Cycle Ends In" in cycle and "23" in cycle and "2 Sept" in cycle
     assert "Estimate · limited data" in cycle
@@ -74,6 +77,7 @@ def test_daily_metrics_are_demoted_and_peak_label_is_precise():
     assert "Daily Details" in result["daily"]
     assert "Supporting usage context; not the billing-cycle total" in result["daily"]
     assert "Peak Hour Consumption" in result["daily"]
+    assert "Estimated Daily Cost" in result["daily"]
     assert "Today’s Peak" not in JS
     assert JS.index("${summaryCards()}") < JS.index("${dailySummaryCards()}")
 
@@ -83,10 +87,15 @@ def test_reconciliation_absent_entered_difference_variance_and_due_date():
     assert "Not entered" in result["absent"]
     assert "Enter Actual Bill" in result["absent"]
     assert "฿1,286.86" in result["absent"]
+    assert "311.14 kWh" in result["absent"]
+    assert "Energy Usage" in result["absent"] and "Bill Amount" in result["absent"]
     assert "Partial data · 52.55% coverage" in result["absent"]
-    for value in ("฿1,300.00", "+฿13.14", "+1.02%", "13 Aug 2026", "Unpaid"):
+    assert 'class="btn primary" data-reconciliation-enter' in result["absent"]
+    assert 'class="btn ghost" data-reconciliation-paid' in result["absent"]
+    for value in ("320.00 kWh", "+8.86 kWh", "+2.85%", "฿1,300.00", "+฿13.14", "+1.02%", "13 Aug 2026", "Unpaid"):
         assert value in result["entered"]
-    assert result["entered"].count("Based on partial dashboard data") == 2
+    assert 'class="btn ghost" data-reconciliation-enter' in result["entered"] and "Edit Actual Bill" in result["entered"]
+    assert result["entered"].count("Based on partial dashboard data") == 6
 
 
 def test_complete_and_unavailable_reconciliation_coverage_states():
@@ -119,8 +128,9 @@ def test_failure_and_unknown_states_do_not_substitute_zero():
 def test_responsive_cycle_and_reconciliation_structure_has_no_horizontal_scroll():
     assert ".electricity-cycle-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))" in CSS
     assert "@media(max-width:1180px){.electricity-cycle-summary{grid-template-columns:repeat(2" in CSS
-    assert "@media(max-width:560px){.electricity-cycle-summary,.electricity-reconciliation-grid{grid-template-columns:1fr}" in CSS
+    assert "@media(max-width:560px){.electricity-cycle-summary,.electricity-reconciliation-grid,.electricity-payment-summary,.electricity-bill-entry{grid-template-columns:1fr}" in CSS
     assert "overflow-x:hidden" in CSS
+    assert 'name="actual_usage_kwh"' in JS and 'max="1000000"' in JS
     assert "dashboard_electricity_projection.js" not in INDEX
 
 
