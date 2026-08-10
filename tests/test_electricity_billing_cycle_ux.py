@@ -32,6 +32,10 @@ api.state.billing={{actual_partial_cost:616.19,actual_partial_usage_kwh:168.17,p
 const closed={{cycle_id:'2026-07-02_2026-08-02',cycle_start:'2026-07-02',cycle_end:'2026-08-02',due_date:'2026-08-13',calculated_cost:1286.86,calculated_kwh:311.14,actual_bill_amount:null,difference_amount:null,difference_percent:null,actual_usage_kwh:null,usage_difference_kwh:null,usage_variance_percent:null,payment_status:'unpaid',paid_at:null,coverage:{{status:'incomplete',percent:52.55,start_complete:false}}}};
 api.state.reconciliation={{active_cycle:{{cycle_start:'2026-08-02',cycle_end:'2026-09-02',days_until_cycle_end:23,projection_quality:{{start_coverage:'incomplete'}}}},latest_closed_cycle:closed}};
 const cycle=api.summaryCards();const daily=api.dailySummaryCards();const absent=api.reconciliationPanel();
+api.state.comparison={{current:{{point_count:1,total_energy_kwh:6.11}},previous:{{point_count:1,total_energy_kwh:0.0103}},comparison_status:'baseline_too_low',percentage_difference:null}};
+const lowBaselineDaily=api.dailySummaryCards();
+api.state.comparison={{current:{{point_count:1,total_energy_kwh:6.11}},previous:{{point_count:0,total_energy_kwh:0}},comparison_status:'unavailable',percentage_difference:null}};
+const missingBaselineDaily=api.dailySummaryCards();
 api.state.billing.coverage.missing_start=false;api.state.reconciliation.active_cycle.projection_quality.start_coverage='complete';
 const completeStartCycle=api.summaryCards();
 closed.actual_bill_amount=1300;closed.difference_amount=13.14;closed.difference_percent=1.02;
@@ -49,7 +53,7 @@ window.nextReconciliation={{active_cycle:{{}},latest_closed_cycle:{{...closed,pa
   await api.reconciliationRequest('/api/electricity/reconciliation/2026-07-02_2026-08-02','PUT',{{actual_bill_amount:2872.43}});
   await api.reconciliationRequest('/api/electricity/reconciliation/2026-07-02_2026-08-02/paid','POST');
   await api.reconciliationRequest('/api/electricity/reconciliation/2026-07-02_2026-08-02/unpaid','POST');
-  process.stdout.write(JSON.stringify({{cycle,completeStartCycle,daily,absent,entered,completeReconciliation,unavailableReconciliation,dueSoon,dueToday,overdue,requests,state:api.state.reconciliation}}));
+  process.stdout.write(JSON.stringify({{cycle,completeStartCycle,daily,lowBaselineDaily,missingBaselineDaily,absent,entered,completeReconciliation,unavailableReconciliation,dueSoon,dueToday,overdue,requests,state:api.state.reconciliation}}));
 }})().catch(error=>{{console.error(error);process.exit(1);}});
 """
     )
@@ -80,6 +84,22 @@ def test_daily_metrics_are_demoted_and_peak_label_is_precise():
     assert "Estimated Daily Cost" in result["daily"]
     assert "Today’s Peak" not in JS
     assert JS.index("${summaryCards()}") < JS.index("${dailySummaryCards()}")
+
+
+def test_daily_comparison_low_baseline_is_not_comparable_without_extreme_percentage():
+    result = ux_runtime()
+    assert "Not comparable" in result["lowBaselineDaily"]
+    assert "Yesterday baseline too low" in result["lowBaselineDaily"]
+    assert "59364" not in result["lowBaselineDaily"]
+    assert "Infinity" not in result["lowBaselineDaily"]
+    assert "NaN" not in result["lowBaselineDaily"]
+
+
+def test_daily_comparison_missing_baseline_remains_unavailable():
+    result = ux_runtime()
+    assert "Not available" in result["missingBaselineDaily"]
+    assert "Compared with yesterday" in result["missingBaselineDaily"]
+    assert "Not comparable" not in result["missingBaselineDaily"]
 
 
 def test_reconciliation_absent_entered_difference_variance_and_due_date():

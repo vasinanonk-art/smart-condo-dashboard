@@ -139,6 +139,13 @@ def _number(value: Any) -> Optional[float]:
         return None
 
 
+# Meter totals are recorded at 0.01 kWh resolution. A comparison baseline must
+# exceed two resolution quanta before a percentage is meaningful; otherwise the
+# result is dominated by one or two measurement steps rather than usage trend.
+METER_ENERGY_RESOLUTION_KWH = 0.01
+MIN_MEANINGFUL_COMPARISON_BASELINE_KWH = 2 * METER_ENERGY_RESOLUTION_KWH
+
+
 def _epoch(value: Any) -> Optional[int]:
     if value in (None, "", 0, "0"):
         return None
@@ -853,14 +860,18 @@ def comparison_payload(name: str, now_value: Optional[datetime] = None) -> Dict[
     previous_energy = _number(previous["total_energy_kwh"])
     current_energy = _number(current["total_energy_kwh"])
     percentage = None
+    comparison_status = "unavailable"
     if (
         current["point_count"] > 0
         and previous["point_count"] > 0
         and current_energy is not None
         and previous_energy is not None
-        and previous_energy > 0
     ):
-        percentage = round((current_energy - previous_energy) / previous_energy * 100.0, 2)
+        if previous_energy <= MIN_MEANINGFUL_COMPARISON_BASELINE_KWH:
+            comparison_status = "baseline_too_low"
+        else:
+            comparison_status = "comparable"
+            percentage = round((current_energy - previous_energy) / previous_energy * 100.0, 2)
     return {
         "comparison": name,
         "timezone": "Asia/Bangkok",
@@ -868,6 +879,7 @@ def comparison_payload(name: str, now_value: Optional[datetime] = None) -> Dict[
         "current": current,
         "previous": previous,
         "percentage_difference": percentage,
+        "comparison_status": comparison_status,
     }
 
 

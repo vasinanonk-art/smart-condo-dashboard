@@ -240,6 +240,56 @@ def test_comparison_omits_percentage_for_empty_or_zero_previous_period(history_s
     assert payload["current"]["point_count"] > 0
     assert payload["previous"]["point_count"] == 0
     assert payload["percentage_difference"] is None
+    assert payload["comparison_status"] == "unavailable"
+
+
+@pytest.mark.parametrize("baseline", [0.0, 0.0199, 0.02])
+def test_comparison_rejects_zero_and_single_resolution_baselines(history_store, baseline):
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=history.BANGKOK)
+    current = now.replace(hour=0)
+    previous_start = current - timedelta(days=1)
+    rows = []
+    for start, delta in ((current, 6.11), (previous_start, baseline)):
+        for index in range(15):
+            rows.append({"ts": int((start + timedelta(minutes=index * 5)).timestamp()), "voltage": 230.0, "current": 1.0, "power": 230.0, "total_energy": 100.0 + delta * index / 14, "source": "test", "health": "healthy"})
+    history_store.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    payload = history.comparison_payload("today", now)
+    assert payload["comparison_status"] == "baseline_too_low"
+    assert payload["percentage_difference"] is None
+
+
+def test_comparison_preserves_normal_increase_decrease_and_equal_usage(history_store):
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=history.BANGKOK)
+
+    def run(current_delta, previous_delta):
+        current_start = now.replace(hour=0)
+        previous_start = current_start - timedelta(days=1)
+        rows = []
+        for start, delta in ((current_start, current_delta), (previous_start, previous_delta)):
+            for index in range(15):
+                rows.append({"ts": int((start + timedelta(minutes=index * 5)).timestamp()), "voltage": 230.0, "current": 1.0, "power": 230.0, "total_energy": 100.0 + delta * index / 14, "source": "test", "health": "healthy"})
+        history_store.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+        for suffix in ("", "-wal", "-shm"):
+            history._database_path().with_name(history._database_path().name + suffix).unlink(missing_ok=True)
+        return history.comparison_payload("today", now)
+
+    assert run(2.0, 1.0)["percentage_difference"] == pytest.approx(100)
+    assert run(1.0, 2.0)["percentage_difference"] == pytest.approx(-50)
+    assert run(1.0, 1.0)["percentage_difference"] == pytest.approx(0)
+
+
+def test_comparison_production_like_extreme_baseline_is_not_comparable(history_store):
+    now = datetime(2026, 7, 27, 1, 10, tzinfo=history.BANGKOK)
+    current_start = now.replace(hour=0, minute=0)
+    previous_start = current_start - timedelta(days=1)
+    rows = []
+    for start, delta, base in ((current_start, 6.11, 10.0), (previous_start, 0.0103, 20.0)):
+        for index in range(15):
+            rows.append({"ts": int((start + timedelta(minutes=index * 5)).timestamp()), "voltage": 230.0, "current": 1.0, "power": 230.0, "total_energy": base + delta * index / 14, "source": "test", "health": "healthy"})
+    history_store.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    payload = history.comparison_payload("today", now)
+    assert payload["comparison_status"] == "baseline_too_low"
+    assert payload["percentage_difference"] is None
 
 
 def test_last_seven_days_compares_with_the_previous_seven_days(history_store):

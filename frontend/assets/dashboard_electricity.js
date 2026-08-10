@@ -584,13 +584,16 @@
     const percentage = number(comparison.percentage_difference);
     const hasCurrent = Number(current.point_count || 0) > 0;
     const peak = state.todayPeak;
-    const trendClass = percentage === null ? 'neutral' : percentage > 0 ? 'up' : percentage < 0 ? 'down' : 'neutral';
-    const trend = percentage === null ? 'Not available' : `${percentage > 0 ? '▲ +' : percentage < 0 ? '▼ ' : ''}${percentage.toFixed(1)}%`;
+    const comparisonStatus = comparison.comparison_status || (percentage === null ? 'unavailable' : 'comparable');
+    const baselineTooLow = comparisonStatus === 'baseline_too_low';
+    const trendClass = baselineTooLow || percentage === null ? 'neutral' : percentage > 0 ? 'up' : percentage < 0 ? 'down' : 'neutral';
+    const trend = baselineTooLow ? 'Not comparable' : percentage === null ? 'Not available' : `${percentage > 0 ? '▲ +' : percentage < 0 ? '▼ ' : ''}${percentage.toFixed(1)}%`;
+    const comparisonDetail = baselineTooLow ? 'Yesterday baseline too low' : 'Compared with yesterday';
     return `<section class="electricity-daily-summary" aria-label="Daily electricity details"><div class="electricity-section-head"><div><h2>Daily Details</h2><small>Supporting usage context; not the billing-cycle total</small></div></div><div class="electricity-analytics-summary${state.comparisonLoading ? ' is-loading' : ''}">
       <article class="electricity-summary-card"><span>Today</span><strong>${hasCurrent ? safe(Number(current.total_energy_kwh || 0).toFixed(2)) : 'Not available'}${hasCurrent ? '<small>kWh</small>' : ''}</strong></article>
       <article class="electricity-summary-card"><span>Estimated Daily Cost</span><strong>${hasCurrent ? safe(money(current.total_cost_thb)) : 'Not available'}</strong></article>
       <article class="electricity-summary-card"><span>Peak Hour Consumption</span><strong>${peak ? `${safe(number(peak.energy_kwh).toFixed(2))}<small>kWh</small>` : 'Not available'}</strong><small>${peak ? safe(localClock(peak.timestamp)) : 'No valid interval'}</small></article>
-      <article class="electricity-summary-card comparison ${trendClass}"><span>Comparison</span><strong>${safe(trend)}</strong><small>Compared with yesterday</small></article>
+      <article class="electricity-summary-card comparison ${trendClass}"><span>Comparison</span><strong>${safe(trend)}</strong><small>${safe(comparisonDetail)}</small></article>
     </div></section>`;
   }
 
