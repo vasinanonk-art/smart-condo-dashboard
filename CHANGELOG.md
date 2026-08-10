@@ -2,7 +2,24 @@
 
 ## [Unreleased]
 
-No changes after v1.0.2.
+No changes after v1.0.3.
+
+## [1.0.3] - 2026-08-10
+
+### Deployment source integrity
+
+- Default runtime deployments to the directory containing the invoked
+  installer, so a release worktree packages its own exact commit and version.
+- Preserve explicit `APP_SRC` overrides for isolated and custom-source
+  deployments.
+- Add end-to-end regressions for worktree source selection, runtime version
+  propagation, backend version reporting, and transactional version rollback.
+
+### LG webOS reliability
+
+- Include the v1.0.2 LG powered-off polling and bounded WebSocket cleanup
+  hotfix. The published v1.0.2 tag remains immutable after its deployment was
+  rejected by the runtime-version gate.
 
 ## [1.0.2] - 2026-08-10
 
