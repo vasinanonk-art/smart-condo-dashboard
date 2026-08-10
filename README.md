@@ -1,14 +1,14 @@
 # Smart Condo Dashboard
 
-Smart Condo Dashboard v1.0.1 is the stable production control center for the
+Smart Condo Dashboard v1.0.2 is the stable production control center for the
 condo automation system. The canonical version is stored in [`VERSION`](VERSION).
-The annotated `v1.0.1` tag identifies the final verified release commit;
-`v1.0.0` remains an immutable superseded release candidate.
+The annotated `v1.0.2` tag identifies the current verified release commit;
+earlier release tags remain immutable.
 
 ## Project status
 
-- Version: **1.0.1**
-- Status: v1.0.1 release prepared
+- Version: **1.0.2**
+- Status: v1.0.2 release prepared
 - Theme: dark only in v1.0.x
 - Primary UI: iPad-first responsive smart-home control center
 - Backend: FastAPI/Uvicorn on the TinkerBoard
@@ -16,7 +16,7 @@ The annotated `v1.0.1` tag identifies the final verified release commit;
 - Monitoring: live device health with semantic status and optional metrics
 
 Release notes are in
-[`docs/RELEASE_NOTES_v1.0.1.md`](docs/RELEASE_NOTES_v1.0.1.md). Planned work is
+[`docs/RELEASE_NOTES_v1.0.2.md`](docs/RELEASE_NOTES_v1.0.2.md). Planned work is
 tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Supported platforms
@@ -66,7 +66,7 @@ does not invent device functions, camera protocols, IR mappings, or feedback.
 
 ## Theme
 
-v1.0.1 ships with the dark glass control-center theme only. A light theme,
+v1.0.2 ships with the dark glass control-center theme only. A light theme,
 theme switch, and saved user preference are planned for EPIC 20.
 
 ## Preview chart mode
@@ -143,7 +143,7 @@ URLs, IR data, device identifiers, MAC addresses, or client keys.
 ## Verification
 
 ```sh
-test "$(cat VERSION)" = "1.0.1"
+test "$(cat VERSION)" = "1.0.2"
 /opt/smart-condo-dashboard-run/venv/bin/python -m pytest -q
 find backend -name '*.py' -print0 | \
   xargs -0 /opt/smart-condo-dashboard-run/venv/bin/python -m py_compile
@@ -156,6 +156,7 @@ git diff --check
 
 - [Production architecture](docs/ARCHITECTURE.md)
 - [Production checklist](docs/PRODUCTION_CHECKLIST.md)
+- [v1.0.2 release notes](docs/RELEASE_NOTES_v1.0.2.md)
 - [v1.0.1 release notes](docs/RELEASE_NOTES_v1.0.1.md)
 - [v1.0.0 release notes](docs/RELEASE_NOTES_v1.0.0.md)
 - [Roadmap](docs/ROADMAP.md)

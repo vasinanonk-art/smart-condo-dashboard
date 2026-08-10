@@ -1,11 +1,11 @@
-# v1.0.1 Production Checklist
+# v1.0.2 Production Checklist
 
-Verification date: **2026-08-07 Asia/Bangkok**
+Verification date: **2026-08-10 Asia/Bangkok**
 
-Release commit: the commit referenced by annotated tag `v1.0.1`
+Release commit: the commit referenced by annotated tag `v1.0.2`
 
 Immediate rollback commit:
-`0886e10fc0911505933ac577f9c942a8fa060591`
+`13fdea03a3836bbb00ee374004eada09e9d93124`
 
 ## Completed
 
@@ -24,7 +24,7 @@ Immediate rollback commit:
 - [x] EPIC 17 TP-Link APIs remain authenticated, read-only, redacted, and
   fail-closed.
 - [x] EPIC 18 control-center assets are deployed.
-- [x] No destructive state or history migration is part of v1.0.1.
+- [x] No destructive state or history migration is part of v1.0.2.
 - [x] Tapo snapshot and on-demand live routes remain authenticated proxies.
 - [x] go2rtc v1.9.14 ARM artifact and SHA-256 are pinned and independently
   verified.
@@ -35,7 +35,7 @@ Immediate rollback commit:
 
 - [x] Run and retain the final Python compilation report.
 - [x] Run and retain the final shell syntax report.
-- [ ] Run `sudo ./install.sh --dry-run` against the tag candidate.
+- [x] Run `sudo ./install.sh --dry-run` against the tag candidate.
 - [ ] Confirm a current backup of `/root/.smart-condo-dashboard`.
 - [ ] Confirm a current backup of `/etc/default/smart-condo-dashboard`.
 - [ ] Record backup location and checksum without printing secret contents.
@@ -45,12 +45,12 @@ Immediate rollback commit:
   managed asset requests.
 - [ ] Verify idle CPU, memory, task count, and restart count after ten minutes.
 - [x] Review and approve the final changelog and release notes.
-- [x] Create the local annotated `v1.0.1` tag after required repository checks.
+- [x] Create the local annotated `v1.0.2` tag after required repository checks.
 - [ ] Push the approved release commit and annotated tag.
 - [ ] Deploy and complete production smoke/soak verification.
 
 EPIC 19 device-health milestones and the verified EPIC 20–22 camera and IR
-foundations are included in the v1.0.1 tag candidate.
+foundations are included in the v1.0.2 tag candidate.
 
 ## Functional release checklist
 
@@ -63,7 +63,7 @@ foundations are included in the v1.0.1 tag candidate.
 | Charts | Complete | Real and preview endpoint selection |
 | Notifications | Complete | Read, mark, clear, Escape, outside click |
 | Responsive layout | Complete | iPad portrait/landscape and desktop |
-| Dark theme | Complete | v1.0.1 is explicitly dark-only |
+| Dark theme | Complete | v1.0.2 is explicitly dark-only |
 | Light theme | Deferred | Planned for EPIC 20 |
 | Error/loading states | Complete | One safe unavailable-provider check |
 | Browser matrix | Pending | Current Safari, Chrome, Edge, Firefox |
@@ -71,7 +71,7 @@ foundations are included in the v1.0.1 tag candidate.
 | Runtime deployment | Complete | Guarded runtime-only installer |
 | Backup/restore | Pending final backup | Archive and verify persistent files |
 | Release notes | Complete | Final stakeholder approval pending |
-| Git tag | Complete locally | Annotated `v1.0.1`; push pending |
+| Git tag | Complete locally | Annotated `v1.0.2`; push pending |
 
 ## Backup
 
@@ -89,12 +89,12 @@ contents.
 
 ```sh
 cd /opt/smart-condo-dashboard
-git worktree add /opt/smart-condo-dashboard-v1.0.1 \
-  v1.0.1
-cd /opt/smart-condo-dashboard-v1.0.1
+git worktree add /opt/smart-condo-dashboard-v1.0.2 \
+  v1.0.2
+cd /opt/smart-condo-dashboard-v1.0.2
 test -z "$(git status --short)" &&
-test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 v1.0.1)" &&
-test "$(cat VERSION)" = "1.0.1" &&
+test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 v1.0.2)" &&
+test "$(cat VERSION)" = "1.0.2" &&
 git diff --check &&
 /opt/smart-condo-dashboard-run/venv/bin/python -m pytest -q &&
 find backend -name '*.py' -print0 | \
@@ -146,7 +146,7 @@ curl -sS -o /dev/null -w "auth=%{http_code}\n" \
 
 If the installer reports a retained backup directory, stop and inspect it
 before another deployment. Restore persistent state only when its integrity is
-verified and a state rollback is necessary. v1.0.1 does not require a
+verified and a state rollback is necessary. v1.0.2 does not require a
 persistent-data rollback.
 
 ## Tag procedure
@@ -154,11 +154,11 @@ persistent-data rollback.
 After outstanding release checks are approved:
 
 ```sh
-git tag -a v1.0.1 \
-  -m "Smart Condo Dashboard v1.0.1" \
+git tag -a v1.0.2 \
+  -m "Smart Condo Dashboard v1.0.2" \
   HEAD
-git show --stat --oneline v1.0.1
-git push origin v1.0.1
+git show --stat --oneline v1.0.2
+git push origin v1.0.2
 ```
 
 Do not move or recreate the tag after publication.

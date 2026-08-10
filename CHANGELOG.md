@@ -2,7 +2,21 @@
 
 ## [Unreleased]
 
-No changes after v1.0.1.
+No changes after v1.0.2.
+
+## [1.0.2] - 2026-08-10
+
+### LG webOS reliability
+
+- Treat a powered-off or unreachable TV as an expected offline state during
+  status polling without changing the public API contract, command retries, or
+  poll interval.
+- Reduce expected TV-off timeout and WebSocket cleanup messages to debug-level
+  diagnostics.
+- Close WebSocket clients with bounded joins and a final forced connection
+  close when the background thread does not stop normally.
+- Add regressions for TV-off state, clean client teardown, and normal reconnect
+  after the TV becomes reachable.
 
 ## [1.0.1] - 2026-08-07
 
