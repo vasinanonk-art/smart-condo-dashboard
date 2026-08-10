@@ -2,7 +2,17 @@
 
 ## [Unreleased]
 
-No changes after v1.0.5.
+No changes after v1.0.6.
+
+## [1.0.6] - 2026-08-10
+
+### Deployment verification readiness
+
+- Wait for the dashboard's unauthenticated authentication-status endpoint to
+  become HTTP-ready before release verification begins.
+- Retry bounded startup connection failures while failing immediately on
+  service exit, malformed responses, or unexpected HTTP status.
+- Keep the v1.0.5 application and Electricity behavior unchanged.
 
 ## [1.0.5] - 2026-08-10
 
