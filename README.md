@@ -109,12 +109,16 @@ cd /opt/smart-condo-dashboard
 git status --short
 git pull --ff-only origin main
 /opt/smart-condo-dashboard-run/venv/bin/python -m pytest -q
-sudo ./install.sh --dry-run
-sudo ./install.sh --runtime-only
+release_commit=$(git rev-parse HEAD)
+sudo env RELEASE_COMMIT="$release_commit" ./install.sh --dry-run
+sudo env RELEASE_COMMIT="$release_commit" ./install.sh --runtime-only
 sudo systemctl status smart-condo-dashboard.service --no-pager -l
 curl -sS -o /dev/null -w "home=%{http_code}\n" http://127.0.0.1:8090/
 curl -sS -o /dev/null -w "auth=%{http_code}\n" \
   http://127.0.0.1:8090/api/auth/status
+/opt/smart-condo-dashboard-run/venv/bin/python \
+  /opt/smart-condo-dashboard-run/scripts/verify_release.py \
+  --expected-commit "$release_commit"
 ```
 
 Expected unauthenticated checks are `home=303` and `auth=200`. Do not deploy a

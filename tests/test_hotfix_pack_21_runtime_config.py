@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -41,7 +42,7 @@ def _authenticated_client(monkeypatch):
 
 
 def _install_env(source, run_root, persistent, lock_file):
-    return {
+    environment = {
         **os.environ,
         "GO2RTC_PROVISION_ENABLED": "0",
         "APP_SRC": str(source),
@@ -49,6 +50,16 @@ def _install_env(source, run_root, persistent, lock_file):
         "PERSISTENT_CONFIG_ROOT": str(persistent),
         "INSTALL_LOCK_FILE": str(lock_file),
     }
+    if (Path(source) / ".git").exists():
+        environment["RELEASE_COMMIT"] = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=source, text=True,
+        ).strip()
+    else:
+        environment.update({
+            "RELEASE_COMMIT": "1" * 40,
+            "RELEASE_GENERATED_AT": "2026-08-11T00:00:00+07:00",
+        })
+    return environment
 
 
 def _flock_available(lock_file):
@@ -155,6 +166,8 @@ def test_dry_run_explicit_app_src_and_release_worktree_are_non_mutating(tmp_path
             "APP_RUN": str(run_root),
             "PERSISTENT_CONFIG_ROOT": str(persistent),
             "INSTALL_LOCK_FILE": str(tmp_path / "install.lock"),
+            "RELEASE_COMMIT": "2" * 40,
+            "RELEASE_GENERATED_AT": "2026-08-10T00:00:00+07:00",
         },
         text=True,
         capture_output=True,
@@ -239,6 +252,17 @@ def test_runtime_only_deployment_updates_managed_tree_without_touching_venv(tmp_
     assert "virtual environment and dependencies were not modified" in result.stdout
     assert "isolated snapshot of Git HEAD" in result.stdout
     assert "restart smart-condo-dashboard" in systemctl_log.read_text()
+    marker = json.loads((run_root / ".smart-condo-release.json").read_text(encoding="utf-8"))
+    expected_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
+    assert marker == {
+        "version": "1.0.0",
+        "commit": expected_commit,
+        "source": "git-archive",
+        "generated_at": subprocess.check_output(
+            ["git", "show", "-s", "--format=%cI", "HEAD"], cwd=source, text=True,
+        ).strip(),
+    }
+    assert (run_root / ".smart-condo-release.json").stat().st_mode & 0o777 == 0o444
 
     second = subprocess.run(
         ["sh", str(INSTALL), "--runtime-only"],
@@ -289,6 +313,9 @@ def test_runtime_only_uses_invoked_release_worktree_and_propagates_version(tmp_p
         "PERSISTENT_CONFIG_ROOT": str(persistent),
         "INSTALL_LOCK_FILE": str(tmp_path / "install.lock"),
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "RELEASE_COMMIT": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=release, text=True,
+        ).strip(),
     }
 
     result = subprocess.run(
@@ -311,6 +338,11 @@ def test_runtime_only_uses_invoked_release_worktree_and_propagates_version(tmp_p
     assert reported == "1.0.2"
     assert (run_root / "venv" / "preserve-me").read_text(encoding="utf-8") == "unchanged"
     assert local_config.read_text(encoding="utf-8") == '{"preserve": true}'
+    marker = json.loads((run_root / ".smart-condo-release.json").read_text(encoding="utf-8"))
+    assert marker["version"] == "1.0.2"
+    assert marker["commit"] == subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=release, text=True,
+    ).strip()
 
 
 def test_deploy_guard_fails_when_preserved_config_is_missing(tmp_path):
@@ -348,6 +380,7 @@ def test_failed_deploy_restores_local_config_before_exit(tmp_path):
     (run_root / "config").mkdir(parents=True)
     persistent.mkdir()
     shutil.copy2(GUARD, source / "scripts" / GUARD.name)
+    (source / "VERSION").write_text("1.0.11\n", encoding="utf-8")
     local_config = run_root / "config" / "provider.local.json"
     local_config.write_text('{"preserve": true}', encoding="utf-8")
 
@@ -495,8 +528,13 @@ def test_interrupted_managed_runtime_can_be_restored_without_touching_venv(tmp_p
         (run_root / directory / "old.txt").write_text(directory)
     (run_root / "venv").mkdir()
     (run_root / "venv" / "marker").write_text("preserved")
+    persistent = tmp_path / "persistent"
+    persistent.mkdir()
+    (persistent / "state.json").write_text('{"untouched":true}\n')
     (run_root / "sonoff_client.py").write_text("old mirror")
     (run_root / "VERSION").write_text("1.0.1\n")
+    prior_marker = '{"version":"1.0.1","commit":"' + "a" * 40 + '","source":"git-archive","generated_at":"2026-08-01T00:00:00+07:00"}\n'
+    (run_root / ".smart-condo-release.json").write_text(prior_marker)
 
     preserve = _run_guard(
         'preserve_managed_runtime "$2" "$3" "$4"',
@@ -512,6 +550,7 @@ def test_interrupted_managed_runtime_can_be_restored_without_touching_venv(tmp_p
     (run_root / "scripts").mkdir()
     (run_root / "scripts" / "new.txt").write_text("must disappear")
     (run_root / "VERSION").write_text("1.0.2\n")
+    (run_root / ".smart-condo-release.json").write_text('{"version":"1.0.2"}\n')
 
     restore = _run_guard(
         'restore_managed_runtime "$2" "$3" "$4"',
@@ -525,6 +564,50 @@ def test_interrupted_managed_runtime_can_be_restored_without_touching_venv(tmp_p
     assert not (run_root / "scripts").exists()
     assert (run_root / "venv" / "marker").read_text() == "preserved"
     assert (run_root / "VERSION").read_text() == "1.0.1\n"
+    assert (run_root / ".smart-condo-release.json").read_text() == prior_marker
+    assert (persistent / "state.json").read_text() == '{"untouched":true}\n'
+
+
+def test_installer_failure_restores_prior_runtime_version_marker_and_persistent_state(tmp_path):
+    source = tmp_path / "source"
+    run_root = tmp_path / "run"
+    persistent = tmp_path / "persistent"
+    fake_bin = tmp_path / "bin"
+    shutil.copytree(ROOT, source, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+    subprocess.run(["git", "init", "-q"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.email", "rollback-test@example.invalid"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.name", "Rollback Test"], cwd=source, check=True)
+    subprocess.run(["git", "add", "."], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-qm", "release candidate"], cwd=source, check=True)
+    (run_root / "backend").mkdir(parents=True)
+    (run_root / "backend" / "prior.txt").write_text("prior-runtime")
+    (run_root / "config").mkdir()
+    (run_root / "venv").mkdir()
+    (run_root / "VERSION").write_text("1.0.10\n")
+    persistent.mkdir()
+    (persistent / "state.json").write_text("persistent-unchanged")
+    fake_bin.mkdir()
+    fake_systemctl = fake_bin / "systemctl"
+    fake_systemctl.write_text('#!/bin/sh\n[ "$1" != restart ]\n', encoding="utf-8")
+    fake_systemctl.chmod(0o755)
+    environment = _install_env(source, run_root, persistent, tmp_path / "install.lock")
+    environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+
+    result = subprocess.run(
+        ["sh", str(source / "install.sh"), "--runtime-only"],
+        cwd=source,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "restoring the previous managed runtime" in result.stderr
+    assert (run_root / "backend" / "prior.txt").read_text() == "prior-runtime"
+    assert (run_root / "VERSION").read_text() == "1.0.10\n"
+    assert not (run_root / ".smart-condo-release.json").exists()
+    assert (persistent / "state.json").read_text() == "persistent-unchanged"
 
 
 def test_checksum_verification_rejects_altered_config(tmp_path):

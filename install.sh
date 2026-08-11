@@ -10,6 +10,59 @@ VENV="$APP_RUN/venv"
 PY="$VENV/bin/python"
 DRY_RUN=0
 RUNTIME_ONLY=0
+RELEASE_MARKER_NAME=.smart-condo-release.json
+
+prepare_release_marker() {
+    marker_source_root=$1
+    marker_snapshot_root=$2
+    marker_version=$(cat "$marker_snapshot_root/VERSION")
+    case "$marker_version" in
+        ''|*[!0-9A-Za-z._+-]*)
+            echo "ERROR: VERSION is invalid for release metadata." >&2
+            return 1
+            ;;
+    esac
+
+    marker_approved_commit=${RELEASE_COMMIT:-}
+    case "$marker_approved_commit" in
+        [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+        *)
+            echo "ERROR: RELEASE_COMMIT must be the approved 40-character release commit." >&2
+            return 1
+            ;;
+    esac
+
+    if git -C "$marker_source_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        marker_commit=$(git -C "$marker_source_root" rev-parse HEAD)
+        marker_generated_at=$(git -C "$marker_source_root" show -s --format=%cI HEAD)
+        if [ "$marker_approved_commit" != "$marker_commit" ]; then
+            echo "ERROR: RELEASE_COMMIT does not match deployment source HEAD." >&2
+            return 1
+        fi
+    else
+        marker_commit=$marker_approved_commit
+        marker_generated_at=${RELEASE_GENERATED_AT:-}
+    fi
+    case "$marker_commit" in
+        [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+        *)
+            echo "ERROR: deployment source requires an exact 40-character release commit." >&2
+            return 1
+            ;;
+    esac
+    case "$marker_generated_at" in
+        ''|*[!0-9T:+.Z-]*)
+            echo "ERROR: deployment source requires valid deterministic release metadata." >&2
+            return 1
+            ;;
+    esac
+
+    marker_tmp="$marker_snapshot_root/$RELEASE_MARKER_NAME.tmp"
+    printf '{\n  "version": "%s",\n  "commit": "%s",\n  "source": "git-archive",\n  "generated_at": "%s"\n}\n' \
+        "$marker_version" "$marker_commit" "$marker_generated_at" > "$marker_tmp"
+    chmod 0444 "$marker_tmp"
+    mv "$marker_tmp" "$marker_snapshot_root/$RELEASE_MARKER_NAME"
+}
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -33,9 +86,11 @@ if [ "$DRY_RUN" -eq 1 ]; then
         git -C "$APP_SRC" archive --format=tar --output="$SOURCE_ARCHIVE" HEAD
         tar -xf "$SOURCE_ARCHIVE" -C "$SOURCE_SNAPSHOT_TMP"
         rm "$SOURCE_ARCHIVE"
+        prepare_release_marker "$APP_SRC" "$SOURCE_SNAPSHOT_TMP"
         echo "Dry run source: isolated snapshot of Git HEAD."
     else
         cp -R "$APP_SRC"/. "$SOURCE_SNAPSHOT_TMP"/
+        prepare_release_marker "$APP_SRC" "$SOURCE_SNAPSHOT_TMP"
         echo "Dry run source: isolated source snapshot."
     fi
     for required_path in \
@@ -75,9 +130,17 @@ if git -C "$APP_SRC" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         exit 1
     fi
     rm "$SOURCE_ARCHIVE"
+    if ! prepare_release_marker "$APP_SRC" "$SOURCE_SNAPSHOT_TMP"; then
+        rm -rf "$SOURCE_SNAPSHOT_TMP"
+        exit 1
+    fi
     echo "Deployment source: isolated snapshot of Git HEAD."
 else
     cp -R "$APP_SRC"/. "$SOURCE_SNAPSHOT_TMP"/
+    if ! prepare_release_marker "$APP_SRC" "$SOURCE_SNAPSHOT_TMP"; then
+        rm -rf "$SOURCE_SNAPSHOT_TMP"
+        exit 1
+    fi
     echo "Deployment source: isolated source snapshot."
 fi
 DEPLOY_SRC="$SOURCE_SNAPSHOT_TMP"
@@ -175,6 +238,7 @@ DEPLOY_STARTED=1
 [ ! -d "$APP_RUN/scripts" ] || rm -r "$APP_RUN/scripts"
 [ ! -f "$APP_RUN/sonoff_client.py" ] || rm "$APP_RUN/sonoff_client.py"
 [ ! -f "$APP_RUN/VERSION" ] || rm "$APP_RUN/VERSION"
+[ ! -f "$APP_RUN/$RELEASE_MARKER_NAME" ] || rm "$APP_RUN/$RELEASE_MARKER_NAME"
 
 cp -R "$DEPLOY_SRC/backend" "$APP_RUN/backend"
 cp -R "$DEPLOY_SRC/frontend" "$APP_RUN/frontend"
@@ -182,6 +246,7 @@ cp -R "$DEPLOY_SRC/config" "$APP_RUN/config"
 cp -R "$DEPLOY_SRC/scripts" "$APP_RUN/scripts"
 cp "$DEPLOY_SRC/sonoff_client.py" "$APP_RUN/sonoff_client.py"
 cp "$DEPLOY_SRC/VERSION" "$APP_RUN/VERSION"
+install -m 0444 "$DEPLOY_SRC/$RELEASE_MARKER_NAME" "$APP_RUN/$RELEASE_MARKER_NAME"
 
 # Explicitly install the production dashboard shell and authoritative frontend assets.
 install -d "$APP_RUN/frontend/assets"

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import argparse
 import hashlib
 import hmac
 import json
@@ -13,6 +14,7 @@ import time
 import urllib.error
 import urllib.request
 from typing import Any, Mapping
+from pathlib import Path
 
 BASE_URL = "http://127.0.0.1:8090"
 TAPO_PUBLIC_ID = "tapo-c220"
@@ -25,6 +27,42 @@ DASHBOARD_SERVICE = "smart-condo-dashboard.service"
 READINESS_PATH = "/api/auth/status"
 READINESS_TIMEOUT_SEC = 30.0
 READINESS_RETRY_SEC = 0.25
+RELEASE_MARKER_NAME = ".smart-condo-release.json"
+
+
+def verify_release_marker(
+    runtime_root: Path,
+    *,
+    expected_commit: str | None,
+    allow_legacy_missing: bool = False,
+) -> dict[str, str]:
+    marker_path = runtime_root / RELEASE_MARKER_NAME
+    if not marker_path.is_file():
+        if allow_legacy_missing and expected_commit is None:
+            return {"status": "legacy-missing"}
+        raise ValueError("release_marker_missing")
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("release_marker_invalid_json") from exc
+    if not isinstance(marker, dict):
+        raise ValueError("release_marker_invalid")
+    required = {"version", "commit", "source", "generated_at"}
+    if not required.issubset(marker) or not all(isinstance(marker.get(key), str) and marker[key] for key in required):
+        raise ValueError("release_marker_invalid")
+    version = (runtime_root / "VERSION").read_text(encoding="utf-8").strip()
+    if marker["version"] != version:
+        raise ValueError("release_marker_version_mismatch")
+    if marker["source"] != "git-archive":
+        raise ValueError("release_marker_source_invalid")
+    commit = marker["commit"]
+    if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
+        raise ValueError("release_marker_commit_invalid")
+    if expected_commit is None:
+        raise ValueError("expected_release_commit_required")
+    if commit != expected_commit:
+        raise ValueError("release_marker_commit_mismatch")
+    return {"status": "verified", **{key: marker[key] for key in required}}
 
 
 def _b64(value: bytes) -> str:
@@ -212,10 +250,24 @@ def _fetch(cookie: str, path: str, *, limit: int = 2_000_000) -> tuple[int, str,
         return response.status, response.headers.get("Content-Type", ""), response.read(limit)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--expected-commit")
+    parser.add_argument("--allow-legacy-missing-marker", action="store_true")
+    parser.add_argument("--runtime-root", default="/opt/smart-condo-dashboard-run")
+    args = parser.parse_args(argv)
+    if args.allow_legacy_missing_marker and args.expected_commit:
+        parser.error("legacy marker mode cannot assert a release commit")
+    if not args.allow_legacy_missing_marker and not args.expected_commit:
+        parser.error("--expected-commit is required for release verification")
+    marker = verify_release_marker(
+        Path(args.runtime_root),
+        expected_commit=args.expected_commit,
+        allow_legacy_missing=args.allow_legacy_missing_marker,
+    )
     readiness = wait_for_dashboard_ready()
     cookie = _session_cookie()
-    results: dict[str, Any] = {"dashboard_readiness": readiness}
+    results: dict[str, Any] = {"release_marker": marker, "dashboard_readiness": readiness}
     payloads: dict[str, Any] = {}
     for path in (
         "/api/auth/status",

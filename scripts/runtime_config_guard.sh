@@ -82,7 +82,7 @@ preserve_managed_runtime() {
     install -d "$(dirname "$guard_manifest")"
     : > "$guard_manifest"
     install -d "$guard_backup_root"
-    for guard_name in backend frontend config scripts sonoff_client.py VERSION; do
+    for guard_name in backend frontend config scripts sonoff_client.py VERSION .smart-condo-release.json; do
         guard_path="$guard_run_root/$guard_name"
         [ -e "$guard_path" ] || continue
         cp -Rp "$guard_path" "$guard_backup_root/$guard_name"
@@ -94,7 +94,7 @@ restore_managed_runtime() {
     guard_run_root=$1
     guard_backup_root=$2
     guard_manifest=$3
-    for guard_name in backend frontend config scripts sonoff_client.py VERSION; do
+    for guard_name in backend frontend config scripts sonoff_client.py VERSION .smart-condo-release.json; do
         guard_path="$guard_run_root/$guard_name"
         [ ! -d "$guard_path" ] || rm -r "$guard_path"
         [ ! -f "$guard_path" ] || rm "$guard_path"
@@ -102,7 +102,7 @@ restore_managed_runtime() {
     while IFS= read -r guard_name; do
         [ -n "$guard_name" ] || continue
         case "$guard_name" in
-            backend|frontend|config|scripts|sonoff_client.py|VERSION) ;;
+            backend|frontend|config|scripts|sonoff_client.py|VERSION|.smart-condo-release.json) ;;
             *)
                 printf 'ERROR: invalid managed runtime backup entry: %s\n' "$guard_name" >&2
                 return 1

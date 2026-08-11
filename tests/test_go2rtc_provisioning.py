@@ -174,6 +174,9 @@ def test_runtime_deployment_rolls_back_go2rtc_and_dashboard_on_failure(tmp_path)
     ); fake_systemctl.chmod(0o755)
     env = {**os.environ, "APP_SRC": str(source), "APP_RUN": str(run),
            "PERSISTENT_CONFIG_ROOT": str(tmp_path / "persistent"), "INSTALL_LOCK_FILE": str(tmp_path / "lock"),
+           "RELEASE_COMMIT": subprocess.check_output(
+               ["git", "rev-parse", "HEAD"], cwd=source, text=True,
+           ).strip(),
            "GO2RTC_PROVISION_ENABLED": "1", "GO2RTC_ARCH_OVERRIDE": "armv7l",
            "GO2RTC_BINARY": str(binary), "GO2RTC_CONFIG": str(config), "GO2RTC_UNIT": str(unit),
            "GO2RTC_SYSTEMCTL": str(fake_systemctl), "GO2RTC_ENV_FILE": str(environment_file),

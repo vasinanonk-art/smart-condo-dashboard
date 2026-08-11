@@ -1,14 +1,78 @@
 import json
 import urllib.error
+from pathlib import Path
 
 import pytest
 
 from scripts.verify_release import (
     count_journal_json_entries,
+    verify_release_marker,
     wait_for_dashboard_ready,
     verified_tapo_camera,
     verify_go2rtc_listener_output,
 )
+
+
+COMMIT = "a" * 40
+
+
+def _write_release_marker(root: Path, **overrides):
+    (root / "VERSION").write_text("1.0.11\n", encoding="utf-8")
+    marker = {
+        "version": "1.0.11",
+        "commit": COMMIT,
+        "source": "git-archive",
+        "generated_at": "2026-08-11T12:00:00+07:00",
+        **overrides,
+    }
+    (root / ".smart-condo-release.json").write_text(json.dumps(marker), encoding="utf-8")
+    return marker
+
+
+def test_release_marker_is_authoritative_when_git_metadata_is_stale(tmp_path):
+    expected = _write_release_marker(tmp_path)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "HEAD").write_text("b" * 40, encoding="utf-8")
+    assert verify_release_marker(tmp_path, expected_commit=COMMIT) == {"status": "verified", **expected}
+
+
+def test_wrong_stale_git_metadata_does_not_override_marker(tmp_path):
+    _write_release_marker(tmp_path, commit="b" * 40)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "HEAD").write_text(COMMIT, encoding="utf-8")
+    with pytest.raises(ValueError, match="release_marker_commit_mismatch"):
+        verify_release_marker(tmp_path, expected_commit=COMMIT)
+
+
+def test_release_marker_commit_mismatch_fails(tmp_path):
+    _write_release_marker(tmp_path)
+    with pytest.raises(ValueError, match="release_marker_commit_mismatch"):
+        verify_release_marker(tmp_path, expected_commit="b" * 40)
+
+
+def test_release_marker_version_mismatch_fails(tmp_path):
+    _write_release_marker(tmp_path, version="1.0.10")
+    with pytest.raises(ValueError, match="release_marker_version_mismatch"):
+        verify_release_marker(tmp_path, expected_commit=COMMIT)
+
+
+@pytest.mark.parametrize("content", (None, "not-json", "[]"))
+def test_missing_or_malformed_release_marker_fails_for_new_release(tmp_path, content):
+    tmp_path.mkdir(exist_ok=True)
+    (tmp_path / "VERSION").write_text("1.0.11\n", encoding="utf-8")
+    if content is not None:
+        (tmp_path / ".smart-condo-release.json").write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError, match="release_marker"):
+        verify_release_marker(tmp_path, expected_commit=COMMIT)
+
+
+def test_legacy_runtime_requires_explicit_baseline_mode(tmp_path):
+    (tmp_path / "VERSION").write_text("1.0.10\n", encoding="utf-8")
+    assert verify_release_marker(
+        tmp_path, expected_commit=None, allow_legacy_missing=True,
+    ) == {"status": "legacy-missing"}
+    with pytest.raises(ValueError, match="release_marker_missing"):
+        verify_release_marker(tmp_path, expected_commit=COMMIT)
 
 
 class _Clock:
