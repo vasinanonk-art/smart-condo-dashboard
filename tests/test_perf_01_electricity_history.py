@@ -43,10 +43,10 @@ class Perf01ElectricityHistoryTests(unittest.TestCase):
             payload = electricity_history.usage_summary(250.0)
 
         self.assertEqual(read_samples.call_count, 1)
-        self.assertEqual(payload["today_kwh"], 0.1)
-        self.assertEqual(payload["yesterday_kwh"], 0.1)
-        self.assertEqual(payload["month_kwh"], 1.1)
-        self.assertEqual(payload["last_month_kwh"], 1.0)
+        self.assertAlmostEqual(payload["today_kwh"], 0.016667, places=5)
+        self.assertAlmostEqual(payload["yesterday_kwh"], 0.016667, places=5)
+        self.assertAlmostEqual(payload["month_kwh"], 0.033333, places=5)
+        self.assertIsNone(payload["last_month_kwh"])
 
     def test_usage_summary_decodes_each_jsonl_row_once(self):
         with tempfile.TemporaryDirectory() as directory:

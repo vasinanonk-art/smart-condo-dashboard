@@ -12,9 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 ROWS = [
-    {"ts": 100, "total_energy": 10.0},
-    {"ts": 200, "total_energy": 11.5},
-    {"ts": 300, "total_energy": 12.0},
+    {"ts": 100, "power": 3600.0, "total_energy": 10.0},
+    {"ts": 200, "power": 3600.0, "total_energy": 11.5},
+    {"ts": 300, "power": 3600.0, "total_energy": 12.0},
 ]
 
 
@@ -63,7 +63,7 @@ def test_segmented_request_reads_history_once(monkeypatch):
     monkeypatch.setattr(segmented.history, "read_samples", read_samples)
     result = segmented.billing_cycle_payload_segmented("today", 100, 300)
     assert calls == 1
-    assert result["actual_partial_usage_kwh"] == pytest.approx(2.0)
+    assert result["actual_partial_usage_kwh"] == pytest.approx(0.2)
 
 
 def test_preloaded_rows_preserve_legacy_payload_values(monkeypatch):

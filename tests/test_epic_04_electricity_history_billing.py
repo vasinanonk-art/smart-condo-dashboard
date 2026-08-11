@@ -50,14 +50,44 @@ class ElectricityHistoryTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["power"], 120.0)
 
-    def test_energy_delta_never_negative_and_handles_reset(self):
+    def test_power_integration_ignores_dp17_resettable_register(self):
         rows = [
             {"ts": 1000, "power": 1000, "total_energy": 20.0},
             {"ts": 1060, "power": 1000, "total_energy": 20.1},
             {"ts": 1120, "power": 1000, "total_energy": 0.0},
             {"ts": 1180, "power": 1000, "total_energy": 0.1},
         ]
-        self.assertAlmostEqual(history.energy_used(rows), 0.2, places=6)
+        self.assertAlmostEqual(history.energy_used(rows), 0.05, places=6)
+
+    def test_power_integration_uses_trapezoid_and_reports_long_gap(self):
+        rows = [
+            {"ts": 1000, "power": 1000, "total_energy": 100.0},
+            {"ts": 1030, "power": 2000, "total_energy": 0.0},
+            {"ts": 2000, "power": 2000, "total_energy": 0.1},
+        ]
+        details = history._integration_details(rows)
+        self.assertAlmostEqual(details["energy_kwh"], 0.0125, places=6)
+        self.assertEqual(details["long_gap_count"], 1)
+        self.assertEqual(details["missing_gap_duration_sec"], 970)
+
+    def test_power_integration_deduplicates_timestamps_and_skips_missing_power(self):
+        rows = [
+            {"ts": 1000, "power": 1000, "total_energy": 1.0},
+            {"ts": 1030, "power": None, "total_energy": 999.0},
+            {"ts": 1030, "power": 2000, "total_energy": 0.0},
+            {"ts": 1060, "power": 2000, "total_energy": 0.1},
+        ]
+        details = history._integration_details(rows)
+        self.assertAlmostEqual(details["energy_kwh"], 0.029167, places=5)
+        self.assertEqual(details["valid_interval_count"], 2)
+        self.assertEqual(details["long_gap_count"], 0)
+
+    def test_dp17_does_not_contribute_to_authoritative_total(self):
+        rows = [
+            {"ts": 1000, "power": 100, "total_energy": 0.0},
+            {"ts": 1060, "power": 100, "total_energy": 100.0},
+        ]
+        self.assertAlmostEqual(history.energy_used(rows), 0.001667, places=5)
 
     def test_tariff_calculation_is_configuration_driven(self):
         config = {

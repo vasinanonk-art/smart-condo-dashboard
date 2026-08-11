@@ -282,49 +282,80 @@ def _prune_if_due(now_ts: int) -> None:
             pass
 
 
-def _integrated_energy(rows: list[Mapping[str, Any]]) -> float:
+def _deduplicated_rows(rows: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    by_timestamp: Dict[int, Mapping[str, Any]] = {}
+    for row in rows:
+        try:
+            by_timestamp[int(row["ts"])] = row
+        except (KeyError, TypeError, ValueError):
+            continue
+    return [by_timestamp[timestamp] for timestamp in sorted(by_timestamp)]
+
+
+def _integration_details(rows: list[Mapping[str, Any]]) -> Dict[str, Any]:
+    ordered = _deduplicated_rows(rows)
     total = 0.0
-    for previous, current in zip(rows, rows[1:]):
-        dt = max(0, int(current["ts"]) - int(previous["ts"]))
-        if dt <= 0 or dt > MAX_INTEGRATION_GAP_SEC:
+    valid_duration = 0
+    missing_gap_duration = 0
+    long_gap_count = 0
+    missing_power_duration = 0
+    valid_interval_count = 0
+    for previous, current in zip(ordered, ordered[1:]):
+        try:
+            dt = int(current["ts"]) - int(previous["ts"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if dt <= 0:
+            continue
+        if dt > MAX_INTEGRATION_GAP_SEC:
+            missing_gap_duration += dt
+            long_gap_count += 1
             continue
         p1 = _number(previous.get("power"))
         p2 = _number(current.get("power"))
         if p1 is None or p2 is None:
+            missing_power_duration += dt
             continue
-        total += ((max(0, p1) + max(0, p2)) / 2.0) * dt / 3_600_000.0
-    return max(0.0, total)
+        total += ((max(0.0, p1) + max(0.0, p2)) / 2.0) * dt / 3_600_000.0
+        valid_duration += dt
+        valid_interval_count += 1
+    return {
+        "energy_kwh": round(max(0.0, total), 6),
+        "valid_integrated_duration_sec": valid_duration,
+        "missing_gap_duration_sec": missing_gap_duration,
+        "missing_power_duration_sec": missing_power_duration,
+        "long_gap_count": long_gap_count,
+        "valid_interval_count": valid_interval_count,
+        "energy_source": "power_integration",
+    }
+
+
+def _integrated_energy(rows: list[Mapping[str, Any]]) -> float:
+    return float(_integration_details(rows)["energy_kwh"])
 
 
 def energy_used(rows: list[Mapping[str, Any]]) -> Optional[float]:
-    if len(rows) < 2:
+    details = _integration_details(rows)
+    if not details["valid_interval_count"]:
         return None
-    deltas = []
-    previous_total: Optional[float] = None
-    for row in rows:
-        current = _number(row.get("total_energy"))
-        if current is None:
-            continue
-        if previous_total is not None:
-            delta = current - previous_total
-            if 0 <= delta <= 1000:
-                deltas.append(delta)
-        previous_total = current
-    cumulative = sum(deltas)
-    if deltas and cumulative > 0:
-        return round(max(0.0, cumulative), 6)
-    integrated = _integrated_energy(rows)
-    return round(integrated, 6) if integrated > 0 else 0.0
+    return details["energy_kwh"]
 
 
 def summarize(rows: list[Mapping[str, Any]]) -> Dict[str, Any]:
     powers = [value for value in (_number(row.get("power")) for row in rows) if value is not None]
+    integration = _integration_details(rows)
     return {
         "sample_count": len(rows),
         "min_power": round(min(powers), 3) if powers else None,
         "max_power": round(max(powers), 3) if powers else None,
         "avg_power": round(sum(powers) / len(powers), 3) if powers else None,
         "energy_used_kwh": energy_used(rows),
+        "energy_source": integration["energy_source"],
+        "valid_integrated_duration_sec": integration["valid_integrated_duration_sec"],
+        "missing_gap_duration_sec": integration["missing_gap_duration_sec"],
+        "missing_power_duration_sec": integration["missing_power_duration_sec"],
+        "long_gap_count": integration["long_gap_count"],
+        "integration_complete": integration["long_gap_count"] == 0 and integration["missing_power_duration_sec"] == 0,
     }
 
 
@@ -615,10 +646,8 @@ def _indexed_aggregation(start_ts: int, end_ts: int, bucket: str) -> tuple[list[
                 WITH ordered AS (
                     SELECT
                         current.ts,
-                        current.total_energy,
                         current.power,
                         previous.ts AS previous_ts,
-                        previous.total_energy AS previous_total,
                         previous.power AS previous_power
                     FROM samples AS current
                     LEFT JOIN samples AS previous
@@ -634,10 +663,6 @@ def _indexed_aggregation(start_ts: int, end_ts: int, bucket: str) -> tuple[list[
                         CAST(((ts - 1 + ?) / ?) AS INTEGER) * ? - ? AS bucket_ts,
                         CASE
                             WHEN ts - previous_ts <= 0 OR ts - previous_ts > ? THEN NULL
-                            WHEN previous_total IS NOT NULL
-                                 AND total_energy IS NOT NULL
-                                 AND total_energy - previous_total BETWEEN 0 AND 1000
-                                THEN total_energy - previous_total
                             WHEN previous_power IS NOT NULL AND power IS NOT NULL
                                 THEN ((MAX(0.0, previous_power) + MAX(0.0, power)) / 2.0)
                                      * (ts - previous_ts) / 3600000.0
@@ -706,24 +731,16 @@ def _aggregate_history(rows: list[Mapping[str, Any]], bucket: str) -> list[Dict[
         elapsed = current_ts - previous_ts
         if elapsed <= 0 or elapsed > MAX_INTEGRATION_GAP_SEC:
             continue
+        previous_power = _number(previous.get("power"))
+        current_power = _number(current.get("power"))
         consumption: Optional[float] = None
-        previous_total = _number(previous.get("total_energy"))
-        current_total = _number(current.get("total_energy"))
-        if previous_total is not None and current_total is not None:
-            delta = current_total - previous_total
-            # A negative delta is a meter reset, not negative consumption.
-            if 0 <= delta <= 1000:
-                consumption = delta
-        if consumption is None:
-            previous_power = _number(previous.get("power"))
-            current_power = _number(current.get("power"))
-            if previous_power is not None and current_power is not None:
-                consumption = (
-                    (max(0.0, previous_power) + max(0.0, current_power))
-                    / 2.0
-                    * elapsed
-                    / 3_600_000.0
-                )
+        if previous_power is not None and current_power is not None:
+            consumption = (
+                (max(0.0, previous_power) + max(0.0, current_power))
+                / 2.0
+                * elapsed
+                / 3_600_000.0
+            )
         if consumption is None:
             continue
         # Attribute an interval ending exactly on a boundary to the interval
@@ -806,15 +823,24 @@ def history_series_payload(start_value: str, end_value: str, bucket: str) -> Dic
     start_ts, end_ts = int(start.timestamp()), int(end.timestamp())
     points, sample_count = _indexed_aggregation(start_ts, end_ts, actual_bucket)
     _apply_point_costs(points)
+    integration = _integration_details(read_samples(start_ts, end_ts))
+    summary = _series_summary(points, sample_count)
+    summary.update({key: integration[key] for key in (
+        "energy_source", "valid_integrated_duration_sec", "missing_gap_duration_sec",
+        "missing_power_duration_sec", "long_gap_count",
+    )})
+    summary["integration_complete"] = integration["long_gap_count"] == 0 and integration["missing_power_duration_sec"] == 0
     return {
         "start": start.isoformat(),
         "end": end.isoformat(),
         "timezone": "Asia/Bangkok",
         "bucket": actual_bucket,
         "requested_bucket": bucket,
-        "energy_semantics": "interval_consumption",
+        "energy_semantics": "power_integration",
+        "energy_source": "power_integration",
+        "integration": integration,
         "points": points,
-        "summary": _series_summary(points, sample_count),
+        "summary": summary,
         "available_range": _available_history_range(),
         "max_gap_sec": int(BUCKET_SECONDS[actual_bucket] * 1.5),
     }
@@ -842,6 +868,7 @@ def _comparison_period(start: datetime, end: datetime, bucket: str) -> Dict[str,
     points, sample_count = _indexed_aggregation(int(start.timestamp()), int(end.timestamp()), bucket)
     _apply_point_costs(points)
     summary = _series_summary(points, sample_count)
+    integration = _integration_details(read_samples(int(start.timestamp()), int(end.timestamp())))
     return {
         "start": start.isoformat(),
         "end": end.isoformat(),
@@ -849,6 +876,7 @@ def _comparison_period(start: datetime, end: datetime, bucket: str) -> Dict[str,
         "total_cost_thb": summary["total_cost_thb"],
         "point_count": summary["point_count"],
         "sample_count": summary["sample_count"],
+        "integration": integration,
     }
 
 

@@ -96,7 +96,14 @@ def _coverage(start_ts: int, end_ts: int, rows: list[Dict[str, Any]]) -> Dict[st
     available = max(0, actual_end - actual_start) if actual_start is not None and actual_end is not None else 0
     missing_start = first is None or first > start_ts + history.MAX_INTEGRATION_GAP_SEC
     missing_end = last is None or last < min(end_ts, int(time.time())) - history.MAX_INTEGRATION_GAP_SEC
-    complete = bool(rows) and not missing_start and not missing_end
+    integration = history._integration_details(rows)
+    complete = (
+        bool(rows)
+        and not missing_start
+        and not missing_end
+        and integration["long_gap_count"] == 0
+        and integration["missing_power_duration_sec"] == 0
+    )
     return {
         "requested_from_ts": start_ts,
         "requested_to_ts": end_ts,
@@ -110,6 +117,12 @@ def _coverage(start_ts: int, end_ts: int, rows: list[Dict[str, Any]]) -> Dict[st
         "missing_start": missing_start,
         "missing_end": missing_end,
         "sample_count": len(rows),
+        "energy_source": "power_integration",
+        "valid_integrated_duration_sec": integration["valid_integrated_duration_sec"],
+        "missing_gap_duration_sec": integration["missing_gap_duration_sec"],
+        "missing_power_duration_sec": integration["missing_power_duration_sec"],
+        "long_gap_count": integration["long_gap_count"],
+        "integration_complete": complete,
     }
 
 

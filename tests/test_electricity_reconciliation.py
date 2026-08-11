@@ -74,6 +74,7 @@ def test_billing_month_clamping_and_formula_remain_unchanged(monkeypatch):
     monkeypatch.setattr(billing, "BILLING_CYCLE_DAY", 31)
     assert billing._cycle_boundary(2026, 2).day == 28
     rows = [{"ts": ts("2026-08-02T00:00:00"), "total_energy": 10, "power": 100}, {"ts": ts("2026-08-03T00:00:00"), "total_energy": 20, "power": 100}]
+    monkeypatch.setattr(billing.history, "energy_used", lambda _rows: 10.0)
     monkeypatch.setattr(billing.history, "calculate_bill", lambda usage, estimated=True: {"configured": True, "total": usage * 4})
     monkeypatch.setattr(billing.time, "time", lambda: ts("2026-08-03T00:00:00"))
     result = billing._billing_cycle_payload_from_rows("current_billing_cycle", ts("2026-08-02T00:00:00"), ts("2026-09-02T00:00:00"), rows)

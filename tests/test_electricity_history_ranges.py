@@ -53,9 +53,10 @@ def test_seven_day_query_returns_hourly_interval_consumption(history_store):
 
     assert payload["timezone"] == "Asia/Bangkok"
     assert payload["bucket"] == "hour"
-    assert payload["energy_semantics"] == "interval_consumption"
+    assert payload["energy_semantics"] == "power_integration"
     assert len(payload["points"]) == 7 * 24
-    assert payload["summary"]["total_energy_kwh"] == pytest.approx(40.32)
+    assert payload["summary"]["total_energy_kwh"] == pytest.approx(38.64, abs=0.01)
+    assert payload["summary"]["energy_source"] == "power_integration"
 
 
 def test_thirty_day_query_returns_daily_points(history_store):
@@ -98,7 +99,22 @@ def test_empty_range_returns_no_points_without_fabrication(history_store):
         "average_interval_kwh": None,
         "minimum_interval_kwh": None,
         "peak_timestamp": None,
+        "energy_source": "power_integration",
+        "valid_integrated_duration_sec": 0,
+        "missing_gap_duration_sec": 0,
+        "missing_power_duration_sec": 0,
+        "long_gap_count": 0,
+        "integration_complete": True,
     }
+
+
+def test_power_integration_read_does_not_mutate_raw_history(history_store):
+    end = datetime.now(history.BANGKOK).replace(minute=0, second=0, microsecond=0)
+    start = end - timedelta(hours=1)
+    _write_rows(history_store, start, 1)
+    before = history_store.read_bytes()
+    history.history_series_payload(start.isoformat(), end.isoformat(), "30m")
+    assert history_store.read_bytes() == before
 
 
 def test_invalid_reversed_future_and_oversized_ranges_are_rejected(history_store):
@@ -132,13 +148,13 @@ def test_exact_four_hundred_day_range_is_allowed(history_store, monkeypatch):
 
 def test_cumulative_meter_reset_never_creates_negative_consumption():
     rows = [
-        {"ts": 1000, "total_energy": 10.0},
-        {"ts": 1060, "total_energy": 10.1},
-        {"ts": 1120, "total_energy": 0.0},
-        {"ts": 1180, "total_energy": 0.2},
+        {"ts": 1000, "power": 1000, "total_energy": 10.0},
+        {"ts": 1060, "power": 1000, "total_energy": 10.1},
+        {"ts": 1120, "power": 1000, "total_energy": 0.0},
+        {"ts": 1180, "power": 1000, "total_energy": 0.2},
     ]
     points = history._aggregate_history(rows, "hour")
-    assert sum(point["energy_kwh"] for point in points) == pytest.approx(0.3)
+    assert sum(point["energy_kwh"] for point in points) == pytest.approx(0.05)
     assert all(point["energy_kwh"] >= 0 for point in points)
 
 
@@ -160,8 +176,8 @@ def test_subhour_bucket_sums_energy_and_preserves_missing_gap(history_store):
     start = datetime(2026, 7, 20, tzinfo=history.BANGKOK)
     rows = _write_rows(history_store, start, 2)
     points = history._aggregate_history(rows, "30m")
-    assert points[0]["energy_kwh"] == pytest.approx(0.12)
-    assert sum(point["energy_kwh"] for point in points) == pytest.approx(0.48)
+    assert points[0]["energy_kwh"] == pytest.approx(0.115)
+    assert sum(point["energy_kwh"] for point in points) == pytest.approx(0.46)
 
     gap_rows = rows[:7] + rows[18:]
     gap_points = history._aggregate_history(gap_rows, "15m")
@@ -243,7 +259,7 @@ def test_comparison_omits_percentage_for_empty_or_zero_previous_period(history_s
     assert payload["comparison_status"] == "unavailable"
 
 
-@pytest.mark.parametrize("baseline", [0.0, 0.0199, 0.02])
+@pytest.mark.parametrize("baseline", [0.0, 0.01, 0.015])
 def test_comparison_rejects_zero_and_single_resolution_baselines(history_store, baseline):
     now = datetime(2026, 7, 27, 12, 0, tzinfo=history.BANGKOK)
     current = now.replace(hour=0)
@@ -251,7 +267,7 @@ def test_comparison_rejects_zero_and_single_resolution_baselines(history_store, 
     rows = []
     for start, delta in ((current, 6.11), (previous_start, baseline)):
         for index in range(15):
-            rows.append({"ts": int((start + timedelta(minutes=index * 5)).timestamp()), "voltage": 230.0, "current": 1.0, "power": 230.0, "total_energy": 100.0 + delta * index / 14, "source": "test", "health": "healthy"})
+            rows.append({"ts": int((start + timedelta(minutes=index * 5)).timestamp()), "voltage": 230.0, "current": 1.0, "power": delta * 1000.0, "total_energy": 100.0 + delta * index / 14, "source": "test", "health": "healthy"})
     history_store.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
     payload = history.comparison_payload("today", now)
     assert payload["comparison_status"] == "baseline_too_low"
@@ -267,7 +283,7 @@ def test_comparison_preserves_normal_increase_decrease_and_equal_usage(history_s
         rows = []
         for start, delta in ((current_start, current_delta), (previous_start, previous_delta)):
             for index in range(15):
-                rows.append({"ts": int((start + timedelta(minutes=index * 5)).timestamp()), "voltage": 230.0, "current": 1.0, "power": 230.0, "total_energy": 100.0 + delta * index / 14, "source": "test", "health": "healthy"})
+                rows.append({"ts": int((start + timedelta(minutes=index * 5)).timestamp()), "voltage": 230.0, "current": 1.0, "power": delta * 1000.0, "total_energy": 100.0 + delta * index / 14, "source": "test", "health": "healthy"})
         history_store.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
         for suffix in ("", "-wal", "-shm"):
             history._database_path().with_name(history._database_path().name + suffix).unlink(missing_ok=True)
@@ -285,7 +301,7 @@ def test_comparison_production_like_extreme_baseline_is_not_comparable(history_s
     rows = []
     for start, delta, base in ((current_start, 6.11, 10.0), (previous_start, 0.0103, 20.0)):
         for index in range(15):
-            rows.append({"ts": int((start + timedelta(minutes=index * 5)).timestamp()), "voltage": 230.0, "current": 1.0, "power": 230.0, "total_energy": base + delta * index / 14, "source": "test", "health": "healthy"})
+            rows.append({"ts": int((start + timedelta(minutes=index * 5)).timestamp()), "voltage": 230.0, "current": 1.0, "power": delta * 1000.0, "total_energy": base + delta * index / 14, "source": "test", "health": "healthy"})
     history_store.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
     payload = history.comparison_payload("today", now)
     assert payload["comparison_status"] == "baseline_too_low"
