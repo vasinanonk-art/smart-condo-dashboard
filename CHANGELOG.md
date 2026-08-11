@@ -14,6 +14,10 @@ No changes after v1.0.10.
 - Reorder System health around action-required information and distinguish
   dangerous actions visually without changing backend behavior.
 
+### Installer safety
+
+- Make all dry-run flag combinations strictly non-mutating.
+
 ## [1.0.9] - 2026-08-11
 
 ### Electricity power integration
