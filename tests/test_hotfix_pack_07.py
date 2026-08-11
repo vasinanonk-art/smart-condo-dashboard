@@ -55,7 +55,7 @@ class HotfixPack07Tests(unittest.TestCase):
         for subtitle in (
             "Live dependency graph", "Lighting control", "System health and services",
             "Real-time electricity monitoring", "Indoor air quality",
-            "Live camera monitoring", "Presence and last-seen status", "TV and remote control",
+            "Camera availability and viewing", "Presence and last-seen status", "TV and remote control",
         ):
             self.assertIn(subtitle, js)
         self.assertNotIn("Live PJ-1103 meter data from the condo", js)

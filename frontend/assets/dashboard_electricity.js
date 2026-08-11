@@ -615,6 +615,7 @@
     if (!valid.length) return `<section class="electricity-cycle-chart"><div class="electricity-section-head"><div><h2>Daily Energy Usage — Current Billing Cycle</h2><small>${safe(state.cycleHistoryError || 'No daily cycle data is available.')}</small></div></div><div class="electricity-empty">No daily cycle data is available.</div></section>`;
     const width = 900, height = 260, left = 42, right = 18, top = 26, bottom = 42;
     const max = Math.max(1, ...valid.map(point => point.energy));
+    const averageY = height - bottom - (average / max * (height - top - bottom));
     const slot = (width - left - right) / Math.max(1, valid.length);
     const barWidth = Math.max(6, slot * .68);
     const bars = valid.map((point, index) => {
@@ -624,7 +625,7 @@
       const isToday = thailandDate(new Date(epoch(point.timestamp) * 1000)) === today;
       return `<g class="cycle-day-bar${isToday ? ' today' : ''}"><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" rx="4"><title>${safe(point.date)}: ${point.energy.toFixed(2)} kWh${isToday ? ' (partial day)' : ''}</title></rect><text x="${(x + barWidth / 2).toFixed(1)}" y="${height - 20}" text-anchor="middle">${safe(point.date)}</text></g>`;
     }).join('');
-    return `<section class="electricity-cycle-chart"><div class="electricity-section-head"><div><h2>Daily Energy Usage — Current Billing Cycle</h2><small>${valid.length} day${valid.length === 1 ? '' : 's'} shown · power integration</small></div><span class="electricity-cycle-average">Average ${average.toFixed(2)} kWh/day</span></div><svg class="electricity-cycle-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily energy usage for the current billing cycle"><line class="cycle-chart-axis" x1="${left}" y1="${height - bottom}" x2="${width - right}" y2="${height - bottom}"/>${bars}</svg><div class="electricity-cycle-chart-legend"><span><i></i>Daily usage</span><span class="today-key">Today is partial</span></div></section>`;
+    return `<section class="electricity-cycle-chart"><div class="electricity-section-head"><div><h2>Daily Energy Usage — Current Billing Cycle</h2><small>${valid.length} day${valid.length === 1 ? '' : 's'} shown · power integration</small></div><span class="electricity-cycle-average">Cycle avg ${average.toFixed(2)} kWh/day</span></div><svg class="electricity-cycle-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily energy usage for the current billing cycle"><line class="cycle-chart-axis" x1="${left}" y1="${height - bottom}" x2="${width - right}" y2="${height - bottom}"/><line class="cycle-chart-average-line" x1="${left}" y1="${averageY.toFixed(1)}" x2="${width - right}" y2="${averageY.toFixed(1)}"/><text class="cycle-chart-average-label" x="${width - right - 4}" y="${Math.max(top + 12, averageY - 6).toFixed(1)}" text-anchor="end">Avg ${average.toFixed(2)}</text>${bars}</svg><div class="electricity-cycle-chart-legend"><span><i></i>Daily usage</span><span class="average-key">Cycle average</span><span class="today-key">Today is partial</span></div></section>`;
   }
 
   function dailySummaryCards() {

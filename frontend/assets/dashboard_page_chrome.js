@@ -12,7 +12,7 @@
     system: {title: 'System', subtitle: 'System health and services'},
     topology: {title: 'Topology', subtitle: 'Live dependency graph'},
     electricity: {title: 'Electricity Monitoring', subtitle: 'Real-time electricity monitoring'},
-    camera: {title: 'Camera', subtitle: 'Live camera monitoring'},
+    camera: {title: 'Cameras', subtitle: 'Camera availability and viewing'},
     history: {title: 'Electricity History', subtitle: 'History coverage and maintenance'},
     automation: {title: 'Automation', subtitle: 'Rule validation and safe simulation'},
     settings: {title: 'Settings', subtitle: 'Dashboard configuration and maintenance'}

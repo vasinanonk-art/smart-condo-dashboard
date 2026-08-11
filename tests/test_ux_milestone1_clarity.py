@@ -11,6 +11,8 @@ ELECTRICITY = (ROOT / "frontend/assets/dashboard_electricity.js").read_text(enco
 ELECTRICITY_CSS = (ROOT / "frontend/assets/dashboard_electricity.css").read_text(encoding="utf-8")
 SYSTEM = (ROOT / "frontend/assets/dashboard_v3.js").read_text(encoding="utf-8")
 HOME_CSS = (ROOT / "frontend/assets/dashboard_home.css").read_text(encoding="utf-8")
+CAMERA_CSS = (ROOT / "frontend/assets/dashboard_cameras.css").read_text(encoding="utf-8")
+CHROME = (ROOT / "frontend/assets/dashboard_page_chrome.js").read_text(encoding="utf-8")
 
 
 def test_home_action_required_and_healthy_state_exist_before_details():
@@ -36,7 +38,9 @@ def test_electricity_cycle_chart_is_primary_and_daily_power_integration_is_expli
     assert "Daily Energy Usage — Current Billing Cycle" in ELECTRICITY
     assert "bucket: 'day'" in ELECTRICITY
     assert "Today is partial" in ELECTRICITY
-    assert "Average ${average.toFixed(2)} kWh/day" in ELECTRICITY
+    assert "Cycle avg ${average.toFixed(2)} kWh/day" in ELECTRICITY
+    assert "cycle-chart-average-line" in ELECTRICITY
+    assert "Cycle average" in ELECTRICITY
     assert ELECTRICITY.index("${summaryCards()}") < ELECTRICITY.index("${cycleDailyChart()}") < ELECTRICITY.index("${dailySummaryCards()}")
     assert "power integration" in ELECTRICITY
 
@@ -55,7 +59,7 @@ def test_system_action_first_and_technical_details_collapsed():
     assert "Services" in SYSTEM
     assert "Storage / Backup" in SYSTEM
     assert "Advanced technical details" in SYSTEM
-    assert SYSTEM.index("Overall Health") < SYSTEM.index("Action Required") < SYSTEM.index("Recent Incidents") < SYSTEM.index("Services")
+    assert "${actionSection}${incidentSection}<section class=\"system-service-summary\"" in SYSTEM
     assert "system-advanced" in INDEX
 
 
@@ -73,3 +77,24 @@ def test_mobile_layout_keeps_new_sections_single_column():
     assert ".home-action-state" in HOME_CSS
     assert "grid-template-columns:1fr" in (ROOT / "frontend/assets/dashboard_cameras.css").read_text(encoding="utf-8")
     assert "overflow-x:hidden" in ELECTRICITY_CSS
+
+
+def test_home_energy_period_is_explicit_without_changing_aggregation():
+    assert "Last 24 hours" in HOME
+    assert "30-minute intervals" in HOME
+    assert "Recent interval consumption" not in HOME
+
+
+def test_cameras_use_one_page_title_and_compact_unavailable_cards():
+    assert "title: 'Cameras'" in CHROME
+    assert "<h2>Cameras</h2>" not in CAMERAS
+    assert "is-unavailable" in CAMERAS
+    assert ".camera-card.is-unavailable" in CAMERA_CSS
+    assert "camera-snapshot-unavailable" in CAMERAS
+
+
+def test_system_hides_noop_sections_and_uses_neutral_backup_status():
+    assert "const actionSection = required.length" in SYSTEM
+    assert "const incidentSection = incidents.length" in SYSTEM
+    assert "Not monitored" in SYSTEM
+    assert "system-overall" in SYSTEM

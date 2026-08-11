@@ -356,13 +356,21 @@
     const summary = energySummary();
     const total = number(summary.total_energy_kwh);
     const cost = number(summary.total_cost_thb);
+    const historyState = window.DashboardElectricityHistory?.state?.history || {};
+    const rangeLabel = historyState.range === '24h' ? 'Last 24 hours'
+      : historyState.range === '7d' ? 'Last 7 days'
+        : historyState.range === '30d' ? 'Last 30 days' : 'Selected period';
+    const resolutionLabel = historyState.bucket === '30m' ? '30-minute intervals'
+      : historyState.bucket === '15m' ? '15-minute intervals'
+        : historyState.bucket === 'hour' ? 'Hourly intervals'
+          : historyState.bucket === '3h' ? '3-hour intervals' : 'Selected resolution';
     const energyHeader = element('homeEnergyHeader');
     if (energyHeader) {
       energyHeader.innerHTML = ui.widgetHeader({
         title:'Energy',
-        subtitle:'Recent interval consumption',
+        subtitle:rangeLabel,
         trailing:ui.statusChip({
-          label:window.DashboardElectricityHistory?.state?.history?.bucket || 'No resolution',
+          label:resolutionLabel,
           status:'info',
         }),
       });
