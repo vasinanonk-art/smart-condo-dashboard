@@ -2,7 +2,15 @@
 
 ## [Unreleased]
 
-No changes after v1.0.10.
+No changes after v1.0.11.
+
+## [1.0.11] - 2026-08-11
+
+### UX cleanup
+
+- Clarify Home Energy period and resolution labels.
+- Add a cycle-average reference line to the daily Electricity chart.
+- Compact unavailable camera cards and simplify healthy System status.
 
 ## [1.0.10] - 2026-08-11
 
