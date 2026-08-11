@@ -2,7 +2,17 @@
 
 ## [Unreleased]
 
-No changes after v1.0.9.
+No changes after v1.0.10.
+
+## [1.0.10] - 2026-08-11
+
+### UX Milestone 1 clarity
+
+- Add an action-required Home summary and a dedicated Cameras view.
+- Make current-cycle daily electricity usage the primary chart while keeping
+  technical details collapsed.
+- Reorder System health around action-required information and distinguish
+  dangerous actions visually without changing backend behavior.
 
 ## [1.0.9] - 2026-08-11
 
