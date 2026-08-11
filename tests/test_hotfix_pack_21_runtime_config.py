@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import bcrypt
+import pytest
 from fastapi.testclient import TestClient
 
 from backend import app as app_module
@@ -91,30 +92,80 @@ def test_legacy_fallback_paths_remain_compatible(monkeypatch, tmp_path):
     assert sonoff_payload["config"]["region"] == "as"
 
 
-def test_dry_run_preserves_all_local_json_generically(tmp_path):
+@pytest.mark.parametrize("arguments", [
+    ("--dry-run",),
+    ("--runtime-only", "--dry-run"),
+    ("--dry-run", "--runtime-only"),
+])
+def test_dry_run_is_strictly_non_mutating(tmp_path, arguments):
     run_root = tmp_path / "run"
     persistent = tmp_path / "persistent"
-    config = run_root / "config"
-    config.mkdir(parents=True)
+    (run_root / "config").mkdir(parents=True)
+    (run_root / "venv").mkdir(parents=True)
     persistent.mkdir()
-    for name in ("cameras.local.json", "ewelink.local.json", "future-provider.local.json"):
-        (config / name).write_text("{}", encoding="utf-8")
+    (run_root / "VERSION").write_text("1.0.9\n", encoding="utf-8")
+    (run_root / "sentinel").write_text("runtime-unchanged", encoding="utf-8")
+    (run_root / "venv" / "sentinel").write_text("venv-unchanged", encoding="utf-8")
+    (persistent / "state.json").write_text('{"unchanged":true}\n', encoding="utf-8")
+    before = {
+        path: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in (run_root / "VERSION", run_root / "sentinel", run_root / "venv" / "sentinel", persistent / "state.json")
+    }
+    systemctl_log = tmp_path / "systemctl.log"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_systemctl = fake_bin / "systemctl"
+    fake_systemctl.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{systemctl_log}"\n', encoding="utf-8")
+    fake_systemctl.chmod(0o755)
 
     result = subprocess.run(
-        ["sh", str(INSTALL), "--dry-run"],
+        ["sh", str(INSTALL), *arguments],
         cwd=ROOT,
-        env=_install_env(ROOT, run_root, persistent, tmp_path / "install.lock"),
+        env={**_install_env(ROOT, run_root, persistent, tmp_path / "install.lock"), "PATH": f"{fake_bin}:{os.environ['PATH']}"},
         text=True,
         capture_output=True,
         check=False,
     )
 
     assert result.returncode == 0, result.stderr
-    for name in ("cameras.local.json", "ewelink.local.json", "future-provider.local.json"):
-        assert f"Preserved local config: config/{name}" in result.stdout
-        assert (config / name).is_file()
-    assert "without rsync --delete" in result.stdout
-    assert "local configuration preservation verified" in result.stdout
+    assert "no production lock, runtime, venv, systemd, go2rtc, or persistent state" in result.stdout
+    assert "VERSION=1.0.10" in result.stdout
+    assert not (tmp_path / "install.lock").exists()
+    assert not systemctl_log.exists()
+    for path, digest in before.items():
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+
+
+def test_dry_run_explicit_app_src_and_release_worktree_are_non_mutating(tmp_path):
+    release = tmp_path / "smart-condo-dashboard-v1.0.10"
+    shutil.copytree(ROOT, release, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+    (release / "VERSION").write_text("1.0.10\n", encoding="utf-8")
+    run_root = tmp_path / "run"
+    persistent = tmp_path / "persistent"
+    (run_root / "venv").mkdir(parents=True)
+    persistent.mkdir()
+    (run_root / "VERSION").write_text("1.0.9\n", encoding="utf-8")
+    (persistent / "state").write_text("preserve", encoding="utf-8")
+    result = subprocess.run(
+        ["sh", str(release / "install.sh"), "--runtime-only", "--dry-run"],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "APP_SRC": str(release),
+            "APP_RUN": str(run_root),
+            "PERSISTENT_CONFIG_ROOT": str(persistent),
+            "INSTALL_LOCK_FILE": str(tmp_path / "install.lock"),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "isolated source snapshot" in result.stdout
+    assert "VERSION=1.0.10" in result.stdout
+    assert (run_root / "VERSION").read_text(encoding="utf-8") == "1.0.9\n"
+    assert (persistent / "state").read_text(encoding="utf-8") == "preserve"
+    assert not (tmp_path / "install.lock").exists()
 
 
 def test_runtime_only_deployment_updates_managed_tree_without_touching_venv(tmp_path):
@@ -314,7 +365,7 @@ def test_failed_deploy_restores_local_config_before_exit(tmp_path):
     assert local_config.read_text(encoding="utf-8") == '{"preserve": true}'
 
 
-def test_concurrent_deployment_fails_before_touching_runtime(tmp_path):
+def test_dry_run_ignores_deployment_lock_and_touches_nothing(tmp_path):
     run_root = tmp_path / "run"
     persistent = tmp_path / "persistent"
     config = run_root / "config"
@@ -344,14 +395,13 @@ def test_concurrent_deployment_fails_before_touching_runtime(tmp_path):
         holder.terminate()
         holder.wait(timeout=5)
 
-    assert result.returncode != 0
-    assert "another smart-condo-dashboard deployment is active" in result.stderr
-    assert "Preserved local config" not in result.stdout
+    assert result.returncode == 0
+    assert "no production lock" in result.stdout
     assert local_config.read_bytes() == original
     assert sorted(path.name for path in config.iterdir()) == [local_config.name]
 
 
-def test_deployment_lock_released_after_dry_run_success(tmp_path):
+def test_dry_run_does_not_create_deployment_lock(tmp_path):
     run_root = tmp_path / "run"
     persistent = tmp_path / "persistent"
     (run_root / "config").mkdir(parents=True)
@@ -368,8 +418,8 @@ def test_deployment_lock_released_after_dry_run_success(tmp_path):
     )
 
     assert result.returncode == 0
-    assert "Deployment lock acquired." in result.stdout
-    assert _flock_available(lock_file)
+    assert "Deployment lock acquired." not in result.stdout
+    assert not lock_file.exists()
 
 
 def test_deployment_lock_released_after_failure(tmp_path):

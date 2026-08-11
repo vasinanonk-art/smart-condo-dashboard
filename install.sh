@@ -11,13 +11,50 @@ PY="$VENV/bin/python"
 DRY_RUN=0
 RUNTIME_ONLY=0
 
-if [ "${1:-}" = "--dry-run" ]; then
-    DRY_RUN=1
-elif [ "${1:-}" = "--runtime-only" ]; then
-    RUNTIME_ONLY=1
-elif [ "$#" -gt 0 ]; then
-    echo "Usage: $0 [--dry-run|--runtime-only]" >&2
-    exit 2
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --dry-run) DRY_RUN=1 ;;
+        --runtime-only) RUNTIME_ONLY=1 ;;
+        *)
+            echo "Usage: $0 [--dry-run] [--runtime-only]" >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+# Dry-run is a separate terminating path. It must not acquire the deployment
+# lock or source helpers that can write production paths.
+if [ "$DRY_RUN" -eq 1 ]; then
+    SOURCE_SNAPSHOT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/smart-condo-dashboard-dry-run.XXXXXX")
+    trap 'rm -rf "$SOURCE_SNAPSHOT_TMP"' EXIT HUP INT TERM
+    if git -C "$APP_SRC" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        SOURCE_ARCHIVE="$SOURCE_SNAPSHOT_TMP/source.tar"
+        git -C "$APP_SRC" archive --format=tar --output="$SOURCE_ARCHIVE" HEAD
+        tar -xf "$SOURCE_ARCHIVE" -C "$SOURCE_SNAPSHOT_TMP"
+        rm "$SOURCE_ARCHIVE"
+        echo "Dry run source: isolated snapshot of Git HEAD."
+    else
+        cp -R "$APP_SRC"/. "$SOURCE_SNAPSHOT_TMP"/
+        echo "Dry run source: isolated source snapshot."
+    fi
+    for required_path in \
+        "$SOURCE_SNAPSHOT_TMP/VERSION" \
+        "$SOURCE_SNAPSHOT_TMP/install.sh" \
+        "$SOURCE_SNAPSHOT_TMP/scripts/runtime_config_guard.sh" \
+        "$SOURCE_SNAPSHOT_TMP/scripts/provision_go2rtc.sh" \
+        "$SOURCE_SNAPSHOT_TMP/backend" \
+        "$SOURCE_SNAPSHOT_TMP/frontend" \
+        "$SOURCE_SNAPSHOT_TMP/config"; do
+        [ -e "$required_path" ] || {
+            echo "ERROR: dry-run source is missing required path: $required_path" >&2
+            exit 1
+        }
+    done
+    echo "Dry run: no production lock, runtime, venv, systemd, go2rtc, or persistent state will be touched."
+    echo "Dry run: managed runtime would be replaced; runtime-only=$RUNTIME_ONLY; VERSION=$(cat "$SOURCE_SNAPSHOT_TMP/VERSION")."
+    echo "Dry run: go2rtc and service actions are skipped because this path is non-mutating."
+    exit 0
 fi
 
 install -d "$(dirname "$INSTALL_LOCK_FILE")"
@@ -125,22 +162,6 @@ runtime_config_present \
 runtime_config_present \
     "${EWELINK_CONFIG_FILE:-$PERSISTENT_CONFIG_ROOT/ewelink.local.json}" \
     "$APP_RUN/config/ewelink.local.json" && SONOFF_WAS_PRESENT=1
-
-if [ "$DRY_RUN" -eq 1 ]; then
-    verify_config_backups "$LOCAL_CONFIG_BACKUP" "$LOCAL_CONFIG_MANIFEST"
-    verify_preserved_configs "$APP_RUN" "$LOCAL_CONFIG_MANIFEST"
-    echo "Dry run: managed runtime directories would be replaced without rsync --delete."
-    echo "Dry run: persistent root would remain untouched: $PERSISTENT_CONFIG_ROOT"
-    echo "Dry run: Camera config previously present: $CAMERA_WAS_PRESENT"
-    echo "Dry run: Sonoff config previously present: $SONOFF_WAS_PRESENT"
-    echo "Dry run: local configuration preservation verified."
-    case "${GO2RTC_PROVISION_ENABLED:-auto}:$(uname -m)" in
-        0:*|false:*|no:*) echo "Dry run: go2rtc provisioning explicitly disabled." ;;
-        auto:armv7l|auto:armv7|1:*|true:*|yes:*) "$DEPLOY_SRC/scripts/provision_go2rtc.sh" dry-run ;;
-        *) echo "Dry run: go2rtc provisioning not applicable to this architecture." ;;
-    esac
-    exit 0
-fi
 
 echo "Replacing managed runtime directories. Preserved config/*.local.json files will be restored."
 # This deployment intentionally does not use rsync --delete. Only the managed code
