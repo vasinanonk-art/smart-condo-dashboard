@@ -2,7 +2,22 @@
 
 ## [Unreleased]
 
-No changes after v1.0.11.
+No changes after v1.0.12.
+
+## [1.0.12] - 2026-08-11
+
+### Deployment identity
+
+- Add an immutable managed-runtime release marker derived from the approved
+  source commit and VERSION.
+- Verify deployed release identity without trusting runtime `.git` metadata.
+- Preserve the release marker through transactional runtime rollback while
+  retaining explicit compatibility for markerless legacy baselines.
+
+### UX cleanup
+
+- Include the v1.0.11 Home, Electricity, Cameras, and System presentation
+  cleanup unchanged.
 
 ## [1.0.11] - 2026-08-11
 

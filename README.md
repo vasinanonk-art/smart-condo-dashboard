@@ -147,7 +147,7 @@ URLs, IR data, device identifiers, MAC addresses, or client keys.
 ## Verification
 
 ```sh
-test "$(cat VERSION)" = "1.0.3"
+test "$(cat VERSION)" = "1.0.12"
 /opt/smart-condo-dashboard-run/venv/bin/python -m pytest -q
 find backend -name '*.py' -print0 | \
   xargs -0 /opt/smart-condo-dashboard-run/venv/bin/python -m py_compile

@@ -140,7 +140,7 @@ def test_dry_run_is_strictly_non_mutating(tmp_path, arguments):
 
     assert result.returncode == 0, result.stderr
     assert "no production lock, runtime, venv, systemd, go2rtc, or persistent state" in result.stdout
-    assert "VERSION=1.0.11" in result.stdout
+    assert "VERSION=1.0.12" in result.stdout
     assert not (tmp_path / "install.lock").exists()
     assert not systemctl_log.exists()
     for path, digest in before.items():
@@ -179,6 +179,54 @@ def test_dry_run_explicit_app_src_and_release_worktree_are_non_mutating(tmp_path
     assert (run_root / "VERSION").read_text(encoding="utf-8") == "1.0.9\n"
     assert (persistent / "state").read_text(encoding="utf-8") == "preserve"
     assert not (tmp_path / "install.lock").exists()
+
+
+@pytest.mark.parametrize("release_commit", (None, "b" * 40, "not-a-sha"))
+def test_release_commit_gate_fails_before_runtime_replacement(tmp_path, release_commit):
+    source = tmp_path / "source"
+    run_root = tmp_path / "run"
+    persistent = tmp_path / "persistent"
+    (run_root / "backend").mkdir(parents=True)
+    (run_root / "backend" / "sentinel").write_text("runtime-unchanged")
+    (run_root / "VERSION").write_text("1.0.10\n")
+    persistent.mkdir()
+    (persistent / "sentinel").write_text("persistent-unchanged")
+    systemctl_log = tmp_path / "systemctl.log"
+    fake_bin = tmp_path / "bin"
+    shutil.copytree(ROOT, source, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+    subprocess.run(["git", "init", "-q"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.email", "release-gate@example.invalid"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.name", "Release Gate Test"], cwd=source, check=True)
+    subprocess.run(["git", "add", "."], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-qm", "release gate fixture"], cwd=source, check=True)
+    fake_bin.mkdir()
+    fake_systemctl = fake_bin / "systemctl"
+    fake_systemctl.write_text(
+        f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{systemctl_log}"\n',
+        encoding="utf-8",
+    )
+    fake_systemctl.chmod(0o755)
+    environment = _install_env(source, run_root, persistent, tmp_path / "install.lock")
+    environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+    if release_commit is None:
+        environment.pop("RELEASE_COMMIT")
+    else:
+        environment["RELEASE_COMMIT"] = release_commit
+
+    result = subprocess.run(
+        ["sh", str(source / "install.sh"), "--runtime-only"],
+        cwd=source,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert (run_root / "backend" / "sentinel").read_text() == "runtime-unchanged"
+    assert (run_root / "VERSION").read_text() == "1.0.10\n"
+    assert (persistent / "sentinel").read_text() == "persistent-unchanged"
+    assert not systemctl_log.exists()
 
 
 def test_runtime_only_deployment_updates_managed_tree_without_touching_venv(tmp_path):
