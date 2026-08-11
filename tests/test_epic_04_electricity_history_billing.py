@@ -89,6 +89,14 @@ class ElectricityHistoryTests(unittest.TestCase):
         ]
         self.assertAlmostEqual(history.energy_used(rows), 0.001667, places=5)
 
+    def test_negative_and_nonfinite_power_are_safe(self):
+        rows = [
+            {"ts": 1000, "power": -100.0, "total_energy": 1.0},
+            {"ts": 1030, "power": 1000.0, "total_energy": 2.0},
+            {"ts": 1060, "power": float("nan"), "total_energy": 3.0},
+        ]
+        self.assertAlmostEqual(history.energy_used(rows), 0.004167, places=5)
+
     def test_tariff_calculation_is_configuration_driven(self):
         config = {
             "tariff_name": "Test Tariff",

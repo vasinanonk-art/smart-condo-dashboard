@@ -55,6 +55,36 @@ def calculate_with_tariff(usage_kwh: Optional[float], tariff: Mapping[str, Any],
     }
 
 
+def _integrated_segment_usage(rows: list[Dict[str, Any]], start_ts: int, end_ts: int) -> float:
+    """Integrate power while splitting intervals at tariff boundaries."""
+    ordered = history._deduplicated_rows(rows)
+    total = 0.0
+    for previous, current in zip(ordered, ordered[1:]):
+        left_ts = int(previous["ts"])
+        right_ts = int(current["ts"])
+        elapsed = right_ts - left_ts
+        if elapsed <= 0 or elapsed > history.MAX_INTEGRATION_GAP_SEC:
+            continue
+        overlap_start = max(left_ts, start_ts)
+        overlap_end = min(right_ts, end_ts)
+        if overlap_start >= overlap_end:
+            continue
+        previous_power = history._number(previous.get("power"))
+        current_power = history._number(current.get("power"))
+        if previous_power is None or current_power is None:
+            continue
+        def power_at(timestamp: int) -> float:
+            fraction = (timestamp - left_ts) / elapsed
+            return max(0.0, previous_power + (current_power - previous_power) * fraction)
+        total += (
+            (power_at(overlap_start) + power_at(overlap_end))
+            / 2.0
+            * (overlap_end - overlap_start)
+            / 3_600_000.0
+        )
+    return round(total, 6)
+
+
 def _history_records() -> list[Dict[str, Any]]:
     try:
         raw = json.loads(mea.TARIFF_HISTORY_PATH.read_text(encoding="utf-8"))
@@ -93,8 +123,7 @@ def segmented_bill(start: int, end: int, rows: list[Dict[str, Any]]) -> Optional
     segments = []
     for index, record in enumerate(tariffs):
         seg_start, seg_end = boundaries[index], boundaries[index + 1]
-        segment_rows = [row for row in rows if seg_start <= int(row.get("ts") or 0) <= seg_end]
-        usage = history.energy_used(segment_rows) if len(segment_rows) >= 2 else 0.0
+        usage = _integrated_segment_usage(rows, seg_start, seg_end)
         charge = calculate_with_tariff(usage, record["tariff"], include_service=index == len(tariffs) - 1)
         segments.append({
             "from_ts": seg_start,

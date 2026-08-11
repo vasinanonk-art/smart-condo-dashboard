@@ -2,7 +2,17 @@
 
 ## [Unreleased]
 
-No changes after v1.0.8.
+No changes after v1.0.9.
+
+## [1.0.9] - 2026-08-11
+
+### Electricity power integration
+
+- Use trapezoidal integration of power samples as the authoritative energy
+  source, excluding intervals longer than 15 minutes.
+- Preserve raw DP17 telemetry and legacy reconciliation values while exposing
+  integration coverage metadata.
+- Split power intervals at tariff-effective boundaries.
 
 ## [1.0.8] - 2026-08-11
 

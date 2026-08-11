@@ -25,7 +25,6 @@ def reset_billing_cache(monkeypatch):
     monkeypatch.setattr(segmented, "_billing_cache_at", 0.0)
     monkeypatch.setattr(segmented, "_billing_inflight", {})
     monkeypatch.setattr(segmented, "_request_key", lambda selected, start, end: (selected, start, end))
-    monkeypatch.setattr(segmented, "segmented_bill", lambda start, end, rows: None)
 
 
 def test_frontend_billing_owner_is_page_scoped_and_non_overlapping():
@@ -66,9 +65,28 @@ def test_segmented_request_reads_history_once(monkeypatch):
     assert result["actual_partial_usage_kwh"] == pytest.approx(0.2)
 
 
+def test_tariff_boundary_splits_crossing_power_interval(monkeypatch):
+    rows = [
+        {"ts": 1000, "power": 1000.0, "total_energy": 1.0},
+        {"ts": 1100, "power": 1000.0, "total_energy": 999.0},
+    ]
+    monkeypatch.setattr(
+        segmented,
+        "_effective_tariffs",
+        lambda _start, _end: [
+            {"effective_ts": 1000, "tariff": {"effective_date": "2026-01-01", "tiers": [{"up_to_kwh": None, "rate": 1}], "ft_rate": 0, "service_charge": 0, "vat_percent": 0}},
+            {"effective_ts": 1050, "tariff": {"effective_date": "2026-02-01", "tiers": [{"up_to_kwh": None, "rate": 2}], "ft_rate": 0, "service_charge": 0, "vat_percent": 0}},
+        ],
+    )
+    result = segmented.segmented_bill(1000, 1100, rows)
+    assert [segment["usage_kwh"] for segment in result["tariff_segments"]] == [pytest.approx(0.0139), pytest.approx(0.0139)]
+    assert result["usage_kwh"] == pytest.approx(0.0278)
+
+
 def test_preloaded_rows_preserve_legacy_payload_values(monkeypatch):
     selected, start, end = billing._billing_request_bounds("today", 100, 300)
     expected = billing._billing_cycle_payload_from_rows(selected, start, end, list(ROWS))
+    monkeypatch.setattr(segmented, "_effective_tariffs", lambda _start, _end: [])
     monkeypatch.setattr(segmented.history, "read_samples", lambda _start, _end: list(ROWS))
     actual = segmented.billing_cycle_payload_segmented("today", 100, 300)
     assert actual == {**expected, "tariff_segments": []}
