@@ -37,6 +37,7 @@
   <link rel="stylesheet" href="/assets/dashboard_electricity_settings_hotfix17.css?v=__ASSET_VERSION__">
   <link rel="stylesheet" href="/assets/dashboard_design_system.css?v=__ASSET_VERSION__">
   <link rel="stylesheet" href="/assets/dashboard_home.css?v=__ASSET_VERSION__">
+  <link rel="stylesheet" href="/assets/dashboard_cameras.css?v=__ASSET_VERSION__">
   <style>
     :root{--ui-radius:16px;--ui-gap:16px;--ui-pad:18px}*{box-sizing:border-box}body,.app,.main,.page{max-width:100%;overflow-x:hidden}.grid,.summary-grid,.automation-grid,.sonoff-grid{gap:var(--ui-gap);min-width:0}.card,.summary-card,.automation-card,.sonoff-card{border-radius:var(--ui-radius)}.card{padding:var(--ui-pad)}.card,.summary-card,.automation-card,.sonoff-card,.btn{transition:border-color 150ms ease,background-color 150ms ease,transform 150ms ease,box-shadow 150ms ease}.summary-grid{grid-auto-rows:1fr}.summary-card{display:flex;min-height:118px;height:100%;padding:var(--ui-pad);flex-direction:column;justify-content:space-between}.summary-label{min-height:28px}.summary-value{margin:8px 0}.summary-foot{margin-top:0}.automation-grid{grid-template-columns:repeat(auto-fit,minmax(360px,1fr));align-items:start}.automation-card{height:fit-content;padding:var(--ui-pad)}.automation-head{align-items:start}.automation-meta{grid-template-columns:minmax(0,1fr) auto;gap:5px 14px;margin-top:10px}.automation-meta span:first-child{grid-column:1/-1}.automation-actions{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}.automation-actions .btn{width:100%;min-width:0;padding:8px 10px}.chart-tools{display:inline-flex;flex-wrap:nowrap;justify-content:flex-end;gap:4px;margin-left:auto}.chart-tools .btn{min-width:auto;padding:5px 7px;font-size:10px;line-height:1.2}.sonoff-card{padding:8px}.relay{min-height:38px;padding:6px 8px}.relay-switch{margin-left:auto}@media(max-width:1200px){.automation-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.automation-grid{grid-template-columns:minmax(0,1fr)}.chart-tools{max-width:100%;overflow-x:auto}}@media(max-width:420px){.automation-meta{grid-template-columns:minmax(0,1fr)}.automation-meta span:first-child{grid-column:1}}
   </style>
@@ -70,6 +71,7 @@
     <section class="page active" data-page="overview">
       <div class="sc-page-container sc-motion-fade">
         <section id="homeHero" class="sc-hero-banner sc-motion-slide-up" aria-labelledby="homeHeroTitle"></section>
+        <section id="homeActionRequired" class="home-action-required" aria-labelledby="homeActionRequiredTitle"></section>
         <div id="overviewMetrics" class="sc-responsive-grid home-metric-grid"></div>
         <section class="home-quick-actions" aria-labelledby="homeQuickActionsTitle">
           <header><h2 id="homeQuickActionsTitle">Quick Actions</h2><p>Verified controls and shortcuts</p></header>
@@ -83,9 +85,11 @@
             <div id="homeEnergyEmpty" class="home-empty-state" hidden><i data-lucide="zap" aria-hidden="true"></i><strong>Waiting for Energy Data</strong><span>Meter history will appear when the data source is available.</span></div>
           </div>
         </section>
-        <div id="homeSecondaryWidgets" class="home-secondary-grid"></div>
-        <div class="home-detail-boundary"><span>Home Details</span></div>
-        <div class="sc-widget-grid home-dashboard-grid">
+        <details class="home-details">
+          <summary>Home details</summary>
+          <div id="homeSecondaryWidgets" class="home-secondary-grid"></div>
+          <div class="home-detail-boundary"><span>Home Details</span></div>
+          <div class="sc-widget-grid home-dashboard-grid">
           <section class="sc-widget-container home-devices-widget sc-span-12">
             <header class="sc-widget-header"><div><h2 class="sc-widget-title">Devices</h2><p class="sc-widget-subtitle">Your home at a glance</p></div></header>
             <div id="homeDeviceCards" class="sc-responsive-grid"></div>
@@ -113,15 +117,16 @@
             <header class="sc-widget-header"><div><h2 class="sc-widget-title">Home Status</h2><p class="sc-widget-subtitle">Alerts and availability</p></div></header>
             <div id="alerts" class="alert-list"></div>
           </section>
-        </div>
+          </div>
+        </details>
         <div id="overviewPresence" hidden></div><div id="deviceSummary" hidden></div>
       </div>
     </section>
-    <section class="page" data-page="lighting"><div class="grid"><div class="card span-12"><div class="card-head"><h2>Sonoff Switches</h2><div class="controls"><button class="btn primary" onclick="sonoffAll('on')">Global ALL ON</button><button class="btn danger" onclick="sonoffAll('off')">Global ALL OFF</button></div></div><div id="sonoffList" class="sonoff-grid"></div></div><div class="card span-12"><div class="card-head"><h2>Zone Lighting</h2></div><div id="tuyaList" class="zone-grid"></div></div></div></section>
+    <section class="page" data-page="lighting"><div class="grid"><div class="card span-12"><div class="card-head"><h2>Sonoff Switches</h2><div class="controls"><button class="btn primary dangerous-action" onclick="if(confirm('Turn all Sonoff switches on?')) sonoffAll('on')">Global ALL ON</button><button class="btn danger dangerous-action" onclick="if(confirm('Turn all Sonoff switches off?')) sonoffAll('off')">Global ALL OFF</button></div></div><div id="sonoffList" class="sonoff-grid"></div></div><div class="card span-12"><div class="card-head"><h2>Zone Lighting</h2></div><div id="tuyaList" class="zone-grid"></div></div></div></section>
     <section class="page" data-page="climate"><div id="airCards" class="grid"></div><div class="grid" style="margin-top:14px"><div class="card span-12"><div class="card-head"><h2>Air Conditioner</h2></div><div id="climateControls" class="grid"></div></div><div class="card span-12"><div class="card-head"><h2>PM2.5 Room Comparison</h2><div id="climateRanges" class="range-controls"></div></div><div class="chart-wrap"><svg id="airChart" class="chart"></svg><div class="tooltip"></div></div><div class="legend"><span><i style="background:var(--accent)"></i>Living Room</span><span><i style="background:var(--purple)"></i>Bedroom</span></div></div><div id="airStats" class="span-12 grid"></div></div></section>
     <section class="page" data-page="entertainment"><div class="grid"><div class="card span-12"><div class="card-head"><h2>LG TV Controls</h2></div><div id="tvButtons" class="lg-remote-panel"></div></div><div class="card span-12 tv-remote-card" hidden></div></div></section>
     <section class="page" data-page="presence"><div id="presenceList" class="grid"></div><div class="grid" style="margin-top:14px"><div class="card span-12"><div class="card-head"><h2>Home Assistant Automations</h2></div><div id="automationEvents" class="automation-grid"></div></div></div></section>
-    <section class="page" data-page="system"><div class="grid"><div class="card span-12"><div class="card-head"><h2>System Health</h2><button class="btn ghost" onclick="refresh()">Refresh status</button></div><div id="systemDetails"></div></div><div class="card span-12"><div class="card-head"><div><h2>Device Health</h2><p class="muted">Live connectivity and response measurements</p></div></div><div id="deviceHealthDashboard" class="device-health-dashboard" aria-live="polite" aria-busy="false"><p class="device-health-empty">Loading device health…</p></div></div><div class="card span-12"><div class="card-head"><h2>TP-Link Providers</h2></div><div id="tplinkProviderDashboard" aria-live="polite"><p class="muted">Loading provider information…</p></div></div></div></section>
+    <section class="page" data-page="system"><div class="grid"><div class="card span-12"><div class="card-head"><h2>System Health</h2><button class="btn ghost" onclick="refresh()">Refresh status</button></div><div id="systemDetails"></div></div><div class="card span-12"><div class="card-head"><div><h2>Device Health</h2><p class="muted">Live connectivity and response measurements</p></div></div><div id="deviceHealthDashboard" class="device-health-dashboard" aria-live="polite" aria-busy="false"><p class="device-health-empty">Loading device health…</p></div></div><details class="card span-12 system-advanced"><summary>Integrations and technical details</summary><div class="card-head"><h2>Provider Details</h2></div><div id="tplinkProviderDashboard" aria-live="polite"><p class="muted">Loading provider information…</p></div></details></div></section>
   </main>
   <div class="sc-bottom-navigation-container"><nav class="mobile-nav sc-bottom-navigation" aria-label="Dashboard navigation"><button data-nav="overview" aria-label="Overview"><i data-lucide="house" aria-hidden="true"></i><span>Home</span></button><button data-nav="lighting" aria-label="Lighting"><i data-lucide="lightbulb" aria-hidden="true"></i><span>Lights</span></button><button data-nav="climate" aria-label="Climate"><i data-lucide="wind" aria-hidden="true"></i><span>Climate</span></button><button data-nav="entertainment" aria-label="Entertainment"><i data-lucide="tv" aria-hidden="true"></i><span>TV</span></button><button data-nav="presence" aria-label="Presence"><i data-lucide="users" aria-hidden="true"></i><span>Presence</span></button><button data-nav="system" aria-label="System"><i data-lucide="settings" aria-hidden="true"></i><span>System</span></button></nav></div>
 </div>
@@ -150,6 +155,7 @@
 <script src="/assets/dashboard_polish10.js?v=__ASSET_VERSION__"></script>
 <script src="/assets/dashboard_notifications.js?v=__ASSET_VERSION__"></script>
 <script src="/assets/dashboard_household_devices.js?v=__ASSET_VERSION__"></script>
+<script src="/assets/dashboard_cameras.js?v=__ASSET_VERSION__"></script>
 <script src="/assets/dashboard_tplink_provider.js?v=__ASSET_VERSION__"></script>
 <script src="/assets/dashboard_device_health.js?v=__ASSET_VERSION__"></script>
 <script src="/assets/dashboard_automation.js?v=__ASSET_VERSION__"></script>

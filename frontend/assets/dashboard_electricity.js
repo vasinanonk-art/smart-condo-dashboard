@@ -17,6 +17,9 @@
     reconciliationSaving: false,
     billEntryOpen: false,
     history: null,
+    cycleHistory: null,
+    cycleHistoryLoading: false,
+    cycleHistoryError: null,
     range: '24h',
     live: [],
     lastKey: null,
@@ -186,8 +189,29 @@
   }
 
   async function loadBilling() {
-    try { state.billing = await window.get('/api/electricity/billing-cycle?range=current_billing_cycle'); }
+    try { state.billing = await window.get('/api/electricity/billing-cycle?range=current_billing_cycle'); await loadCycleHistory(); }
     catch (error) { console.error('Electricity billing failed', {name: error?.name || 'Error'}); }
+  }
+
+  async function loadCycleHistory() {
+    const start = Number(state.billing?.billing_period_start);
+    const end = Number(state.billing?.billing_period_end);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+    state.cycleHistoryLoading = true;
+    state.cycleHistoryError = null;
+    try {
+      const query = new URLSearchParams({
+        start: new Date(start * 1000).toISOString(),
+        end: new Date(Math.min(end, Date.now() / 1000) * 1000).toISOString(),
+        bucket: 'day',
+      });
+      state.cycleHistory = await window.get(`/api/electricity/history?${query.toString()}`);
+    } catch (error) {
+      state.cycleHistory = null;
+      state.cycleHistoryError = 'Daily cycle history is unavailable.';
+    } finally {
+      state.cycleHistoryLoading = false;
+    }
   }
 
   async function loadReconciliation() {
@@ -578,6 +602,31 @@
     </section>`;
   }
 
+  function cycleDailyChart() {
+    const points = Array.isArray(state.cycleHistory?.points) ? state.cycleHistory.points : [];
+    const valid = points.map(point => ({
+      ...point,
+      energy: number(point.energy_kwh),
+      date: localDate(point.timestamp),
+    })).filter(point => point.energy !== null);
+    const today = bangkokToday();
+    const average = valid.length ? valid.reduce((sum, point) => sum + point.energy, 0) / valid.length : null;
+    if (state.cycleHistoryLoading) return '<section class="electricity-cycle-chart"><div class="electricity-section-head"><div><h2>Daily Energy Usage — Current Billing Cycle</h2><small>Loading daily power-integrated usage…</small></div></div><div class="electricity-empty electricity-loading">Loading daily cycle history…</div></section>';
+    if (!valid.length) return `<section class="electricity-cycle-chart"><div class="electricity-section-head"><div><h2>Daily Energy Usage — Current Billing Cycle</h2><small>${safe(state.cycleHistoryError || 'No daily cycle data is available.')}</small></div></div><div class="electricity-empty">No daily cycle data is available.</div></section>`;
+    const width = 900, height = 260, left = 42, right = 18, top = 26, bottom = 42;
+    const max = Math.max(1, ...valid.map(point => point.energy));
+    const slot = (width - left - right) / Math.max(1, valid.length);
+    const barWidth = Math.max(6, slot * .68);
+    const bars = valid.map((point, index) => {
+      const x = left + index * slot + (slot - barWidth) / 2;
+      const barHeight = Math.max(2, point.energy / max * (height - top - bottom));
+      const y = height - bottom - barHeight;
+      const isToday = thailandDate(new Date(epoch(point.timestamp) * 1000)) === today;
+      return `<g class="cycle-day-bar${isToday ? ' today' : ''}"><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" rx="4"><title>${safe(point.date)}: ${point.energy.toFixed(2)} kWh${isToday ? ' (partial day)' : ''}</title></rect><text x="${(x + barWidth / 2).toFixed(1)}" y="${height - 20}" text-anchor="middle">${safe(point.date)}</text></g>`;
+    }).join('');
+    return `<section class="electricity-cycle-chart"><div class="electricity-section-head"><div><h2>Daily Energy Usage — Current Billing Cycle</h2><small>${valid.length} day${valid.length === 1 ? '' : 's'} shown · power integration</small></div><span class="electricity-cycle-average">Average ${average.toFixed(2)} kWh/day</span></div><svg class="electricity-cycle-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily energy usage for the current billing cycle"><line class="cycle-chart-axis" x1="${left}" y1="${height - bottom}" x2="${width - right}" y2="${height - bottom}"/>${bars}</svg><div class="electricity-cycle-chart-legend"><span><i></i>Daily usage</span><span class="today-key">Today is partial</span></div></section>`;
+  }
+
   function dailySummaryCards() {
     const comparison = state.comparison || {};
     const current = comparison.current || {};
@@ -661,6 +710,7 @@
     const usageAvailable = calculatedUsage !== null && coverageStatus !== 'unavailable';
     const coverageWarning = incompleteCoverage ? `Partial data${coveragePercent === null ? '' : ` · ${coveragePercent.toFixed(2)}% coverage`}` : '';
     const comparisonWarning = incompleteCoverage ? '<small class="electricity-reconciliation-warning">Based on partial dashboard data</small>' : '';
+    const unavailableValue = coverageStatus === 'unavailable' ? 'Not available' : '—';
     const paidAt = record.paid_at ? localTime(record.paid_at) : null;
     const hasActual = actualBill !== null || actualUsage !== null;
     return `<section class="electricity-reconciliation"><div class="electricity-section-head"><div><h2>Bill Reconciliation</h2><small>Latest closed billing cycle · separate from live current-cycle values</small></div></div>
@@ -669,14 +719,14 @@
       <section class="electricity-comparison-group" aria-label="Energy usage reconciliation"><h3>Energy Usage</h3><dl class="electricity-reconciliation-grid">
         <div><dt>Dashboard</dt><dd>${usageAvailable ? `${safe(calculatedUsage.toFixed(2))} kWh` : 'Not available'}${coverageWarning ? `<small class="electricity-reconciliation-warning">${safe(coverageWarning)}</small>` : ''}</dd></div>
         <div><dt>MEA Actual</dt><dd>${actualUsage === null ? 'Not entered' : `${safe(actualUsage.toFixed(2))} kWh`}</dd></div>
-        <div><dt>Difference</dt><dd>${actualUsage === null || !usageAvailable ? '—' : safe(signedUsage(record.usage_difference_kwh))}${actualUsage !== null && usageAvailable ? comparisonWarning : ''}</dd></div>
-        <div><dt>Variance</dt><dd>${actualUsage === null || !usageAvailable ? '—' : safe(signedPercent(record.usage_variance_percent))}${actualUsage !== null && usageAvailable ? comparisonWarning : ''}</dd></div>
+        <div><dt>Difference</dt><dd>${actualUsage === null || !usageAvailable ? unavailableValue : safe(signedUsage(record.usage_difference_kwh))}${actualUsage !== null && usageAvailable ? comparisonWarning : ''}</dd></div>
+        <div><dt>Variance</dt><dd>${actualUsage === null || !usageAvailable ? unavailableValue : safe(signedPercent(record.usage_variance_percent))}${actualUsage !== null && usageAvailable ? comparisonWarning : ''}</dd></div>
       </dl>${incompleteCoverage ? '<p class="electricity-comparison-note">Based on partial dashboard data</p>' : ''}</section>
       <section class="electricity-comparison-group" aria-label="Bill amount reconciliation"><h3>Bill Amount</h3><dl class="electricity-reconciliation-grid">
         <div><dt>Dashboard</dt><dd>${billAvailable ? safe(money(calculatedBill)) : 'Not available'}${coverageWarning ? `<small class="electricity-reconciliation-warning">${safe(coverageWarning)}</small>` : ''}</dd></div>
         <div><dt>MEA Actual</dt><dd>${actualBill === null ? 'Not entered' : safe(money(actualBill))}</dd></div>
-        <div><dt>Difference</dt><dd>${actualBill === null || !billAvailable ? '—' : safe(signedMoney(record.difference_amount))}${actualBill !== null && billAvailable ? comparisonWarning : ''}</dd></div>
-        <div><dt>Variance</dt><dd>${actualBill === null || !billAvailable ? '—' : safe(signedPercent(record.difference_percent))}${actualBill !== null && billAvailable ? comparisonWarning : ''}</dd></div>
+        <div><dt>Difference</dt><dd>${actualBill === null || !billAvailable ? unavailableValue : safe(signedMoney(record.difference_amount))}${actualBill !== null && billAvailable ? comparisonWarning : ''}</dd></div>
+        <div><dt>Variance</dt><dd>${actualBill === null || !billAvailable ? unavailableValue : safe(signedPercent(record.difference_percent))}${actualBill !== null && billAvailable ? comparisonWarning : ''}</dd></div>
       </dl>${incompleteCoverage ? '<p class="electricity-comparison-note">Based on partial dashboard data</p>' : ''}</section>
       <div class="electricity-payment-summary"><div><span>Due Date</span><strong>${safe(formatDateOnly(record.due_date, {year:true}))}</strong><span class="electricity-payment-badge ${safe(status.cls)}">${safe(status.label)}</span></div><div><span>Payment Status</span><strong>${safe(record.payment_status === 'paid' ? 'Paid' : 'Unpaid')}</strong>${paidAt ? `<small>${safe(paidAt)}</small>` : ''}</div></div>
       ${state.billEntryOpen ? `<form class="electricity-bill-entry" data-reconciliation-form><label>Actual MEA Usage (kWh)<input name="actual_usage_kwh" inputmode="decimal" type="number" min="0" max="1000000" step="0.0001" value="${actualUsage === null ? '' : safe(actualUsage.toFixed(4))}"></label><label>Actual MEA Bill (THB)<input name="actual_bill_amount" inputmode="decimal" type="number" min="0" step="0.01" value="${actualBill === null ? '' : safe(actualBill.toFixed(2))}"></label><div><button class="btn primary" type="submit" ${state.reconciliationSaving ? 'disabled' : ''}>${state.reconciliationSaving ? 'Saving…' : 'Save Actual Bill'}</button><button class="btn ghost" type="button" data-reconciliation-cancel>Cancel</button></div></form>` : ''}
@@ -754,11 +804,11 @@
     const coverage = billing?.coverage || {};
     if (!billing?.billing_period_label) return '';
     if (coverage.coverage_complete || coverage.complete) {
-      return `<div class="electricity-history-coverage complete"><strong>Billing period:</strong> ${safe(billing.billing_period_label)}</div>`;
+      return `<details class="electricity-history-coverage-details"><summary>Coverage: complete</summary><div class="electricity-history-coverage complete"><strong>Billing period:</strong> ${safe(billing.billing_period_label)}</div></details>`;
     }
     const actualFrom = coverage.calculation_from_ts || coverage.actual_from_ts;
     const actualTo = coverage.calculation_to_ts || coverage.actual_to_ts;
-    return `<div class="electricity-history-coverage partial"><strong>Incomplete billing data</strong><small>Requested billing period: ${safe(billing.billing_period_label)}</small><small>Calculated from available data: ${safe(localTime(actualFrom))} – ${safe(localTime(actualTo))}</small><small>Coverage: ${safe(Number(coverage.coverage_percent || 0).toFixed(1))}%</small></div>`;
+    return `<details class="electricity-history-coverage-details"><summary>Coverage: incomplete</summary><div class="electricity-history-coverage partial"><strong>Incomplete billing data</strong><small>Requested billing period: ${safe(billing.billing_period_label)}</small><small>Calculated from available data: ${safe(localTime(actualFrom))} – ${safe(localTime(actualTo))}</small><small>Coverage: ${safe(Number(coverage.coverage_percent || 0).toFixed(1))}%</small></div></details>`;
   }
 
   function download(blob, name) {
@@ -863,6 +913,7 @@
 
     host.innerHTML = `
       ${summaryCards()}
+      ${cycleDailyChart()}
       ${dailySummaryCards()}
       ${reconciliationPanel()}
       ${state.comparisonError ? `<div class="electricity-history-message error">${safe(state.comparisonError)}</div>` : ''}
@@ -891,14 +942,15 @@
         <div class="electricity-primary-grid">${metric('Voltage', payload.voltage, 'V')}${metric('Current', payload.current, 'A')}${metric('Active Power', payload.power, 'W')}${metric('Total Energy', payload.total_energy, 'kWh')}</div>
         <div class="electricity-secondary-grid">${metric('Status / Health', healthName(payload.health, payload), '', true)}${metric('Last Update', localTime(payload.last_update || diagnostics.last_success), '', true)}${metric('Runtime IP', runtimeIp, '', true)}${metric('Poll Latency', pollLatency, pollLatency == null ? '' : 'ms', true)}${metric('Data Source', sourceName(source), '', true)}</div>
       </details>
-      <section class="electricity-cost-card">
+      <details class="electricity-cost-card electricity-collapsible">
+        <summary>Billing Estimate Details</summary>
         <div class="card-head"><div><h2>Billing Estimate Details</h2><small>Billing cycle cuts on day ${safe(billing.billing_cycle_day || 2)} of each month</small></div></div>
         ${billingCoverageWarning(billing)}
         ${!tariff.valid || billing.configured === false ? tariffEmpty() : `
           <div class="electricity-billing-breakdown">${[['Energy charge', billing.base_energy_charge], ['Ft', billing.ft_charge], ['Service charge', billing.service_charge], ['VAT', billing.vat], ['Total for available data', billing.actual_partial_cost ?? billing.total]].map(([label, value]) => `<div><span>${label}</span><strong>${value == null ? 'Not available' : `${Number(value).toFixed(2)} THB`}</strong></div>`).join('')}</div>
           <div class="electricity-note">${safe(tariff.tariff_name || billing.tariff_name || 'Configured tariff')} · ${safe(tariff.effective_date || billing.effective_date || 'No effective date')} · Source: ${safe(sync.source || 'manual')} · ${safe(sync.status || 'manual_update_required')} · Estimated from configured tariff. This is not an official utility invoice.</div>
         `}
-      </section>
+      </details>
       <details class="electricity-diagnostics"><summary>Advanced Diagnostics</summary><div class="electricity-diagnostics-grid">${safeDiag.map(key => `<div class="electricity-diagnostic"><span>${safe(key)}</span><strong>${safe(key.includes('_ts') || key === 'last_success' ? localTime(diagnostics[key]) : diagnostics[key] ?? 'Not available')}</strong></div>`).join('')}</div></details>`;
     bind();
     bindReconciliation();
@@ -976,7 +1028,7 @@
   window.DashboardElectricityHistory = {
     state, historyRequest, csvExport, axisLabelStride, splitSegments,
     movingAverage, analyticsStatistics, tooltipContent, bucketLabel,
-    summaryCards, dailySummaryCards, reconciliationPanel, dueState,
+    summaryCards, cycleDailyChart, dailySummaryCards, reconciliationPanel, dueState,
     reconciliationRequest,
   };
   window.DashboardElectricityBilling = {

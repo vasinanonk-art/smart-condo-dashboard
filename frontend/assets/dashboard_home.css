@@ -233,6 +233,16 @@ html[data-dashboard-page="overview"] .sc-dashboard-shell .sc-top-bar {
 .sc-dashboard-shell .mobile-nav.sc-bottom-navigation button:active {
   transform: none;
 }
+.home-action-required{margin:0 0 16px}
+.home-action-state{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid var(--line);border-radius:16px;background:#101925}
+.home-action-state strong{display:block;font-size:15px}.home-action-state span,.home-action-state small{display:block;color:var(--muted);font-size:12px;margin-top:3px}
+.home-action-state.healthy{border-color:rgba(53,208,127,.28);background:rgba(53,208,127,.06)}.home-action-state.healthy strong{color:var(--green)}
+.home-action-state.warning{border-color:rgba(240,189,79,.42);background:rgba(240,189,79,.07)}.home-action-state.warning strong{color:var(--yellow)}
+.home-action-state ul{display:flex;flex-wrap:wrap;gap:6px 18px;margin:0;padding-left:18px;color:#f2d894;font-size:12px}.home-action-state li{min-width:150px}
+.home-details{margin-top:16px;border-top:1px solid var(--line)}.home-details>summary{cursor:pointer;padding:14px 2px;color:#c8d3df;font-size:13px;font-weight:800}.home-details[open]>summary{margin-bottom:2px}.home-details .home-dashboard-grid{margin-top:0}
+.dangerous-action{box-shadow:0 0 0 1px rgba(255,100,100,.24)}
+.system-advanced>summary{cursor:pointer;color:#eef4fa;font-weight:850}.system-advanced[open]>summary{margin-bottom:14px}
+@media(max-width:640px){.home-action-state{align-items:flex-start;flex-direction:column}.home-action-state ul{display:grid;grid-template-columns:1fr;gap:5px}.home-action-state li{min-width:0}}
 
 #homeHero {
   grid-template-areas: "copy health";

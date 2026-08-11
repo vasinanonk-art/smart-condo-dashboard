@@ -85,6 +85,26 @@
     return parts.length ? parts.join(' · ') : 'Waiting for live home data';
   }
 
+  function actionRequired(state) {
+    const items = [];
+    if (state.health?.mqtt_connected === false) items.push('Network is offline');
+    if (state.sonoffAvailable === false) items.push('Lighting service is unavailable');
+    if (state.air?.configured === false) items.push('Air quality is unavailable');
+    if (state.air?.living_room?.stale === true) items.push('Living-room air reading is stale');
+    (state.cameras || []).forEach(camera => {
+      const name = camera.name || camera.display_name || camera.id || 'Camera';
+      if (camera.online === false) items.push(`${name} is offline`);
+      else if (camera.online === true && camera.unavailable_reason) items.push(`${name} has limited availability`);
+    });
+    const host = element('homeActionRequired');
+    if (!host) return;
+    if (!items.length) {
+      host.innerHTML = '<div class="home-action-state healthy"><strong>All systems look healthy</strong><span>No action is required right now.</span></div>';
+      return;
+    }
+    host.innerHTML = `<div class="home-action-state warning"><div><strong>Action Required</strong><span>${items.length} item${items.length === 1 ? '' : 's'} need attention</span></div><ul>${items.slice(0, 5).map(item => `<li>${safeText(item)}</li>`).join('')}</ul>${items.length > 5 ? `<small>+${items.length - 5} more in System</small>` : ''}</div>`;
+  }
+
   function energyPoints() {
     const points = window.DashboardElectricityHistory?.state?.history?.points;
     return Array.isArray(points) ? points : [];
@@ -332,6 +352,7 @@
     }
     const metrics = element('overviewMetrics');
     if (metrics) metrics.innerHTML = metricCards(state);
+    actionRequired(state);
     const summary = energySummary();
     const total = number(summary.total_energy_kwh);
     const cost = number(summary.total_cost_thb);
@@ -380,6 +401,7 @@
   window.SmartCondoHome = Object.freeze({
     greeting,
     systemStatus,
+    actionRequired,
     todaySummary,
     organizeUtilityBar,
     drawEnergyChart,
