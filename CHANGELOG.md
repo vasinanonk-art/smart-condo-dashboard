@@ -2,7 +2,16 @@
 
 ## [Unreleased]
 
-No changes after v1.0.7.
+No changes after v1.0.8.
+
+## [1.0.8] - 2026-08-11
+
+### Daily comparison semantics
+
+- Treat zero or sub-resolution yesterday baselines as not comparable instead
+  of displaying misleading extreme percentages.
+- Preserve normal increases and decreases while leaving billing, tariff,
+  projection, reconciliation, and history calculations unchanged.
 
 ## [1.0.7] - 2026-08-11
 
