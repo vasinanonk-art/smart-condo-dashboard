@@ -4,14 +4,21 @@
   window.__dashboardCamerasInstalled = true;
 
   const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
+  const reasonText = reason => ({
+    read_only_provider_unavailable: 'Camera provider is not available.',
+    provider_unavailable: 'Camera provider is not available.',
+    configuration_unavailable: 'Camera configuration is not available.',
+    not_configured: 'Camera is not configured.'
+  }[reason] || String(reason || '').replaceAll('_', ' '));
   const status = camera => {
-    if (camera?.online === false) return {label:'Offline', cls:'critical'};
     if (camera?.online === true) {
       const capabilities = camera.capabilities || {};
       return camera.unavailable_reason || (!capabilities.snapshot && !capabilities.live_stream)
-        ? {label:'Warning', cls:'warning'} : {label:'Online', cls:'success'};
+        ? {label:'Attention', cls:'warning'} : {label:'Online', cls:'success'};
     }
-    return camera?.unavailable_reason ? {label:'Unavailable', cls:'warning'} : {label:'Unknown', cls:'neutral'};
+    if (camera?.unavailable_reason) return {label:'Unavailable', cls:'warning'};
+    if (camera?.online === false) return {label:'Offline', cls:'critical'};
+    return {label:'Unknown', cls:'neutral'};
   };
 
   function install() {
@@ -40,7 +47,7 @@
     const unavailable = camera.online !== true || current.label === 'Unavailable';
     const snapshot = capabilities.snapshot && camera.online === true
       ? `<img class="camera-latest-snapshot" loading="lazy" src="/api/camera-control/${id}/snapshot" alt="Latest snapshot from ${safe(camera.name || camera.display_name || 'camera')}">`
-      : `<div class="camera-snapshot-unavailable"><strong>${unavailable ? current.label : 'Snapshot unavailable'}</strong>${camera.unavailable_reason ? `<span>${safe(camera.unavailable_reason)}</span>` : ''}</div>`;
+      : `<div class="camera-snapshot-unavailable"><strong>${unavailable ? current.label : 'Snapshot unavailable'}</strong>${camera.unavailable_reason ? `<span>${safe(reasonText(camera.unavailable_reason))}</span>` : ''}</div>`;
     const actions = [
       capabilities.snapshot && camera.online === true ? `<button class="btn primary" data-camera-snapshot="${id}">Snapshot</button>` : '',
       capabilities.live_stream && camera.online === true ? `<button class="btn ghost" data-camera-live="${id}">Live View</button>` : '',

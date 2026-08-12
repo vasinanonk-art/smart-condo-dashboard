@@ -359,11 +359,11 @@
     const historyState = window.DashboardElectricityHistory?.state?.history || {};
     const rangeLabel = historyState.range === '24h' ? 'Last 24 hours'
       : historyState.range === '7d' ? 'Last 7 days'
-        : historyState.range === '30d' ? 'Last 30 days' : 'Selected period';
+        : historyState.range === '30d' ? 'Last 30 days' : 'Last 24 hours';
     const resolutionLabel = historyState.bucket === '30m' ? '30-minute intervals'
       : historyState.bucket === '15m' ? '15-minute intervals'
         : historyState.bucket === 'hour' ? 'Hourly intervals'
-          : historyState.bucket === '3h' ? '3-hour intervals' : 'Selected resolution';
+          : historyState.bucket === '3h' ? '3-hour intervals' : '30-minute intervals';
     const energyHeader = element('homeEnergyHeader');
     if (energyHeader) {
       energyHeader.innerHTML = ui.widgetHeader({

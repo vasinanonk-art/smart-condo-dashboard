@@ -27,7 +27,7 @@ def test_home_action_required_and_healthy_state_exist_before_details():
 def test_camera_view_uses_existing_api_and_capability_gates_actions():
     assert 'data-page="camera"' in CAMERAS
     assert "camera-control/devices" in CAMERAS
-    assert "Online" in CAMERAS and "Warning" in CAMERAS and "Offline" in CAMERAS and "Unavailable" in CAMERAS
+    assert "Online" in CAMERAS and "Attention" in CAMERAS and "Offline" in CAMERAS and "Unavailable" in CAMERAS
     assert "capabilities.snapshot" in CAMERAS
     assert "capabilities.live_stream" in CAMERAS
     assert "camera-advanced" in CAMERAS

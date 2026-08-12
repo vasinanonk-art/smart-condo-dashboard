@@ -379,20 +379,22 @@ function extractTvState(payload) {
 }
 function tvStatusLabel() {
   const tv = S.tv.lastValid;
-  if (!tv) return {label:'Offline', online:false};
-  const raw = String(tv.power ?? '').toLowerCase();
-  const online = !['off','false','0','offline','unknown',''].includes(raw);
-  return {label:online?'Online':'Offline',online};
+  if (!tv) return {label:'Unknown', online:null};
+  const connection = String(tv.connection_state || '').toLowerCase();
+  if (tv.online === true || tv.reachable === true || connection === 'connected') return {label:'Online', online:true};
+  if (tv.online === false || tv.reachable === false || ['offline','disconnected','unreachable'].includes(connection)) return {label:'Offline', online:false};
+  if (['on','true','1','online'].includes(String(tv.power ?? '').toLowerCase())) return {label:'Online', online:true};
+  return {label:'Unknown', online:null};
 }
 function renderEntertainment() {
   const host = $('tvButtons'); if (!host) return;
   const status = tvStatusLabel(), tv = S.tv.lastValid;
-  host.innerHTML = `<div class="tv-status-card"><div><strong>LG TV</strong><div class="device-meta">${status.online?'Online':'Offline'}${tv?.app?` · ${safeText(tv.app)}`:''}${tv?.volume!==undefined?` · Volume ${safeText(tv.volume)}`:''}${tv?.mute!==undefined?` · ${tv.mute?'Muted':'Sound on'}`:''}</div></div><span class="status-pill ${status.online?'ok':''}">${status.label}</span></div><div class="tv-command-grid">${TV_COMMANDS.map(([label,command]) => `<button class="btn ${command==='power_off'?'danger':command==='power_on'?'primary':'ghost'}" data-tv-command="${command}">${safeText(label)}</button>`).join('')}</div>`;
+  host.innerHTML = `<div class="tv-status-card"><div><strong>LG TV</strong><div class="device-meta">${status.label}${tv?.app?` · ${safeText(tv.app)}`:''}${tv?.volume!==undefined?` · Volume ${safeText(tv.volume)}`:''}${tv?.mute!==undefined?` · ${tv.mute?'Muted':'Sound on'}`:''}</div></div><span class="status-pill ${status.online===true?'ok':status.online===false?'bad':'muted'}">${status.label}</span></div><div class="tv-command-grid">${TV_COMMANDS.map(([label,command]) => `<button class="btn ${command==='power_off'?'danger':command==='power_on'?'primary':'ghost'}" data-tv-command="${command}">${safeText(label)}</button>`).join('')}</div>`;
   host.querySelectorAll('[data-tv-command]').forEach(button => button.onclick = () => tv(button.dataset.tvCommand));
 }
 async function tv(command) { try { await post('/api/command',{cmd:command}); toast(`TV: ${command}`); } catch (error) { toast(error.message); } }
 
-function sonoffCloudStatus() { if (!S.sonoffAvailable) return {label:'Offline',cls:'bad'}; if (S.sonoff.config_loaded===false) return {label:'Not configured',cls:'warn'}; if (S.sonoff.config_loaded===true&&S.sonoff.auth_status==='authenticated') return {label:'Connected',cls:'ok'}; if (S.sonoff.config_loaded===true) return {label:'Authentication issue',cls:'bad'}; return {label:'Offline',cls:'bad'}; }
+function sonoffCloudStatus() { if (S.sonoffAvailable===false) return {label:'Unavailable',cls:'warn'}; if (S.sonoff.config_loaded===false) return {label:'Unavailable',cls:'warn'}; if (S.sonoff.config_loaded===true&&S.sonoff.auth_status==='authenticated') return {label:'Online',cls:'ok'}; if (S.sonoff.config_loaded===true) return {label:'Attention',cls:'warn'}; return {label:'Unknown',cls:'muted'}; }
 function renderSystem() {
   const data = S.system, history = data.history || {}, cloud = sonoffCloudStatus(), safeError = S.sonoff.last_error || S.sonoffError;
   const required = [];

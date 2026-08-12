@@ -5,6 +5,7 @@
 
   const PAGE_CHROME = Object.freeze({
     overview: {title: 'Overview', subtitle: 'Live condo controls and status'},
+    devices: {title: 'Devices', subtitle: 'Device availability and control destinations'},
     lighting: {title: 'Lighting', subtitle: 'Lighting control'},
     climate: {title: 'PM2.5 & Air Quality', subtitle: 'Indoor air quality'},
     entertainment: {title: 'Entertainment', subtitle: 'TV and remote control'},
@@ -15,7 +16,8 @@
     camera: {title: 'Cameras', subtitle: 'Camera availability and viewing'},
     history: {title: 'Electricity History', subtitle: 'History coverage and maintenance'},
     automation: {title: 'Automation', subtitle: 'Rule validation and safe simulation'},
-    settings: {title: 'Settings', subtitle: 'Dashboard configuration and maintenance'}
+    settings: {title: 'Settings', subtitle: 'Dashboard configuration and maintenance'},
+    more: {title: 'More', subtitle: 'System information and dashboard tools'}
   });
 
   function applyPageChrome(page) {
