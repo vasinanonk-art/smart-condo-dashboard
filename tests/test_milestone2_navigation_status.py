@@ -24,6 +24,8 @@ def test_primary_navigation_has_exactly_five_shared_destinations():
     assert nav_routes(desktop) == expected
     assert nav_routes(mobile) == expected
     assert "installPrimaryNavigation()" in M2
+    assert "PRIMARY_ROUTES.map" in M2
+    assert 'data-nav="history"' not in (ROOT / "frontend/assets/dashboard_polish10.js").read_text()
 
 
 def test_more_and_devices_landings_link_to_preserved_routes():
@@ -92,6 +94,30 @@ def test_responsive_navigation_has_no_horizontal_rail():
     for width in (1024, 768, 390):
         assert f"@media(max-width:{width}px)" in M2_CSS
     assert "grid-template-columns:minmax(0,1fr)" in M2_CSS
+    assert "@media(max-width:480px)" in M2_CSS
+    assert "calc(118px + env(safe-area-inset-bottom))" in M2_CSS
+    assert "min-height:44px" in M2_CSS
+    assert "touch-action:manipulation" in M2_CSS
+
+
+def test_mobile_primary_icons_are_inline_and_top_actions_are_not_blank():
+    assert M2.count('class="primary-nav-icon"') == 5
+    assert M2.count('<svg class="primary-nav-icon"') == 5
+    assert "NAV_ICONS[route]" in M2
+    assert "data-lucide" not in M2[M2.index("const NAV_ICONS"):M2.index("function normalizeStatus")]
+    assert not re.search(r'https?://|cdn|unpkg', M2, re.I)
+    notifications = (ROOT / "frontend/assets/dashboard_notifications.js").read_text()
+    assert 'aria-label\', \'Notifications' in notifications
+    assert 'class="top-action-icon"' in notifications
+    topbar = re.search(r'<header class="topbar.*?</header>', INDEX, re.S).group(0)
+    assert 'aria-label="Refresh dashboard"' in topbar
+    assert 'aria-label="More dashboard options"' in topbar
+    assert topbar.count('class="top-action-icon"') == 2
+
+
+def test_grouped_routes_mark_more_as_current():
+    assert "history: 'more'" in M2
+    assert "button.setAttribute('aria-current', 'page')" in M2
 
 
 def test_milestone_asset_loads_after_dynamic_route_installers():

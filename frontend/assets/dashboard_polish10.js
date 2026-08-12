@@ -23,9 +23,7 @@
   }
 
   function ensureHistoryPage(){
-    document.querySelectorAll('.nav,.mobile-nav').forEach(host=>{if(host.querySelector('[data-nav="history"]'))return;const b=document.createElement('button');b.dataset.nav='history';b.dataset.short='HS';b.textContent='History';const settings=host.querySelector('[data-nav="settings"]');settings?host.insertBefore(b,settings):host.appendChild(b);});
     if(!document.querySelector('[data-page="history"]')){const section=document.createElement('section');section.className='page';section.dataset.page='history';section.innerHTML='<div id="historyPage" class="polish-page"></div>';document.querySelector('.main')?.appendChild(section);}
-    document.querySelectorAll('[data-nav="history"]').forEach(button=>button.onclick=()=>window.nav('history'));
   }
 
   function normalizeTimezoneLabels(){

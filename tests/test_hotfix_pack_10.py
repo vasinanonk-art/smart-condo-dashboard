@@ -66,7 +66,8 @@ class HotfixPack10Tests(unittest.TestCase):
             "Bangkok (UTC+7)",
         ):
             self.assertIn(text, js)
-        self.assertIn("data-nav=\"history\"", js)
+        self.assertNotIn("data-nav=\"history\"", js)
+        self.assertIn("section.dataset.page='history'", js)
         notifications = (ROOT / "frontend" / "assets" / "dashboard_notifications.js").read_text(encoding="utf-8")
         self.assertIn("Mark all read", notifications)
         self.assertIn("Clear all", notifications)

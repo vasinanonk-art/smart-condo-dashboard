@@ -14,6 +14,13 @@
     offline: {label: 'Offline', tone: 'critical'}, unavailable: {label: 'Unavailable', tone: 'warning'},
     unknown: {label: 'Unknown', tone: 'neutral'}
   });
+  const NAV_ICONS = Object.freeze({
+    overview: '<svg class="primary-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-7h6v7"/></svg>',
+    devices: '<svg class="primary-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9h8M8 15h8"/><circle cx="6" cy="9" r=".5"/><circle cx="18" cy="15" r=".5"/></svg>',
+    electricity: '<svg class="primary-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-8 12h7l-1 8 8-12h-7z"/></svg>',
+    camera: '<svg class="primary-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"/><circle cx="12" cy="13" r="4"/></svg>',
+    more: '<svg class="primary-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>'
+  });
 
   function normalizeStatus({healthy, online, powered, available, attention, stale} = {}) {
     if (healthy === true) return STATUS.healthy;
@@ -43,7 +50,8 @@
 
   function installPrimaryNavigation() {
     const desktop = '<button data-nav="overview" data-short="HM">Home</button><button data-nav="devices" data-short="DV">Devices</button><button data-nav="electricity" data-short="EL">Electricity</button><button data-nav="camera" data-short="CM">Cameras</button><button data-nav="more" data-short="MR">More</button>';
-    const mobile = '<button data-nav="overview" aria-label="Home"><i data-lucide="house" aria-hidden="true"></i><span>Home</span></button><button data-nav="devices" aria-label="Devices"><i data-lucide="panels-top-left" aria-hidden="true"></i><span>Devices</span></button><button data-nav="electricity" aria-label="Electricity"><i data-lucide="zap" aria-hidden="true"></i><span>Electricity</span></button><button data-nav="camera" aria-label="Cameras"><i data-lucide="camera" aria-hidden="true"></i><span>Cameras</span></button><button data-nav="more" aria-label="More"><i data-lucide="menu" aria-hidden="true"></i><span>More</span></button>';
+    const labels = {overview:'Home', devices:'Devices', electricity:'Electricity', camera:'Cameras', more:'More'};
+    const mobile = PRIMARY_ROUTES.map(route => `<button data-nav="${route}" aria-label="${labels[route]}">${NAV_ICONS[route]}<span>${labels[route]}</span></button>`).join('');
     const desktopHost = document.querySelector('.sidebar .nav');
     const mobileHost = document.querySelector('.mobile-nav');
     if (desktopHost) desktopHost.innerHTML = desktop;
@@ -75,7 +83,12 @@
 
   function applyPrimaryState(page) {
     const active = ROUTE_GROUP[page] || 'more';
-    document.querySelectorAll('.nav [data-nav],.mobile-nav [data-nav]').forEach(button => button.classList.toggle('active', button.dataset.nav === active));
+    document.querySelectorAll('.nav [data-nav],.mobile-nav [data-nav]').forEach(button => {
+      const current = button.dataset.nav === active;
+      button.classList.toggle('active', current);
+      if (current) button.setAttribute('aria-current', 'page');
+      else button.removeAttribute('aria-current');
+    });
   }
 
   function normalizeSystemPresentation() {

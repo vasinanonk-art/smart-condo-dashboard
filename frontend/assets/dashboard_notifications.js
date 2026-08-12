@@ -60,7 +60,8 @@
     button.setAttribute('aria-haspopup', 'dialog');
     button.setAttribute('aria-expanded', 'false');
     button.setAttribute('aria-controls', 'notificationPanel');
-    button.innerHTML = 'Notifications <span id="notificationCount" class="household-notification-count" aria-label="Unread notifications" hidden>0</span>';
+    button.setAttribute('aria-label', 'Notifications');
+    button.innerHTML = '<svg class="top-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg><span class="top-action-label">Notifications</span><span id="notificationCount" class="household-notification-count" aria-label="Unread notifications" hidden>0</span>';
     row.prepend(button);
     const panel = document.createElement('aside');
     panel.id = 'notificationPanel';
