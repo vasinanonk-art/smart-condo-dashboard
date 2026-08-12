@@ -2,3 +2,4 @@
 @media(max-width:1024px){.device-category-grid,.more-destination-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:768px){.device-category-grid,.more-destination-grid{grid-template-columns:minmax(0,1fr)}.device-category-card{align-items:stretch;flex-direction:column}.device-category-card .btn{width:100%}}
 @media(max-width:390px){.mobile-nav button{padding-inline:2px}.mobile-nav button span{font-size:9px}.device-category-card,.more-destination-grid>button{padding:14px}}
+.more-group{display:grid;gap:10px;min-width:0}.more-group h2{margin:0;font-size:15px}

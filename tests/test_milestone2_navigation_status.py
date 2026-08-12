@@ -35,6 +35,9 @@ def test_more_and_devices_landings_link_to_preserved_routes():
     for route in ("lighting", "climate", "entertainment", "presence", "system"):
         assert f'data-page="{route}"' in INDEX
         assert f"{route}: '" in M2
+    assert "Household tools" in INDEX
+    assert "System and configuration" in INDEX
+    assert '<h2>Devices</h2>' not in M2
 
 
 def test_status_contract_and_lg_truthfulness():
@@ -47,6 +50,8 @@ def test_status_contract_and_lg_truthfulness():
     for key, (label, tone) in expected.items():
         assert f"{key}: {{label: '{label}', tone: '{tone}'}}" in M2
     assert "online === true && powered === false" in M2
+    assert "states.every(value => value === false)" in M2
+    assert "reachable(item) !== false" not in M2
     tv_status = V3[V3.index("function tvStatusLabel"):V3.index("function renderEntertainment")]
     assert "['off'" not in tv_status and "label:'Off'" not in tv_status
     assert "reachable" in tv_status and "connection_state" in tv_status

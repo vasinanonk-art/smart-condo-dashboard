@@ -34,6 +34,13 @@
     return undefined;
   }
 
+  function collectionReachability(items) {
+    const states = items.map(reachable);
+    if (states.includes(true)) return true;
+    if (states.length && states.every(value => value === false)) return false;
+    return undefined;
+  }
+
   function installPrimaryNavigation() {
     const desktop = '<button data-nav="overview" data-short="HM">Home</button><button data-nav="devices" data-short="DV">Devices</button><button data-nav="electricity" data-short="EL">Electricity</button><button data-nav="camera" data-short="CM">Cameras</button><button data-nav="more" data-short="MR">More</button>';
     const mobile = '<button data-nav="overview" aria-label="Home"><i data-lucide="house" aria-hidden="true"></i><span>Home</span></button><button data-nav="devices" aria-label="Devices"><i data-lucide="panels-top-left" aria-hidden="true"></i><span>Devices</span></button><button data-nav="electricity" aria-label="Electricity"><i data-lucide="zap" aria-hidden="true"></i><span>Electricity</span></button><button data-nav="camera" aria-label="Cameras"><i data-lucide="camera" aria-hidden="true"></i><span>Cameras</span></button><button data-nav="more" aria-label="More"><i data-lucide="menu" aria-hidden="true"></i><span>More</span></button>';
@@ -56,13 +63,13 @@
     const people = Object.values(state.presence || {});
     const tv = state.tv?.lastValid;
     const lightsStatus = state.sonoffAvailable === false ? normalizeStatus({available: false})
-      : normalizeStatus({online: lights.length ? lights.some(item => reachable(item) !== false) : undefined});
-    const climateStatus = normalizeStatus({online: climate.length ? climate.some(item => reachable(item) !== false) : undefined, available: state.air?.configured === false ? false : undefined});
+      : normalizeStatus({online: collectionReachability(lights)});
+    const climateStatus = normalizeStatus({online: collectionReachability(climate), available: state.air?.configured === false ? false : undefined});
     const tvPower = String(tv?.power ?? '').toLowerCase();
     const tvOnline = reachable(tv) ?? (['on', 'true', '1', 'online'].includes(tvPower) ? true : undefined);
     const tvStatus = normalizeStatus({online: tvOnline});
     const presenceStatus = normalizeStatus({online: people.length ? true : undefined, stale: people.some(item => String(item?.status || '').toLowerCase().includes('stale'))});
-    host.innerHTML = `<header class="devices-landing-head"><h2>Devices</h2><p>See what is available, its current state, and where to control it.</p></header><div class="device-category-grid">${deviceCategory({title:'Lights', route:'lighting', description:'Switches and lighting zones', count:`${lights.length} device${lights.length === 1 ? '' : 's'}`, status:lightsStatus})}${deviceCategory({title:'Climate', route:'climate', description:'Air conditioning and air quality', count:`${climate.length} control${climate.length === 1 ? '' : 's'}`, status:climateStatus})}${deviceCategory({title:'TV / Entertainment', route:'entertainment', description:'LG TV status and existing remote controls', count:'1 control destination', status:tvStatus})}${deviceCategory({title:'Presence', route:'presence', description:'Household presence and automation status', count:`${people.length} person${people.length === 1 ? '' : 's'}`, status:presenceStatus})}</div>`;
+    host.innerHTML = `<header class="devices-landing-head"><p>See what is available, its current state, and where to control it.</p></header><div class="device-category-grid">${deviceCategory({title:'Lights', route:'lighting', description:'Switches and lighting zones', count:`${lights.length} device${lights.length === 1 ? '' : 's'}`, status:lightsStatus})}${deviceCategory({title:'Climate', route:'climate', description:'Air conditioning and air quality', count:`${climate.length} control${climate.length === 1 ? '' : 's'}`, status:climateStatus})}${deviceCategory({title:'TV / Entertainment', route:'entertainment', description:'LG TV status and existing remote controls', count:'1 control destination', status:tvStatus})}${deviceCategory({title:'Presence', route:'presence', description:'Household presence and automation status', count:`${people.length} person${people.length === 1 ? '' : 's'}`, status:presenceStatus})}</div>`;
     host.querySelectorAll('[data-device-route]').forEach(button => { button.onclick = () => window.nav(button.dataset.deviceRoute); });
   }
 
