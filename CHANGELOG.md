@@ -2,7 +2,15 @@
 
 ## [Unreleased]
 
-No changes after v1.0.13.
+No changes after v1.0.14.
+
+## [1.0.14] - 2026-08-12
+
+### Mobile navigation
+
+- Keep primary navigation to five destinations and retain History under More.
+- Restore dependency-free navigation and top-action icons.
+- Prevent mobile label collisions and reserve safe-area space below page content.
 
 ## [1.0.13] - 2026-08-12
 
