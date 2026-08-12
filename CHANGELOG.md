@@ -2,7 +2,17 @@
 
 ## [Unreleased]
 
-No changes after v1.0.12.
+No changes after v1.0.13.
+
+## [1.0.13] - 2026-08-12
+
+### Navigation and status semantics
+
+- Simplify primary navigation to Home, Devices, Electricity, Cameras, and More
+  while preserving existing routes and controls.
+- Add Devices and grouped More landing views using existing frontend data.
+- Normalize user-facing availability states and clarify Home, Cameras,
+  Electricity, and System status presentation without changing backend logic.
 
 ## [1.0.12] - 2026-08-11
 
