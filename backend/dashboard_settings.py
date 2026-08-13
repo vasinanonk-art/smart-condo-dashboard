@@ -24,11 +24,13 @@ from fastapi.responses import JSONResponse
 from backend import app as app_module
 from backend import electricity_billing_cycle as billing_cycle
 from backend import electricity_history as history
+from backend.presence_identity import DEFAULT_IDENTITIES, validate_identities
 
 app = app_module.app
 DATA_DIR = Path(os.getenv("SMART_CONDO_DATA_DIR", str(Path.home() / ".smart-condo-dashboard"))).expanduser()
 SETTINGS_PATH = DATA_DIR / "settings.json"
 MAINTENANCE_PATH = DATA_DIR / "maintenance_state.json"
+PRESENCE_AUDIT_PATH = DATA_DIR / "presence_identity_audit.jsonl"
 IMPORT_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "import_electricity_history.py"
 _LOCK = threading.RLock()
 _STOP = threading.Event()
@@ -55,6 +57,7 @@ _DEFAULTS: Dict[str, Any] = {
     "dashboard": {
         "timezone": "Asia/Bangkok",
     },
+    "presence": {"people": DEFAULT_IDENTITIES},
     "maintenance": {
         "daily_hour": 3,
         "history_retention_days": 400,
@@ -163,7 +166,8 @@ def validate_settings(raw: Any) -> Dict[str, Any]:
     electricity = merged.get("electricity")
     dashboard = merged.get("dashboard")
     maintenance = merged.get("maintenance")
-    if not isinstance(electricity, Mapping) or not isinstance(dashboard, Mapping) or not isinstance(maintenance, Mapping):
+    presence = merged.get("presence")
+    if not isinstance(electricity, Mapping) or not isinstance(dashboard, Mapping) or not isinstance(maintenance, Mapping) or not isinstance(presence, Mapping):
         raise ValueError("invalid_settings_sections")
     day = int(_number(electricity.get("billing_cycle_day", 2), "billing_cycle_day", 1, 31))
     timezone = _validate_timezone(electricity.get("timezone"))
@@ -179,6 +183,7 @@ def validate_settings(raw: Any) -> Dict[str, Any]:
             "tariff": _validate_tariff(electricity.get("tariff") or {}),
         },
         "dashboard": {"timezone": dashboard_timezone},
+        "presence": {"people": validate_identities(presence.get("people"))},
         "maintenance": {
             "daily_hour": hour,
             "history_retention_days": retention,
@@ -234,6 +239,11 @@ def _apply_runtime(settings: Mapping[str, Any]) -> None:
 def save_settings(raw: Any) -> Dict[str, Any]:
     validated = validate_settings(raw)
     with _LOCK:
+        previous = load_settings()
+        identity_changed = previous["presence"]["people"] != validated["presence"]["people"]
+        if identity_changed:
+            import sonoff_client as presence_automation
+            presence_automation.reset_household_presence("presence_identity_changed")
         backup = _atomic_json_write(SETTINGS_PATH, validated, backup=True)
         try:
             _apply_runtime(validated)
@@ -241,7 +251,27 @@ def save_settings(raw: Any) -> Dict[str, Any]:
             if backup and backup.exists():
                 shutil.copy2(backup, SETTINGS_PATH)
             raise
+        if identity_changed:
+            _audit_presence_change(previous["presence"]["people"], validated["presence"]["people"])
     return validated
+
+
+def _audit_presence_change(old: Mapping[str, Any], new: Mapping[str, Any]) -> None:
+    PRESENCE_AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with PRESENCE_AUDIT_PATH.open("a", encoding="utf-8") as handle:
+        for person in ("beer", "seem"):
+            if old.get(person) == new.get(person):
+                continue
+            record = {
+                "timestamp": int(time.time()),
+                "person": person,
+                "old": {key: old.get(person, {}).get(key) for key in ("ip", "mac")},
+                "new": {key: new.get(person, {}).get(key) for key in ("ip", "mac")},
+            }
+            handle.write(json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(PRESENCE_AUDIT_PATH, 0o600)
 
 
 def _settings_tariff_config() -> tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -398,6 +428,29 @@ def put_settings(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         return {"ok": True, "settings": save_settings(payload)}
     except ValueError as exc:
         return JSONResponse({"ok": False, "detail": str(exc)}, status_code=422)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "detail": _safe_error(exc)}, status_code=500)
+
+
+@app.put("/api/settings/presence")
+def put_presence_settings(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    try:
+        settings = load_settings()
+        settings["presence"] = {"people": validate_identities(payload.get("people"))}
+        return {"ok": True, "settings": save_settings(settings)}
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "detail": str(exc)}, status_code=422)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "detail": _safe_error(exc)}, status_code=500)
+
+
+@app.get("/api/settings/presence/test/{person}")
+def test_presence_settings(person: str) -> Dict[str, Any]:
+    try:
+        from backend.presence_stabilizer import test_presence_identity
+        return {"ok": True, "person": person.lower(), "result": test_presence_identity(person.lower())}
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "detail": str(exc)}, status_code=404)
     except Exception as exc:
         return JSONResponse({"ok": False, "detail": _safe_error(exc)}, status_code=500)
 

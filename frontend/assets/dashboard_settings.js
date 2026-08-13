@@ -3,7 +3,7 @@
   if (window.__dashboardSettingsInstalled) return;
   window.__dashboardSettingsInstalled = true;
 
-  const state = {settings:null,maintenance:null,importStatus:null,activeSection:'electricity'};
+  const state = {settings:null,maintenance:null,importStatus:null,presenceStatus:null,presenceEvidence:null,activeSection:'electricity'};
   const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
   const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 
@@ -36,11 +36,15 @@
     const results = await Promise.allSettled([
       window.get('/api/settings'),
       window.get('/api/maintenance/status'),
-      window.get('/api/electricity/history/import/status')
+      window.get('/api/electricity/history/import/status'),
+      window.get('/api/dashboard/status'),
+      window.get('/api/presence')
     ]);
     if (results[0].status === 'fulfilled') state.settings = results[0].value;
     if (results[1].status === 'fulfilled') state.maintenance = results[1].value;
     if (results[2].status === 'fulfilled') state.importStatus = results[2].value;
+    if (results[3].status === 'fulfilled') state.presenceStatus = results[3].value?.automation || null;
+    if (results[4].status === 'fulfilled') state.presenceEvidence = results[4].value?.presence || null;
   }
 
   function tierRow(item = {}, index = 0) {
@@ -58,6 +62,15 @@
     return `<form id="dashboardSettingsForm" class="settings-form"><div class="settings-grid"><label>Dashboard Timezone<input name="timezone" type="text" required value="${safe(settings.timezone || 'Asia/Bangkok')}"></label></div><div class="settings-actions"><button class="btn primary" type="submit">Save Dashboard Settings</button></div></form>`;
   }
 
+  function renderPresence(settings) {
+    const people = settings.people || {}, diagnostics = state.presenceStatus?.people || {};
+    const cards = ['beer','seem'].map(person => {
+      const item = people[person] || {}, live = {...(state.presenceEvidence?.[person] || {}), ...(diagnostics[person] || {})};
+      return `<article class="presence-settings-card" data-presence-person="${person}"><header><h3>${safe(item.name || person)}</h3><p><strong>${safe(live.classification || 'UNKNOWN')}</strong> · Last seen ${safe(live.last_seen ? new Date(live.last_seen*1000).toLocaleString() : 'Not available')}</p></header><form class="presence-settings-form" data-presence-form="${person}"><label>IP Address<input name="ip" inputmode="decimal" required readonly value="${safe(item.ip || '')}"></label><label>MAC Address<input name="mac" autocapitalize="characters" required readonly value="${safe(item.mac || '')}"></label><details><summary>Technical evidence</summary><dl><dt>Source</dt><dd>${safe(live.source || 'Not available')}</dd><dt>Reason</dt><dd>${safe(live.reason || 'Not evaluated')}</dd></dl></details><div class="settings-actions"><button class="btn ghost" type="button" data-edit-presence="${person}">Edit</button><button class="btn primary" type="submit" hidden>Save</button><button class="btn ghost" type="button" data-test-presence="${person}">Test Presence</button></div><div class="settings-message" data-presence-message="${person}" hidden></div></form></article>`;
+    }).join('');
+    return `<div class="presence-settings-intro">Presence uses the configured phone identity and read-only network evidence. Missing or mismatched evidence remains Unknown.</div><div class="presence-settings-grid">${cards}</div>`;
+  }
+
   function formatImport(result) {
     if (!result || result.status === 'not_analyzed') return '<div class="settings-empty">History has not been analyzed yet.</div>';
     return `<div class="maintenance-result-grid"><div><span>Records scanned</span><strong>${safe(result.records_scanned ?? 0)}</strong></div><div><span>Candidate rows</span><strong>${safe(result.candidate_records ?? result.records_would_import ?? 0)}</strong></div><div><span>Duplicates</span><strong>${safe(result.duplicate_records ?? 0)}</strong></div><div><span>Estimated import</span><strong>${safe(result.records_would_import ?? 0)}</strong></div><div><span>Imported</span><strong>${safe(result.records_imported ?? 0)}</strong></div><div><span>Mode</span><strong>${safe(result.mode || (result.dry_run ? 'dry_run' : 'apply'))}</strong></div></div>`;
@@ -72,8 +85,8 @@
     const host = document.getElementById('settingsPage');
     if (!host) return;
     if (!state.settings) { host.innerHTML = '<div class="card"><div class="empty">Settings are not available.</div></div>'; return; }
-    const tabs = [['electricity','Electricity'],['dashboard','Dashboard'],['maintenance','Maintenance']];
-    const content = state.activeSection === 'electricity' ? renderElectricity(state.settings.electricity || {}) : state.activeSection === 'dashboard' ? renderDashboard(state.settings.dashboard || {}) : renderMaintenance(state.settings.maintenance || {});
+    const tabs = [['electricity','Electricity'],['dashboard','Dashboard'],['presence','Presence'],['maintenance','Maintenance']];
+    const content = state.activeSection === 'electricity' ? renderElectricity(state.settings.electricity || {}) : state.activeSection === 'dashboard' ? renderDashboard(state.settings.dashboard || {}) : state.activeSection === 'presence' ? renderPresence(state.settings.presence || {}) : renderMaintenance(state.settings.maintenance || {});
     host.innerHTML = `<div class="settings-tabs">${tabs.map(([key,label]) => `<button class="btn ghost ${state.activeSection===key?'active':''}" type="button" data-settings-section="${key}">${label}</button>`).join('')}</div><section class="card settings-card"><div class="card-head"><div><h2>${safe(tabs.find(item=>item[0]===state.activeSection)?.[1] || 'Settings')}</h2><small>Saved to ~/.smart-condo-dashboard/settings.json</small></div></div>${content}</section>`;
     bind();
   }
@@ -98,6 +111,24 @@
     const addTier = document.getElementById('addTariffTier');
     if (addTier) addTier.onclick = () => { document.getElementById('tariffTierList').insertAdjacentHTML('beforeend', tierRow({up_to_kwh:null,rate:0}, document.querySelectorAll('[data-tier-row]').length)); bindTierRemovers(); };
     bindTierRemovers();
+
+    document.querySelectorAll('[data-edit-presence]').forEach(button => button.onclick = () => {
+      const form=button.closest('[data-presence-form]'); form.querySelectorAll('input').forEach(input => input.readOnly=false); form.querySelector('[type="submit"]').hidden=false; button.hidden=true; form.querySelector('input')?.focus();
+    });
+
+    document.querySelectorAll('[data-presence-form]').forEach(form => form.onsubmit = async event => {
+      event.preventDefault();
+      const person=form.dataset.presenceForm, values=new FormData(form), people=JSON.parse(JSON.stringify(state.settings.presence?.people || {}));
+      people[person]={...people[person],ip:String(values.get('ip')||'').trim(),mac:String(values.get('mac')||'').trim()};
+      const box=document.querySelector(`[data-presence-message="${person}"]`);
+      try { const result=await jsonRequest('/api/settings/presence','PUT',{people}); state.settings=result.settings; box.hidden=false; box.className='settings-message success'; box.textContent='Saved. Household presence reset safely to Home.'; }
+      catch(error) { box.hidden=false; box.className='settings-message error'; box.textContent=error.message||'Save failed.'; }
+    });
+    document.querySelectorAll('[data-test-presence]').forEach(button => button.onclick = async () => {
+      const person=button.dataset.testPresence, box=document.querySelector(`[data-presence-message="${person}"]`);
+      try { const payload=await jsonRequest(`/api/settings/presence/test/${encodeURIComponent(person)}`,'GET'); const result=payload.result||{}; box.hidden=false; box.className='settings-message'; box.textContent=`${result.classification||'UNKNOWN'} — ${result.reason||'insufficient evidence'} (${result.source||'no source'})`; }
+      catch(error) { box.hidden=false; box.className='settings-message error'; box.textContent=error.message||'Test failed.'; }
+    });
 
     const electricityForm = document.getElementById('electricitySettingsForm');
     if (electricityForm) electricityForm.onsubmit = async event => {

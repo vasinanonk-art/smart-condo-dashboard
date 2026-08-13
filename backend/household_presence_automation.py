@@ -172,6 +172,15 @@ class HouseholdPresenceAutomation:
             snapshot["pending_remaining_seconds"] = max(0, AWAY_DWELL_SECONDS - elapsed) if pending_since else 0
             return snapshot
 
+    def reset_home(self, reason: str = "presence_identity_changed") -> dict[str, Any]:
+        with self._lock:
+            now = int(self.clock())
+            self.state = initial_state(now, mode=self.mode, intended_channels=self.intended_channels)
+            self.state["reason"] = reason
+            self.state["last_transition"] = {"from": "CONFIG_CHANGE", "to": HOME, "at": now}
+            self._save()
+            return self.snapshot()
+
     def _save(self) -> None:
         _atomic_write(self.state_path, self.state)
 

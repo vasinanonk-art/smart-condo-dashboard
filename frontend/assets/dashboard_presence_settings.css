@@ -1,0 +1,12 @@
+.presence-settings-intro{color:var(--muted);line-height:1.5}
+.presence-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.presence-settings-card{min-width:0;padding:16px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:#0c151f}
+.presence-settings-card h3,.presence-settings-card p{margin:0}
+.presence-settings-card p{margin-top:6px;color:var(--muted);font-size:12px}
+.presence-settings-form{display:grid;gap:13px;margin-top:16px}
+.presence-settings-form label{display:grid;gap:7px;font-size:12px;font-weight:800}
+.presence-settings-form input{width:100%;min-width:0;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#08131f;color:#eef5fb}
+.presence-settings-form details{overflow-wrap:anywhere}
+.presence-settings-form dl{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;color:var(--muted);font-size:12px}
+.presence-settings-form dd{margin:0;color:#eef5fb}
+@media(max-width:640px){.presence-settings-grid{grid-template-columns:1fr}.presence-settings-form .settings-actions .btn{flex:1 1 100%;justify-content:center}}

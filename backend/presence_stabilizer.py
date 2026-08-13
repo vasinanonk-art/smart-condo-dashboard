@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict
 
 from backend.household_presence_automation import classify_presence
+from backend.presence_identity import load_identities, normalize_mac
 
 GRACE_PERIOD_SEC = 180
 PING_TIMEOUT_SEC = 1
@@ -89,6 +90,17 @@ def _neighbor_state(ip: str | None) -> str:
         return "NONE"
 
 
+def _neighbor_mac(ip: str | None) -> str | None:
+    if not ip:
+        return None
+    try:
+        result = subprocess.run(["ip", "neigh", "show", ip], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=1.0)
+        match = re.search(r"\blladdr\s+([0-9a-f:]{17})\b", result.stdout or "", re.I)
+        return normalize_mac(match.group(1)) if match else None
+    except Exception:
+        return None
+
+
 def _ping(ip: str | None) -> bool:
     if not ip:
         return False
@@ -168,13 +180,20 @@ def _unknown(person: str, raw: Dict[str, Any], ip: str | None, reason: str, *, o
     return item
 
 
-def resolve_person(person: str, raw: Dict[str, Any] | None) -> Dict[str, Any]:
+def resolve_person(person: str, raw: Dict[str, Any] | None, identity: Dict[str, str] | None = None) -> Dict[str, Any]:
     raw = raw if isinstance(raw, dict) else {}
     previous = _presence_cache.get(person, {})
-    ip = _ip(raw, previous)
+    ip = identity.get("ip") if identity else _ip(raw, previous)
+    expected_mac = identity.get("mac") if identity else None
     mqtt_value = _mqtt_presence_value(raw)
     raw_ts = _payload_ts(raw)
     mqtt_fresh = _mqtt_is_fresh(raw_ts)
+
+    observed_mac = _neighbor_mac(ip)
+    if expected_mac and observed_mac and observed_mac != expected_mac:
+        item = _unknown(person, raw, ip, "identity_mismatch", online=True)
+        item.update({"expected_mac": expected_mac, "observed_mac": observed_mac, "source": "Neighbor mismatch", "classification": "UNKNOWN", "reason": "identity_mismatch"})
+        return item
 
     if mqtt_value is True and mqtt_fresh:
         return _finalize(person, raw, True, True, "MQTT", 100, raw_ts, ip)
@@ -206,10 +225,11 @@ def resolve_presence(raw_presence: Dict[str, Any] | None) -> Dict[str, Dict[str,
     people = set(PEOPLE)
     people.update(k for k, v in raw_presence.items() if isinstance(v, dict))
     resolved: Dict[str, Dict[str, Any]] = {}
+    identities = load_identities()
     for person in sorted(people):
         raw = raw_presence.get(person) if isinstance(raw_presence.get(person), dict) else raw_presence if person in PEOPLE and any(k in raw_presence for k in ("home", "online", "present", "state", "status")) else {}
         try:
-            resolved[person] = resolve_person(person, raw)
+            resolved[person] = resolve_person(person, raw, identities.get(person))
         except Exception as exc:
             item = {
                 "name": _name(person, raw),
@@ -226,3 +246,11 @@ def resolve_presence(raw_presence: Dict[str, Any] | None) -> Dict[str, Dict[str,
             item.update(classify_presence(item))
             resolved[person] = item
     return resolved
+
+
+def test_presence_identity(person: str) -> Dict[str, Any]:
+    identities = load_identities()
+    if person not in identities:
+        raise ValueError("unknown_person")
+    result = resolve_person(person, {}, identities[person])
+    return {key: result.get(key) for key in ("name", "ip", "expected_mac", "observed_mac", "classification", "reason", "source", "last_seen", "online")}

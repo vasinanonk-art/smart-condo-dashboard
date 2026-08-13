@@ -223,6 +223,11 @@ def household_automation_status():
     return automation.snapshot() if automation is not None else None
 
 
+def reset_household_presence(reason="presence_identity_changed"):
+    automation = _initialize_household_automation()
+    return automation.reset_home(reason) if automation is not None else None
+
+
 def _resolve_store_presence(app_mod):
     raw_presence = app_mod.state.get("condo_presence", {})
     if resolve_presence is None:
