@@ -5,6 +5,8 @@ import subprocess
 import time
 from typing import Any, Dict
 
+from backend.household_presence_automation import classify_presence
+
 GRACE_PERIOD_SEC = 180
 PING_TIMEOUT_SEC = 1
 PEOPLE = ("beer", "seem")
@@ -139,8 +141,30 @@ def _finalize(person: str, raw: Dict[str, Any] | None, home: bool, online: bool,
         "status": status,
         "ip": ip,
     }
+    item.update(classify_presence(item))
     _presence_cache[person] = item
     print(f"presence diagnostic: name={item['name']} source={item['source']} home={item['home']} online={item['online']} last_seen={item['last_seen']}", flush=True)
+    return item
+
+
+def _unknown(person: str, raw: Dict[str, Any], ip: str | None, reason: str, *, online: bool | None = None) -> Dict[str, Any]:
+    item = {
+        "name": _name(person, raw),
+        "home": None,
+        "online": online,
+        "last_seen": int(_presence_cache.get(person, {}).get("last_seen") or _payload_ts(raw) or 0),
+        "source": "Conflicting" if reason == "conflicting_evidence" else "Unavailable",
+        "confidence": 0,
+        "state": "Unknown",
+        "status": "Unknown",
+        "ip": ip,
+    }
+    if reason == "conflicting_evidence":
+        item["evidence_conflict"] = True
+    else:
+        item["evaluation_error"] = reason
+    item.update(classify_presence(item))
+    _presence_cache[person] = item
     return item
 
 
@@ -155,6 +179,12 @@ def resolve_person(person: str, raw: Dict[str, Any] | None) -> Dict[str, Any]:
     if mqtt_value is True and mqtt_fresh:
         return _finalize(person, raw, True, True, "MQTT", 100, raw_ts, ip)
     if mqtt_value is False and mqtt_fresh:
+        neighbor_state = _neighbor_state(ip)
+        network_present = neighbor_state in ACTIVE_NEIGHBOR_STATES
+        if not network_present and neighbor_state == "STALE":
+            network_present = _ping(ip)
+        if network_present:
+            return _unknown(person, raw, ip, "conflicting_evidence", online=True)
         # MQTT away is respected, but grace still prevents immediate false away.
         return _finalize(person, raw, False, False, "MQTT", 80, int(previous.get("last_seen") or raw_ts), ip)
 
@@ -178,5 +208,21 @@ def resolve_presence(raw_presence: Dict[str, Any] | None) -> Dict[str, Dict[str,
     resolved: Dict[str, Dict[str, Any]] = {}
     for person in sorted(people):
         raw = raw_presence.get(person) if isinstance(raw_presence.get(person), dict) else raw_presence if person in PEOPLE and any(k in raw_presence for k in ("home", "online", "present", "state", "status")) else {}
-        resolved[person] = resolve_person(person, raw)
+        try:
+            resolved[person] = resolve_person(person, raw)
+        except Exception as exc:
+            item = {
+                "name": _name(person, raw),
+                "home": None,
+                "online": None,
+                "last_seen": 0,
+                "source": "Unavailable",
+                "confidence": 0,
+                "state": "Unknown",
+                "status": "Unknown",
+                "ip": _ip(raw),
+                "evaluation_error": type(exc).__name__,
+            }
+            item.update(classify_presence(item))
+            resolved[person] = item
     return resolved

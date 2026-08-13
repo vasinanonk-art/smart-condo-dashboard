@@ -10,6 +10,7 @@ try:
     import os
     import threading
     import time
+    from backend.household_presence_automation import HouseholdPresenceAutomation
     from backend.presence_stabilizer import resolve_presence
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import HTMLResponse
@@ -21,6 +22,7 @@ except Exception:  # pragma: no cover
     os = None
     threading = None
     time = None
+    HouseholdPresenceAutomation = None
     resolve_presence = None
     FastAPI = None
     HTTPException = None
@@ -29,25 +31,18 @@ except Exception:  # pragma: no cover
     APIRouter = None
     run_in_threadpool = None
 
-ARRIVAL_DEVICEID = "1002354e11"
-ARRIVAL_CHANNEL = 1
-ARRIVAL_COOLDOWN_SEC = 600
-ARRIVAL_WARMUP_SEC = 60
-ARRIVAL_STABLE_HOME_SEC = 60
-DEPARTURE_STABLE_AWAY_SEC = 1800
-ARRIVAL_PEOPLE = ("beer", "seem")
-ARRIVAL_HOME_SOURCES = ("Router", "MQTT", "Ping")
+HOUSEHOLD_DEPARTURE_CHANNELS = (
+    ("10015b0992", 1),
+    ("100250f198", 1),
+    ("100250f198", 2),
+    ("10026c4143", 1),
+    ("10026c4143", 2),
+    ("10026c4143", 3),
+    ("1002354e11", 1),
+)
 HISTORY_RANGE_SEC = {"24h": 86400, "3d": 259200, "7d": 604800}
 HISTORY_MAX_RETURN = {"24h": 720, "3d": 720, "7d": 840}
-_automation_state = {
-    "startup_ts": int(time.time()) if time is not None else 0,
-    "initialized": {"beer": False, "seem": False},
-    "home": {"beer": None, "seem": None},
-    "pending_since": {"beer": 0, "seem": 0},
-    "away_since": {"beer": 0, "seem": 0},
-    "arrival_armed": {"beer": False, "seem": False},
-    "last_ts": {"beer": 0, "seem": 0},
-}
+_household_automation = None
 _presence_event_context = {"retained": False}
 
 
@@ -183,171 +178,52 @@ async def _sensor_history_handler(request: Request):
     }
 
 
-def _presence_source(item):
-    if not isinstance(item, dict):
-        return "-"
-    return str(item.get("source") or "-")
+def _presence_state_path():
+    root = os.getenv("SMART_CONDO_DATA_DIR", os.path.expanduser("~/.smart-condo-dashboard"))
+    return os.path.join(root, "presence_automation_state.json")
 
 
-def _presence_state(item):
-    if not isinstance(item, dict):
-        return ""
-    return str(item.get("state") or item.get("status") or "").lower()
+def _all_sonoff_lights_off():
+    results = []
+    for deviceid, channel in HOUSEHOLD_DEPARTURE_CHANNELS:
+        try:
+            result = set_state(deviceid, "off", channel)
+            item = {"deviceid": deviceid, "channel": channel, "action": "off", "ok": bool(result.get("ok"))}
+            if not item["ok"]:
+                item["error"] = _backend_sonoff.safe_error(result.get("error"))
+        except Exception as exc:
+            item = {"deviceid": deviceid, "channel": channel, "action": "off", "ok": False, "error": _backend_sonoff.safe_error(repr(exc))}
+        results.append(item)
+    return {"ok": all(item.get("ok") for item in results), "results": results}
 
 
-def _is_arrived_home(item):
-    if not isinstance(item, dict):
-        return False
-    source = _presence_source(item)
-    # Router:REACHABLE and Router:DELAY are valid Home observations. A single
-    # neighbor-state flap still cannot trigger arrival because Home must remain
-    # continuous for ARRIVAL_STABLE_HOME_SEC and arrival must already be armed.
-    return bool(item.get("home")) and _presence_state(item) == "home" and source.startswith(ARRIVAL_HOME_SOURCES)
+def _initialize_household_automation():
+    global _household_automation
+    if _household_automation is None and HouseholdPresenceAutomation is not None:
+        _household_automation = HouseholdPresenceAutomation(
+            _presence_state_path(),
+            _all_sonoff_lights_off,
+        )
+    return _household_automation
 
 
-def _is_confirmed_away(item):
-    if not isinstance(item, dict):
-        return False
-    return bool(item.get("home")) is False and _presence_state(item) == "away" and _presence_source(item) == "Expired"
+def _evaluate_household_presence(presence):
+    automation = _initialize_household_automation()
+    return automation.evaluate(presence) if automation is not None else None
 
 
-def _cancel_departure(person):
-    if int(_automation_state["away_since"].get(person) or 0):
-        print(f"automation departure cancelled: person={person}", flush=True)
-    _automation_state["away_since"][person] = 0
+def household_automation_status():
+    automation = _initialize_household_automation()
+    return automation.snapshot() if automation is not None else None
 
 
-def _cancel_arrival(person):
-    if int(_automation_state["pending_since"].get(person) or 0):
-        print(f"automation arrival cancelled: person={person}", flush=True)
-    _automation_state["pending_since"][person] = 0
-
-
-def _initialize_person_state(person, item):
-    if _is_arrived_home(item):
-        _automation_state["home"][person] = True
-    elif _is_confirmed_away(item):
-        _automation_state["home"][person] = False
-    else:
-        _automation_state["home"][person] = None
-    _automation_state["away_since"][person] = 0
-    _automation_state["pending_since"][person] = 0
-    _automation_state["arrival_armed"][person] = False
-    _automation_state["initialized"][person] = True
-
-
-def _run_arrival_action(person, now):
-    print(f"automation: {person}_arrived -> living_room_on", flush=True)
-    try:
-        result = set_state(ARRIVAL_DEVICEID, "on", ARRIVAL_CHANNEL)
-        ok = bool(result.get("ok"))
-        error = _backend_sonoff.safe_error(result.get("error") or result.get("last_error"))
-    except Exception as exc:
-        ok = False
-        error = _backend_sonoff.safe_error(repr(exc))
-    print(f"automation result: ok={str(ok).lower()} error={error}", flush=True)
-    if not ok:
-        return False
-    _automation_state["last_ts"][person] = now
-    _automation_state["home"][person] = True
-    _automation_state["pending_since"][person] = 0
-    _automation_state["away_since"][person] = 0
-    _automation_state["arrival_armed"][person] = False
-    return True
-
-
-def _run_person_arrival_automation(person, presence):
-    item = presence.get(person) if isinstance(presence, dict) else None
-    now = int(time.time()) if time is not None else 0
-
-    if not _automation_state["initialized"].get(person):
-        _initialize_person_state(person, item)
-        return
-
-    current_home = _is_arrived_home(item)
-    confirmed_away = _is_confirmed_away(item)
-    automation_home = _automation_state["home"].get(person)
-    arrival_armed = bool(_automation_state["arrival_armed"].get(person))
-
-    # During startup warmup, current presence may initialize Home but can never
-    # start departure/arrival timers, arm arrival, or trigger a command.
-    startup_ts = int(_automation_state.get("startup_ts") or now)
-    if now - startup_ts < ARRIVAL_WARMUP_SEC:
-        _cancel_departure(person)
-        _cancel_arrival(person)
-        if current_home:
-            _automation_state["home"][person] = True
-            _automation_state["arrival_armed"][person] = False
-        return
-
-    if confirmed_away:
-        _cancel_arrival(person)
-        if arrival_armed and automation_home is False:
-            return
-        away_since = int(_automation_state["away_since"].get(person) or 0)
-        if not away_since:
-            _automation_state["away_since"][person] = now
-            print(f"automation departure pending: person={person}", flush=True)
-            return
-        away_sec = now - away_since
-        if away_sec < DEPARTURE_STABLE_AWAY_SEC:
-            return
-        _automation_state["home"][person] = False
-        _automation_state["arrival_armed"][person] = True
-        _automation_state["away_since"][person] = 0
-        print(f"automation departure confirmed: person={person} away_sec={away_sec}", flush=True)
-        return
-
-    if current_home:
-        _cancel_departure(person)
-
-        if automation_home is True:
-            _cancel_arrival(person)
-            _automation_state["arrival_armed"][person] = False
-            return
-
-        if automation_home is not False or not arrival_armed:
-            _cancel_arrival(person)
-            _automation_state["home"][person] = True
-            _automation_state["arrival_armed"][person] = False
-            return
-
-        pending_since = int(_automation_state["pending_since"].get(person) or 0)
-        if not pending_since:
-            _automation_state["pending_since"][person] = now
-            print(f"automation arrival pending: person={person}", flush=True)
-            return
-
-        if now - pending_since < ARRIVAL_STABLE_HOME_SEC:
-            return
-        if now - int(_automation_state["last_ts"].get(person) or 0) < ARRIVAL_COOLDOWN_SEC:
-            return
-
-        if not _run_arrival_action(person, now):
-            _cancel_arrival(person)
-        return
-
-    # Cached, Recently Seen, unknown and every state other than exact Expired
-    # Away or a positive Router/MQTT/Ping Home observation cancel both timers.
-    # They never change automation_home and never arm arrival.
-    _cancel_departure(person)
-    _cancel_arrival(person)
-
-
-def _run_arrival_automation(presence):
-    for person in ARRIVAL_PEOPLE:
-        _run_person_arrival_automation(person, presence)
-
-
-def _resolve_store_presence(app_mod, evaluate=False):
+def _resolve_store_presence(app_mod):
     raw_presence = app_mod.state.get("condo_presence", {})
     if resolve_presence is None:
         presence = raw_presence if isinstance(raw_presence, dict) else {}
     else:
         presence = resolve_presence(raw_presence)
     app_mod.state["presence"] = presence
-    if evaluate:
-        _run_arrival_automation(presence)
     return presence
 
 
@@ -370,15 +246,12 @@ def _install_presence_refresh_hook():
 
         def _wrapped_update_condo_presence_from_topic(person, data, topic):
             original_presence_topic(person, data, topic)
-            if not _presence_event_context.get("retained"):
-                _resolve_store_presence(app_mod, evaluate=True)
-            else:
-                _resolve_store_presence(app_mod, evaluate=False)
+            _resolve_store_presence(app_mod)
 
         def _wrapped_update_condo_state(payload):
             original_condo_state(payload)
             if _payload_contains_presence(payload):
-                _resolve_store_presence(app_mod, evaluate=not _presence_event_context.get("retained"))
+                _resolve_store_presence(app_mod)
 
         def _wrapped_on_message(client, userdata, msg):
             previous = bool(_presence_event_context.get("retained"))
@@ -410,7 +283,7 @@ def _install_sensor_history_support():
 def _presence_status_handler():
     import backend.app as app_mod
     sensor = app_mod.state.get("condo_sensor", {})
-    presence = _resolve_store_presence(app_mod, evaluate=False)
+    presence = _resolve_store_presence(app_mod)
     return {"ok": True, "sensor": sensor, "presence": presence}
 
 
@@ -424,9 +297,8 @@ def _initialize_presence_state(label="startup"):
         import backend.app as app_mod
         _install_sensor_history_support()
         _install_presence_refresh_hook()
-        presence = _resolve_store_presence(app_mod, evaluate=False)
-        for person in ARRIVAL_PEOPLE:
-            _initialize_person_state(person, presence.get(person) if isinstance(presence, dict) else None)
+        presence = _resolve_store_presence(app_mod)
+        _initialize_household_automation()
         print(f"presence initialized: source={label} count={len(presence)}", flush=True)
     except Exception as exc:
         print(f"presence initialize error: source={label} error={repr(exc)}", flush=True)

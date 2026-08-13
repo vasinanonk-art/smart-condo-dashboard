@@ -307,18 +307,30 @@ def _room_payload(room: str) -> Dict[str, Any]:
 def _automation_payload() -> Dict[str, Any]:
     try:
         import sonoff_client as automation_module
-        state = getattr(automation_module, "_automation_state", {})
-        now = int(time.time())
+        state = automation_module.household_automation_status() or {}
+        household_state = state.get("state")
         people = {}
         for person in ("beer", "seem"):
-            last_ts = int((state.get("last_ts") or {}).get(person) or 0)
-            people[person] = {
-                "automation_home": (state.get("home") or {}).get(person),
-                "cooldown_remaining_sec": max(0, 600 - (now - last_ts)) if last_ts else 0,
-                "arrival_pending_since": (state.get("pending_since") or {}).get(person) or None,
-                "away_pending_since": (state.get("away_since") or {}).get(person) or None,
-            }
-        return {"enabled": True, "people": people, "recent_events": []}
+            diagnostic = dict((state.get("people") or {}).get(person) or {})
+            diagnostic.update({
+                "automation_home": False if household_state == "CONFIRMED_AWAY" else True,
+                "cooldown_remaining_sec": 0,
+                "arrival_pending_since": None,
+                "away_pending_since": state.get("pending_since"),
+            })
+            people[person] = diagnostic
+        return {
+            "enabled": True,
+            "household_state": household_state,
+            "pending_since": state.get("pending_since"),
+            "confirmed_away_at": state.get("confirmed_away_at"),
+            "transition_id": state.get("transition_id"),
+            "people": people,
+            "departure_action": state.get("departure_action", {}),
+            "last_transition": state.get("last_transition"),
+            "reason": state.get("reason"),
+            "recent_events": [],
+        }
     except Exception:
         return {"enabled": True, "people": {}, "recent_events": []}
 

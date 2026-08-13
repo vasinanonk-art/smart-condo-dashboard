@@ -16,7 +16,6 @@ ZONE_DEVICE_TIMEOUT_SEC = 7.0
 ZONE_MAX_PARALLEL = 2
 PRESENCE_TOPICS = {"condo/presence/beer", "condo/presence/seem"}
 
-_seen_home_since_start = {person: False for person in presence_automation.ARRIVAL_PEOPLE}
 _last_non_retained_presence = None
 
 
@@ -29,21 +28,6 @@ def _safe_error(value):
     if "unsupported" in text or "capability" in text:
         return "capability not supported"
     return "command failed"
-
-
-def _guarded_run_arrival_automation(presence):
-    """Ignore an Away startup baseline until that person is observed Home once."""
-    presence = presence if isinstance(presence, dict) else {}
-    for person in presence_automation.ARRIVAL_PEOPLE:
-        item = presence.get(person)
-        if presence_automation._is_arrived_home(item):
-            _seen_home_since_start[person] = True
-        if not _seen_home_since_start[person]:
-            continue
-        presence_automation._run_person_arrival_automation(person, presence)
-
-
-presence_automation._run_arrival_automation = _guarded_run_arrival_automation
 
 
 def _router_only_presence(raw):
@@ -98,7 +82,7 @@ def _presence_worker():
                     with contextlib.redirect_stdout(io.StringIO()):
                         resolved = resolver(raw)
                 app_module.state["presence"] = resolved
-                _guarded_run_arrival_automation(resolved)
+                presence_automation._evaluate_household_presence(resolved)
         except Exception as exc:
             print(f"automation presence worker error: {type(exc).__name__}", flush=True)
         time.sleep(PRESENCE_EVALUATION_SEC)
