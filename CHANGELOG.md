@@ -2,7 +2,18 @@
 
 ## [Unreleased]
 
-No changes after v1.0.14.
+No changes after v1.0.15.
+
+## [1.0.15] - 2026-08-13
+
+### Household presence shadow mode
+
+- Replace independent arrival lighting with one persisted household presence
+  state machine that never turns lights on.
+- Default presence automation to shadow mode, recording daytime departure
+  actions without issuing physical Sonoff commands.
+- Add fail-safe presence classification, restart handling, diagnostics, and
+  deterministic Bangkok-time boundary coverage.
 
 ## [1.0.14] - 2026-08-12
 
