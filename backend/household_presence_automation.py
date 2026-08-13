@@ -28,6 +28,13 @@ UNKNOWN = "UNKNOWN"
 PEOPLE = ("beer", "seem")
 AWAY_DWELL_SECONDS = 1800
 BANGKOK = ZoneInfo("Asia/Bangkok")
+SHADOW = "shadow"
+ACTIVE = "active"
+
+
+def execution_mode(value: Any = None) -> str:
+    mode = str(value if value is not None else os.getenv("PRESENCE_AUTOMATION_MODE", SHADOW)).strip().lower()
+    return ACTIVE if mode == ACTIVE else SHADOW
 
 
 def classify_presence(item: Any) -> dict[str, str]:
@@ -55,7 +62,7 @@ def classify_presence(item: Any) -> dict[str, str]:
     return {"classification": UNKNOWN, "reason": "insufficient_evidence"}
 
 
-def _departure_action() -> dict[str, Any]:
+def _departure_action(intended_channels: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     return {
         "eligible": False,
         "attempted": False,
@@ -64,17 +71,21 @@ def _departure_action() -> dict[str, Any]:
         "completed_at": None,
         "status": None,
         "error": None,
+        "intended_channels": copy.deepcopy(intended_channels or []),
+        "would_execute": False,
+        "actual_command_executed": False,
     }
 
 
-def initial_state(now: int = 0) -> dict[str, Any]:
+def initial_state(now: int = 0, *, mode: str = SHADOW, intended_channels: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
+        "mode": execution_mode(mode),
         "state": HOME,
         "pending_since": None,
         "confirmed_away_at": None,
         "transition_id": None,
-        "departure_action": _departure_action(),
+        "departure_action": _departure_action(intended_channels),
         "people": {
             person: {"classification": UNKNOWN, "reason": "not_evaluated"}
             for person in PEOPLE
@@ -105,11 +116,15 @@ class HouseholdPresenceAutomation:
         *,
         clock: Callable[[], float] = time.time,
         transition_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
+        mode: str | None = None,
+        intended_channels: list[dict[str, Any]] | None = None,
     ) -> None:
         self.state_path = Path(state_path)
         self.all_off = all_off
         self.clock = clock
         self.transition_id_factory = transition_id_factory
+        self.mode = execution_mode(mode)
+        self.intended_channels = copy.deepcopy(intended_channels or [])
         self._lock = threading.RLock()
         self.state = self._load()
 
@@ -118,17 +133,24 @@ class HouseholdPresenceAutomation:
         try:
             payload = json.loads(self.state_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
-            payload = initial_state(now)
+            payload = initial_state(now, mode=self.mode, intended_channels=self.intended_channels)
             _atomic_write(self.state_path, payload)
             return payload
         if not isinstance(payload, dict) or payload.get("schema_version") != SCHEMA_VERSION:
-            payload = initial_state(now)
+            payload = initial_state(now, mode=self.mode, intended_channels=self.intended_channels)
+            _atomic_write(self.state_path, payload)
+            return payload
+        if payload.get("mode") not in {SHADOW, ACTIVE} or payload.get("mode") != self.mode:
+            payload = initial_state(now, mode=self.mode, intended_channels=self.intended_channels)
+            payload["reason"] = "execution_mode_changed_reset_home"
             _atomic_write(self.state_path, payload)
             return payload
         if payload.get("state") == CONFIRMED_AWAY:
-            restored = initial_state(now)
+            restored = initial_state(now, mode=self.mode, intended_channels=self.intended_channels)
             restored.update(payload)
-            restored["departure_action"] = {**_departure_action(), **dict(payload.get("departure_action") or {})}
+            restored["mode"] = self.mode
+            restored["departure_action"] = {**_departure_action(self.intended_channels), **dict(payload.get("departure_action") or {})}
+            restored["departure_action"]["actual_command_executed"] = bool(restored["departure_action"].get("actual_command_executed"))
             restored["reason"] = "confirmed_away_restored"
             restored["updated_at"] = now
             _atomic_write(self.state_path, restored)
@@ -136,14 +158,19 @@ class HouseholdPresenceAutomation:
         prior_state = payload.get("state")
         # HOME and PENDING_AWAY both restart conservatively from HOME. A pending
         # timer can never be shortened by process downtime.
-        payload = initial_state(now)
+        payload = initial_state(now, mode=self.mode, intended_channels=self.intended_channels)
         payload["reason"] = "pending_cancelled_on_restart" if prior_state == PENDING_AWAY else "startup_home"
         _atomic_write(self.state_path, payload)
         return payload
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            return copy.deepcopy(self.state)
+            snapshot = copy.deepcopy(self.state)
+            pending_since = snapshot.get("pending_since")
+            elapsed = max(0, int(self.clock()) - int(pending_since)) if pending_since else 0
+            snapshot["pending_elapsed_seconds"] = elapsed
+            snapshot["pending_remaining_seconds"] = max(0, AWAY_DWELL_SECONDS - elapsed) if pending_since else 0
+            return snapshot
 
     def _save(self) -> None:
         _atomic_write(self.state_path, self.state)
@@ -162,7 +189,7 @@ class HouseholdPresenceAutomation:
     def _transition_home(self, now: int, reason: str) -> None:
         previous = self.state.get("state")
         people = copy.deepcopy(self.state.get("people") or {})
-        self.state = initial_state(now)
+        self.state = initial_state(now, mode=self.mode, intended_channels=self.intended_channels)
         self.state["people"] = people
         self.state["last_transition"] = {"from": previous, "to": HOME, "at": now}
         self.state["reason"] = reason
@@ -218,17 +245,33 @@ class HouseholdPresenceAutomation:
                 "reason": "continuous_away_confirmed",
                 "updated_at": now,
             })
-            self.state["departure_action"] = _departure_action()
+            self.state["departure_action"] = _departure_action(self.intended_channels)
             self.state["departure_action"]["eligible"] = eligible
             if not eligible:
                 self.state["departure_action"]["status"] = "outside_time_window"
                 self._save()
                 return self.snapshot()
 
+            if self.mode != ACTIVE:
+                self.state["departure_action"].update({
+                    "would_execute": True,
+                    "actual_command_executed": False,
+                    "status": "would_turn_off",
+                })
+                self.state["reason"] = "shadow_would_turn_off"
+                self._save()
+                print(
+                    f"presence automation shadow: WOULD TURN OFF transition_id={transition_id}",
+                    flush=True,
+                )
+                return self.snapshot()
+
             # Persist attempted before issuing the command. A crash cannot cause
             # an uncontrolled retry; missing one off action is safer than repeats.
             self.state["departure_action"].update({"attempted": True, "attempted_at": now, "status": "attempting"})
             self._save()
+            # Hard physical-command boundary: shadow mode returned above and can
+            # never reach the Sonoff callable.
             try:
                 result = self.all_off()
                 ok = bool(result.get("ok")) if isinstance(result, Mapping) else bool(result)
@@ -242,6 +285,7 @@ class HouseholdPresenceAutomation:
                 "completed_at": completed_at,
                 "status": "completed" if ok else "failed",
                 "error": error,
+                "actual_command_executed": True,
             })
             self.state["updated_at"] = int(self.clock())
             self._save()
@@ -253,7 +297,7 @@ class HouseholdPresenceAutomation:
                 "pending_since": now,
                 "confirmed_away_at": None,
                 "transition_id": None,
-                "departure_action": _departure_action(),
+                "departure_action": _departure_action(self.intended_channels),
                 "last_transition": {"from": HOME, "to": PENDING_AWAY, "at": now},
                 "reason": "both_away_candidate",
                 "updated_at": now,

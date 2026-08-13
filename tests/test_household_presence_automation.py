@@ -14,6 +14,8 @@ from backend.household_presence_automation import (
     PENDING_AWAY,
     PRESENT,
     UNKNOWN,
+    ACTIVE,
+    SHADOW,
     HouseholdPresenceAutomation,
     classify_presence,
 )
@@ -62,7 +64,7 @@ def people(beer, seem):
     return {"beer": beer, "seem": seem}
 
 
-def machine(tmp_path, start=None, result=None):
+def machine(tmp_path, start=None, result=None, mode=ACTIVE):
     clock = Clock(epoch() if start is None else start)
     action = FakeAllOff(result)
     automation = HouseholdPresenceAutomation(
@@ -70,6 +72,8 @@ def machine(tmp_path, start=None, result=None):
         action,
         clock=clock,
         transition_id_factory=lambda: "transition-1",
+        mode=mode,
+        intended_channels=[{"deviceid": "fake", "channel": 1, "action": "off"}],
     )
     return automation, clock, action
 
@@ -194,7 +198,7 @@ def test_restart_during_pending_requires_new_full_dwell(tmp_path):
     automation, clock, action = machine(tmp_path)
     automation.evaluate(people(away(), away()))
     clock.value += 1700
-    restarted = HouseholdPresenceAutomation(automation.state_path, action, clock=clock, transition_id_factory=lambda: "t2")
+    restarted = HouseholdPresenceAutomation(automation.state_path, action, clock=clock, transition_id_factory=lambda: "t2", mode=ACTIVE)
     assert restarted.snapshot()["state"] == HOME
     assert restarted.evaluate(people(away(), away()))["state"] == PENDING_AWAY
     clock.value += 1799
@@ -206,7 +210,7 @@ def test_restart_during_confirmed_away_restores_without_repeating(tmp_path):
     automation, clock, action = machine(tmp_path, epoch(16, 30))
     confirm(automation, clock, people(away(), away()))
     assert action.calls == 1
-    restarted = HouseholdPresenceAutomation(automation.state_path, action, clock=clock, transition_id_factory=lambda: "t2")
+    restarted = HouseholdPresenceAutomation(automation.state_path, action, clock=clock, transition_id_factory=lambda: "t2", mode=ACTIVE)
     assert restarted.snapshot()["state"] == CONFIRMED_AWAY
     restarted.evaluate(people(away(), away()))
     assert action.calls == 1
@@ -239,7 +243,7 @@ def test_all_off_failure_is_persisted_without_retry(tmp_path):
 def test_retained_home_after_restart_cannot_turn_light_on(tmp_path):
     automation, clock, action = machine(tmp_path, epoch(16, 30))
     confirm(automation, clock, people(away(), away()))
-    restarted = HouseholdPresenceAutomation(automation.state_path, action, clock=clock)
+    restarted = HouseholdPresenceAutomation(automation.state_path, action, clock=clock, mode=ACTIVE)
     restarted.evaluate(people(present(), present()))
     assert restarted.snapshot()["state"] == HOME
     assert action.calls == 1
@@ -254,7 +258,8 @@ def test_persistence_contract_and_permissions(tmp_path):
     assert payload["confirmed_away_at"] is None
     assert payload["transition_id"] is None
     assert set(payload["departure_action"]) == {
-        "eligible", "attempted", "completed", "attempted_at", "completed_at", "status", "error"
+        "eligible", "attempted", "completed", "attempted_at", "completed_at", "status", "error",
+        "intended_channels", "would_execute", "actual_command_executed"
     }
     assert automation.state_path.stat().st_mode & 0o777 == 0o600
 
@@ -314,3 +319,89 @@ def test_away_candidate_contract_is_documented():
 
     assert "operational inference" in inspect.getdoc(module)
     assert "not proof" in inspect.getdoc(module)
+
+
+def test_missing_or_invalid_mode_defaults_to_shadow(monkeypatch, tmp_path):
+    from backend.household_presence_automation import execution_mode
+
+    monkeypatch.delenv("PRESENCE_AUTOMATION_MODE", raising=False)
+    assert execution_mode() == SHADOW
+    monkeypatch.setenv("PRESENCE_AUTOMATION_MODE", "invalid")
+    assert execution_mode() == SHADOW
+    action = FakeAllOff()
+    automation = HouseholdPresenceAutomation(tmp_path / "default.json", action, clock=Clock(epoch(16, 30)))
+    assert automation.snapshot()["mode"] == SHADOW
+
+
+def test_shadow_daytime_confirmation_would_off_without_call(tmp_path, capsys):
+    automation, clock, action = machine(tmp_path, epoch(16, 30), mode=SHADOW)
+    state = confirm(automation, clock, people(away(), away()))
+    departure = state["departure_action"]
+    assert state["state"] == CONFIRMED_AWAY
+    assert departure["eligible"] is True
+    assert departure["would_execute"] is True
+    assert departure["actual_command_executed"] is False
+    assert departure["attempted"] is False
+    assert departure["status"] == "would_turn_off"
+    assert departure["intended_channels"] == [{"deviceid": "fake", "channel": 1, "action": "off"}]
+    assert "WOULD TURN OFF" in capsys.readouterr().out
+    assert action.calls == 0
+
+
+def test_shadow_night_and_1810_to_1840_have_no_would_off(tmp_path):
+    for start in (epoch(18, 0), epoch(18, 10)):
+        path = tmp_path / str(start)
+        path.mkdir()
+        automation, clock, action = machine(path, start, mode=SHADOW)
+        state = confirm(automation, clock, people(away(), away()))
+        assert state["departure_action"]["eligible"] is False
+        assert state["departure_action"]["would_execute"] is False
+        assert action.calls == 0
+
+
+def test_shadow_reconnect_returns_home_without_light_action(tmp_path):
+    automation, clock, action = machine(tmp_path, epoch(16, 30), mode=SHADOW)
+    confirm(automation, clock, people(away(), away()))
+    state = automation.evaluate(people(present(), away()))
+    assert state["state"] == HOME
+    assert action.calls == 0
+
+
+def test_shadow_to_active_resets_home_and_requires_fresh_dwell(tmp_path):
+    automation, clock, action = machine(tmp_path, epoch(16, 30), mode=SHADOW)
+    confirm(automation, clock, people(away(), away()))
+    active = HouseholdPresenceAutomation(automation.state_path, action, clock=clock, mode=ACTIVE)
+    assert active.snapshot()["state"] == HOME
+    assert active.snapshot()["reason"] == "execution_mode_changed_reset_home"
+    assert active.evaluate(people(away(), away()))["state"] == PENDING_AWAY
+    clock.value += 1799
+    assert active.evaluate(people(away(), away()))["state"] == PENDING_AWAY
+    assert action.calls == 0
+
+
+def test_restart_shadow_pending_resets_and_confirmed_restores_without_call(tmp_path):
+    automation, clock, action = machine(tmp_path, epoch(16, 30), mode=SHADOW)
+    automation.evaluate(people(away(), away()))
+    pending_restart = HouseholdPresenceAutomation(automation.state_path, action, clock=clock, mode=SHADOW)
+    assert pending_restart.snapshot()["state"] == HOME
+    state = confirm(pending_restart, clock, people(away(), away()))
+    assert state["state"] == CONFIRMED_AWAY
+    confirmed_restart = HouseholdPresenceAutomation(automation.state_path, action, clock=clock, mode=SHADOW)
+    assert confirmed_restart.snapshot()["state"] == CONFIRMED_AWAY
+    assert confirmed_restart.snapshot()["departure_action"]["actual_command_executed"] is False
+    assert action.calls == 0
+
+
+def test_shadow_guard_precedes_and_blocks_physical_callable(tmp_path):
+    class Unreachable:
+        def __call__(self):
+            raise AssertionError("physical command boundary reached in shadow")
+
+    clock = Clock(epoch(16, 30))
+    automation = HouseholdPresenceAutomation(
+        tmp_path / "guard.json", Unreachable(), clock=clock, mode=SHADOW
+    )
+    state = confirm(automation, clock, people(away(), away()))
+    assert state["departure_action"]["status"] == "would_turn_off"
+    source = inspect.getsource(HouseholdPresenceAutomation._evaluate_locked)
+    assert source.index("if self.mode != ACTIVE") < source.index("result = self.all_off()")

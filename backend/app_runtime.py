@@ -321,8 +321,11 @@ def _automation_payload() -> Dict[str, Any]:
             people[person] = diagnostic
         return {
             "enabled": True,
+            "mode": state.get("mode", "shadow"),
             "household_state": household_state,
             "pending_since": state.get("pending_since"),
+            "pending_elapsed_seconds": state.get("pending_elapsed_seconds", 0),
+            "pending_remaining_seconds": state.get("pending_remaining_seconds", 0),
             "confirmed_away_at": state.get("confirmed_away_at"),
             "transition_id": state.get("transition_id"),
             "people": people,

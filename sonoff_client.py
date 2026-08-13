@@ -40,6 +40,10 @@ HOUSEHOLD_DEPARTURE_CHANNELS = (
     ("10026c4143", 3),
     ("1002354e11", 1),
 )
+HOUSEHOLD_DEPARTURE_TARGETS = [
+    {"deviceid": deviceid, "channel": channel, "action": "off"}
+    for deviceid, channel in HOUSEHOLD_DEPARTURE_CHANNELS
+]
 HISTORY_RANGE_SEC = {"24h": 86400, "3d": 259200, "7d": 604800}
 HISTORY_MAX_RETURN = {"24h": 720, "3d": 720, "7d": 840}
 _household_automation = None
@@ -203,6 +207,8 @@ def _initialize_household_automation():
         _household_automation = HouseholdPresenceAutomation(
             _presence_state_path(),
             _all_sonoff_lights_off,
+            mode=os.getenv("PRESENCE_AUTOMATION_MODE", "shadow"),
+            intended_channels=HOUSEHOLD_DEPARTURE_TARGETS,
         )
     return _household_automation
 
