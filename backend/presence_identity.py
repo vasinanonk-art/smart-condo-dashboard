@@ -11,7 +11,7 @@ from typing import Any, Mapping
 
 PEOPLE = ("beer", "seem")
 DEFAULT_IDENTITIES = {
-    "beer": {"name": "Beer", "ip": "192.168.1.218", "mac": "E6:2C:F5:81:D1:DA"},
+    "beer": {"name": "Beer", "ip": "192.168.1.241", "mac": "E6:2C:F5:81:D1:DA"},
     "seem": {"name": "Seem", "ip": "192.168.1.171", "mac": "12:F2:0D:7A:6E:8E"},
 }
 _MAC = re.compile(r"^[0-9A-F]{2}(?::[0-9A-F]{2}){5}$")

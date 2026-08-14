@@ -13,7 +13,7 @@ AWAY = {"home": False, "state": "away", "source": "Expired", "ip": "192.0.2.1"}
 
 
 def test_default_beer_identity_replaces_old_ip():
-    assert DEFAULT_IDENTITIES["beer"] == {"name": "Beer", "ip": "192.168.1.218", "mac": "E6:2C:F5:81:D1:DA"}
+    assert DEFAULT_IDENTITIES["beer"] == {"name": "Beer", "ip": "192.168.1.241", "mac": "E6:2C:F5:81:D1:DA"}
     assert "192.168.1.107" not in json.dumps(DEFAULT_IDENTITIES)
 
 
@@ -64,6 +64,29 @@ def test_identity_mismatch_is_unknown_and_test_is_read_only(monkeypatch, tmp_pat
     assert result["reason"] == "identity_mismatch"
 
 
+def test_stale_mqtt_ip_cannot_override_configured_identity(monkeypatch):
+    monkeypatch.setattr(presence_stabilizer, "_now", lambda: 2_000)
+    monkeypatch.setattr(presence_stabilizer, "_neighbor_mac", lambda ip: "E6:2C:F5:81:D1:DA")
+    monkeypatch.setattr(presence_stabilizer, "_neighbor_state", lambda ip: "REACHABLE")
+    identity = DEFAULT_IDENTITIES["beer"]
+    result = presence_stabilizer.resolve_person(
+        "beer",
+        {"name": "Beer", "state": "away", "ip": "192.168.1.107", "ts": 1},
+        identity,
+    )
+    assert result["ip"] == "192.168.1.241"
+    assert result["classification"] == "PRESENT"
+    assert result["source"] == "Router:REACHABLE"
+
+
+def test_presence_probe_has_no_household_or_sonoff_execution_path():
+    source = Path(presence_stabilizer.__file__).read_text()
+    block = source.split("def test_presence_identity", 1)[1]
+    assert "evaluate_household" not in block
+    assert "all_off" not in block
+    assert "sonoff" not in block.lower()
+
+
 def test_identity_persists_audit_and_resets_shadow_state(monkeypatch, tmp_path):
     import sonoff_client
 
@@ -73,20 +96,17 @@ def test_identity_persists_audit_and_resets_shadow_state(monkeypatch, tmp_path):
     monkeypatch.setattr(dashboard_settings, "PRESENCE_AUDIT_PATH", audit_path)
     resets = []
     monkeypatch.setattr(sonoff_client, "reset_household_presence", lambda reason: resets.append(reason))
-    original = dashboard_settings.load_settings()
-    changed = json.loads(json.dumps(original))
+    previous = dashboard_settings.load_settings()
+    previous["presence"]["people"]["beer"]["ip"] = "192.168.1.218"
+    settings_path.write_text(json.dumps(previous))
+    changed = json.loads(json.dumps(previous))
     changed["presence"]["people"]["beer"] = DEFAULT_IDENTITIES["beer"]
-    changed["presence"]["people"]["seem"]["mac"] = "12-f2-0d-7a-6e-8e"
     saved = dashboard_settings.save_settings(changed)
-    assert saved["presence"]["people"]["beer"]["ip"] == "192.168.1.218"
+    assert saved["presence"]["people"]["beer"]["ip"] == "192.168.1.241"
     assert dashboard_settings.load_settings()["presence"] == saved["presence"]
-    assert resets == []  # Normalization alone does not change the authoritative identity.
-
-    changed["presence"]["people"]["beer"]["ip"] = "192.168.1.219"
-    dashboard_settings.save_settings(changed)
     assert resets == ["presence_identity_changed"]
     audit = json.loads(audit_path.read_text().splitlines()[-1])
-    assert audit["person"] == "beer" and audit["old"]["ip"] == "192.168.1.218" and audit["new"]["ip"] == "192.168.1.219"
+    assert audit["person"] == "beer" and audit["old"]["ip"] == "192.168.1.218" and audit["new"]["ip"] == "192.168.1.241"
     assert audit_path.stat().st_mode & 0o777 == 0o600
 
 

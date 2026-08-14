@@ -252,5 +252,7 @@ def test_presence_identity(person: str) -> Dict[str, Any]:
     identities = load_identities()
     if person not in identities:
         raise ValueError("unknown_person")
-    result = resolve_person(person, {}, identities[person])
+    identity = identities[person]
+    result = resolve_person(person, {}, identity)
+    result.setdefault("expected_mac", identity["mac"])
     return {key: result.get(key) for key in ("name", "ip", "expected_mac", "observed_mac", "classification", "reason", "source", "last_seen", "online")}
