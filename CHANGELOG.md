@@ -2,7 +2,15 @@
 
 ## [Unreleased]
 
-No changes after v1.0.15.
+No changes after v1.0.16.
+
+## [1.0.16] - 2026-08-15
+
+### Presence identity settings
+
+- Add validated Beer and Seem IP/MAC identities under Settings → Presence.
+- Keep presence testing read-only and reset household state conservatively
+  after identity changes without leaving shadow mode.
 
 ## [1.0.15] - 2026-08-13
 
