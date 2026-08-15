@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 HOME = (ROOT / "frontend/assets/dashboard_home.js").read_text(encoding="utf-8")
+V3 = (ROOT / "frontend/assets/dashboard_v3.js").read_text(encoding="utf-8")
 CSS = (ROOT / "frontend/assets/dashboard_home.css").read_text(encoding="utf-8")
 NAV_CSS = (ROOT / "frontend/assets/dashboard_milestone2.css").read_text(encoding="utf-8")
 UI = (ROOT / "frontend/assets/dashboard_design_system.js").read_text(encoding="utf-8")
@@ -123,13 +124,43 @@ def test_mobile_chart_controls_and_range_details_are_advanced_by_default():
     assert '<summary>Advanced details</summary>' in HTML
     assert 'id="homeAdvancedChartTools"' in HTML
     assert "advanced.open = !mobile" in HOME
-    assert "toolHost.appendChild(tools)" in HOME
-    assert "Environment chart advanced controls" in HOME
-    assert "Air quality chart advanced controls" in HOME
+    assert 'data-home-export-chart="overviewChart"' in HOME
+    assert 'data-home-export-chart="overviewPmChart"' in HOME
+    assert HOME.count('data-home-export="png"') == 2
+    assert HOME.count('data-home-export="csv"') == 2
+    assert "Export PNG" in HOME and "Export CSV" in HOME
+    assert "tools.hidden = mobile" in HOME
+    mobile_organizer = HOME[HOME.index("function organizeHomeDetails"):HOME.index("function render({")]
+    assert "chartZoom" not in mobile_organizer
+    assert "chartPan" not in mobile_organizer
+    assert "chartReset" not in mobile_organizer
     assert ".home-advanced-details:not([open])" in CSS
 
 
 def test_empty_device_summary_is_not_rendered_as_large_status_card():
     assert "widget.hidden = !hasUsefulData" in HOME
     assert "if (!hasUsefulData)" in HOME
+    assert "#homeDevicesWidget[hidden]" in CSS
+    assert "display: none !important" in CSS
     assert "No Data" not in HOME[HOME.index("function renderSecondaryWidgets"):HOME.index("function bedroomCamera")]
+
+
+def test_home_details_mobile_axis_is_compact_and_stays_inside_chart():
+    assert "'(max-width: 680px)'" in V3
+    assert "toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false})" in V3
+    assert "ratio === 1 && mobile ? 'Now'" in V3
+    assert "Math.min(valid.length - 1, Math.round(valid.length * ratio))" in V3
+    assert "mobile && ratio === 0 ? 'start'" in V3
+    assert "mobile && ratio === 1 ? 'end'" in V3
+    assert 'class="axis-label axis-label-x"' in V3
+    assert ".home-dashboard-grid .axis-label-x" in CSS
+
+
+def test_home_details_legends_are_outside_plot_and_before_charts():
+    environment = HTML[HTML.index('class="sc-line-chart-card home-environment-widget'):HTML.index('class="sc-line-chart-card home-air-widget')]
+    air = HTML[HTML.index('class="sc-line-chart-card home-air-widget'):HTML.index('id="homeAdvancedDetails"')]
+    assert environment.index("home-chart-legend") < environment.index('class="chart-wrap"')
+    assert air.index("home-chart-legend") < air.index('class="chart-wrap"')
+    assert "Temperature</span>" in environment and "Humidity</span>" in environment
+    assert "Living Room</span>" in air and "Bedroom</span>" in air
+    assert ".home-chart-legend" in CSS

@@ -154,9 +154,14 @@ function drawChart(id, rows, series) {
     svg.insertAdjacentHTML('beforeend', `<line class="gridline" x1="${pad.l}" y1="${yy}" x2="${width-pad.r}" y2="${yy}"/><text class="axis-label" x="8" y="${yy+4}">${value.toFixed(1)}</text>`);
   }
   [0,.25,.5,.75,1].forEach(ratio => {
-    const index = Math.round((valid.length - 1) * ratio), xx = x(index);
-    const label = new Date(valid[index].ts * 1000).toLocaleDateString([], S.range === '24h' ? {hour:'2-digit', minute:'2-digit'} : {month:'short', day:'numeric'});
-    svg.insertAdjacentHTML('beforeend', `<text class="axis-label" text-anchor="middle" x="${xx}" y="${height-10}">${label}</text>`);
+    const index = Math.min(valid.length - 1, Math.round(valid.length * ratio)), xx = x(index);
+    const mobile = window.matchMedia?.('(max-width: 680px)')?.matches === true;
+    const label = ratio === 1 && mobile ? 'Now'
+      : mobile || S.range === '24h'
+        ? new Date(valid[index].ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false})
+        : new Date(valid[index].ts * 1000).toLocaleDateString([], {month:'short', day:'numeric'});
+    const anchor = mobile && ratio === 0 ? 'start' : mobile && ratio === 1 ? 'end' : 'middle';
+    svg.insertAdjacentHTML('beforeend', `<text class="axis-label axis-label-x" text-anchor="${anchor}" x="${xx}" y="${height-10}">${label}</text>`);
   });
   series.forEach(item => {
     const points = valid.map((row,index) => ({index,value:num(row[item.key])})).filter(point => Number.isFinite(point.value));
@@ -236,7 +241,7 @@ function renderOverview() {
   if (window.SmartCondoHome) {
     window.SmartCondoHome.render({
       state:S, history:S.history, series:SERIES, fmt, stat, safeText,
-      bindRangeButtons, drawChart, ensureChartToolbar,
+      bindRangeButtons, drawChart, ensureChartToolbar, chartPng, chartCsv,
       renderCameraControls, renderOverviewSummary,
     });
     return;

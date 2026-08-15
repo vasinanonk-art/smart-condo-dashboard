@@ -354,7 +354,7 @@
     )).join('');
   }
 
-  function organizeHomeDetails() {
+  function organizeHomeDetails(chartPng, chartCsv) {
     const advanced = element('homeAdvancedDetails');
     const toolHost = element('homeAdvancedChartTools');
     if (!advanced || !toolHost) return;
@@ -363,15 +363,32 @@
       advanced.dataset.homeDisclosureInitialized = 'true';
       advanced.open = !mobile;
     }
-    document.querySelectorAll('[data-tools-for="overviewChart"],[data-tools-for="overviewPmChart"]').forEach(tools => {
-      if (!tools._homeOriginalParent) tools._homeOriginalParent = tools.parentElement;
-      tools.setAttribute('aria-label', tools.dataset.toolsFor === 'overviewChart'
-        ? 'Environment chart advanced controls' : 'Air quality chart advanced controls');
-      if (mobile && tools.parentElement !== toolHost) toolHost.appendChild(tools);
-      if (!mobile && tools._homeOriginalParent && tools.parentElement !== tools._homeOriginalParent) {
-        tools._homeOriginalParent.appendChild(tools);
-      }
+    const chartTools = document.querySelectorAll('[data-tools-for="overviewChart"],[data-tools-for="overviewPmChart"]');
+    chartTools.forEach(tools => { tools.hidden = mobile; });
+    if (!mobile) {
+      toolHost.innerHTML = '';
+      return;
+    }
+    toolHost.dataset.exportChart = toolHost.dataset.exportChart || 'overviewChart';
+    toolHost.innerHTML = `<div class="home-export-chart-selector" role="group" aria-label="Chart to export">
+      <button class="sc-button sc-button-secondary" type="button" data-home-export-chart="overviewChart">Environment</button>
+      <button class="sc-button sc-button-secondary" type="button" data-home-export-chart="overviewPmChart">Air Quality</button>
+    </div><div class="home-export-actions">
+      <button class="sc-button sc-button-secondary" type="button" data-home-export="png">Export PNG</button>
+      <button class="sc-button sc-button-secondary" type="button" data-home-export="csv">Export CSV</button>
+    </div>`;
+    const syncSelection = () => toolHost.querySelectorAll('[data-home-export-chart]').forEach(button => {
+      const selected = button.dataset.homeExportChart === toolHost.dataset.exportChart;
+      button.classList.toggle('active', selected);
+      button.setAttribute('aria-pressed', String(selected));
     });
+    toolHost.querySelectorAll('[data-home-export-chart]').forEach(button => button.onclick = () => {
+      toolHost.dataset.exportChart = button.dataset.homeExportChart;
+      syncSelection();
+    });
+    toolHost.querySelector('[data-home-export="png"]').onclick = () => chartPng(toolHost.dataset.exportChart);
+    toolHost.querySelector('[data-home-export="csv"]').onclick = () => chartCsv(toolHost.dataset.exportChart);
+    syncSelection();
   }
 
   function render({
@@ -384,6 +401,8 @@
     bindRangeButtons,
     drawChart,
     ensureChartToolbar,
+    chartPng,
+    chartCsv,
     renderCameraControls,
     renderOverviewSummary,
   }) {
@@ -441,7 +460,7 @@
     drawChart('overviewPmChart', history, series.air);
     ensureChartToolbar('overviewChart');
     ensureChartToolbar('overviewPmChart');
-    organizeHomeDetails();
+    organizeHomeDetails(chartPng, chartCsv);
     drawEnergyChart();
     renderSecondaryWidgets(state);
     renderQuickActions(state);
