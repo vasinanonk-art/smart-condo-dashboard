@@ -43,7 +43,7 @@ def test_unavailable_device_actions_are_disabled_but_navigation_remains():
 
     assert result["disabledCount"] == 4
     assert result["labels"] == [
-        "AC On", "AC Off", "AC 26°", "Bedroom Camera",
+        "On", "Off", "26°C", "Bedroom Camera",
         "Electricity", "Home Status",
     ]
 
@@ -64,6 +64,12 @@ def test_quick_actions_add_no_command_contract_or_polling_owner():
         "fetch(`/api/ir/${encodeURIComponent(target)}/command`"
     ) == 1
     assert "state.inFlight.has(target)" in household
-    assert "grid-template-columns: repeat(6, minmax(0, 1fr))" in css
-    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
+    assert 'data-household-ir-device' not in home
+    assert "Bedroom AC" in home
+    assert "Living Room AC" not in home
+    assert "{label:'AC On'" not in home
+    assert "{label:'AC Off'" not in home
+    assert "{label:'AC 26°'" not in home
     assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in css
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
+    assert "min-height: 64px" in css

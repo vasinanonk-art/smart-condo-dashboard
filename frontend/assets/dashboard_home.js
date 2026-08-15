@@ -114,11 +114,32 @@
     return window.DashboardElectricityHistory?.state?.history?.summary || {};
   }
 
+  function intervalPower(row) {
+    const energy = number(row?.energy_kwh);
+    const start = Date.parse(row?.interval_start || row?.timestamp || '');
+    const end = Date.parse(row?.interval_end || '');
+    const hours = Number.isFinite(start) && Number.isFinite(end) && end > start
+      ? (end - start) / 3600000 : 0.5;
+    return energy === null || hours <= 0 ? null : energy * 1000 / hours;
+  }
+
+  function energyMetrics() {
+    const electricity = window.DashboardElectricityHistory?.state || {};
+    const summary = energySummary();
+    const powers = energyPoints().map(intervalPower).filter(Number.isFinite);
+    return {
+      currentPower:number(electricity.status?.power),
+      usage:number(summary.total_energy_kwh),
+      cost:number(summary.total_cost_thb),
+      peakPower:powers.length ? Math.max(...powers) : null,
+    };
+  }
+
   function drawEnergyChart() {
     const svg = element('homeEnergyChart');
     if (!svg) return;
     const rows = energyPoints();
-    const values = rows.map(row => number(row.energy_kwh));
+    const values = rows.map(intervalPower);
     const valid = values.filter(Number.isFinite);
     const widget = element('homeEnergyWidget');
     svg.setAttribute('viewBox', '0 0 960 250');
@@ -136,7 +157,7 @@
     if (empty) empty.hidden = true;
     const width = 960;
     const height = 250;
-    const padding = {left:20, right:20, top:20, bottom:28};
+    const padding = {left:58, right:20, top:16, bottom:34};
     const maximum = Math.max(...valid, 0.001);
     const x = index => padding.left + index
       / Math.max(1, rows.length - 1)
@@ -155,9 +176,24 @@
       }
     });
     if (current.length) paths.push(current.join(' '));
+    const plotBottom = height - padding.bottom;
+    const grid = [0, 0.5, 1].map(ratio => {
+      const value = maximum * (1 - ratio);
+      const lineY = padding.top + ratio * (plotBottom - padding.top);
+      return `<line class="home-energy-grid" x1="${padding.left}" y1="${lineY}" x2="${width-padding.right}" y2="${lineY}"></line><text class="home-energy-axis-label home-energy-axis-y" x="${padding.left-9}" y="${lineY+4}" text-anchor="end">${value >= 1000 ? `${(value/1000).toFixed(1)}k` : value.toFixed(0)} W</text>`;
+    }).join('');
+    const timeIndexes = [...new Set([0, Math.round((rows.length - 1) * 0.25), Math.round((rows.length - 1) * 0.5), Math.round((rows.length - 1) * 0.75), rows.length - 1])];
+    const timeLabels = timeIndexes.map((index, labelIndex) => {
+      const stamp = Date.parse(rows[index]?.interval_start || rows[index]?.timestamp || '');
+      const label = labelIndex === timeIndexes.length - 1 ? 'Now'
+        : Number.isFinite(stamp) ? new Date(stamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false}) : '';
+      return `<text class="home-energy-axis-label home-energy-axis-x" x="${x(index)}" y="${height-8}" text-anchor="${labelIndex === 0 ? 'start' : labelIndex === timeIndexes.length - 1 ? 'end' : 'middle'}">${label}</text>`;
+    }).join('');
     svg.innerHTML = `
-      <line class="home-energy-baseline" x1="${padding.left}" y1="${height-padding.bottom}" x2="${width-padding.right}" y2="${height-padding.bottom}"></line>
+      ${grid}
+      <line class="home-energy-baseline" x1="${padding.left}" y1="${plotBottom}" x2="${width-padding.right}" y2="${plotBottom}"></line>
       ${paths.map(path => `<path class="home-energy-line" d="${path}"></path>`).join('')}
+      ${timeLabels}
     `;
   }
 
@@ -259,22 +295,25 @@
     };
     const camera = bedroomCamera(state);
     const snapshotAvailable = Boolean(camera?.online === true && camera.capabilities?.snapshot);
-    const actions = [
-      {label:'AC On', iconName:'power', enabled:ac.powerOn, kind:'ir', command:'power_on', confirm:true, reason:ac.reason},
-      {label:'AC Off', iconName:'power-off', enabled:ac.powerOff, kind:'ir', command:'power_off', confirm:true, reason:ac.reason},
-      {label:'AC 26°', iconName:'thermometer', enabled:ac.temperature26, kind:'temperature', reason:ac.reason},
+    const climateActions = [
+      {label:'On', accessibleLabel:'Bedroom AC On', iconName:'power', enabled:ac.powerOn, kind:'ir', command:'power_on', confirm:true, reason:ac.reason},
+      {label:'Off', accessibleLabel:'Bedroom AC Off', iconName:'power-off', enabled:ac.powerOff, kind:'ir', command:'power_off', confirm:true, reason:ac.reason},
+      {label:'26°C', accessibleLabel:'Bedroom AC 26°C', iconName:'thermometer', enabled:ac.temperature26, kind:'temperature', reason:ac.reason},
+    ];
+    const shortcuts = [
       {label:'Bedroom Camera', iconName:'camera', enabled:snapshotAvailable, kind:'camera', cameraId:camera?.id ? encodeURIComponent(camera.id) : '', reason:camera?.online === false ? 'Bedroom Camera is offline.' : camera ? 'Snapshot is unavailable.' : 'Bedroom Camera is unavailable.'},
       {label:'Electricity', iconName:'zap', enabled:true, kind:'nav', page:'electricity'},
       {label:'Home Status', iconName:'network', enabled:true, kind:'nav', page:'topology'},
     ];
-    host.innerHTML = actions.map(action => (
+    const actionMarkup = action => (
       `<div class="home-quick-action-item">${ui.quickAction({
         label:action.label,
         iconName:action.iconName,
         disabled:!action.enabled,
-        attributes:`data-quick-action="${action.kind}"${action.command ? ` data-command="${action.command}"` : ''}${action.page ? ` data-page="${action.page}"` : ''}${action.cameraId ? ` data-camera-id="${action.cameraId}"` : ''}${action.confirm ? ' data-confirm="true"' : ''} aria-label="${action.enabled ? action.label : `${action.label}. ${action.reason}`}"${action.enabled ? '' : ` title="${action.reason}"`}`,
+        attributes:`data-quick-action="${action.kind}"${action.command ? ` data-command="${action.command}"` : ''}${action.page ? ` data-page="${action.page}"` : ''}${action.cameraId ? ` data-camera-id="${action.cameraId}"` : ''}${action.confirm ? ' data-confirm="true"' : ''} aria-label="${action.enabled ? action.accessibleLabel || action.label : `${action.accessibleLabel || action.label}. ${action.reason}`}"${action.enabled ? '' : ` title="${action.reason}"`}`,
       })}${action.enabled ? '' : `<small>${action.reason}</small>`}</div>`
-    )).join('');
+    );
+    host.innerHTML = `<section class="home-quick-action-group" aria-labelledby="homeBedroomAcActions"><h3 id="homeBedroomAcActions">Bedroom AC</h3><div class="home-quick-action-row home-bedroom-ac-actions">${climateActions.map(actionMarkup).join('')}</div></section><section class="home-quick-action-group" aria-labelledby="homeShortcutActions"><h3 id="homeShortcutActions">Shortcuts</h3><div class="home-quick-action-row home-shortcut-actions">${shortcuts.map(actionMarkup).join('')}</div></section>`;
     host.querySelectorAll('[data-quick-action]').forEach(button => button.addEventListener('click', async () => {
       if (button.dataset.quickAction === 'nav') {
         window.nav?.(button.dataset.page);
@@ -353,9 +392,7 @@
     const metrics = element('overviewMetrics');
     if (metrics) metrics.innerHTML = metricCards(state);
     actionRequired(state);
-    const summary = energySummary();
-    const total = number(summary.total_energy_kwh);
-    const cost = number(summary.total_cost_thb);
+    const energy = energyMetrics();
     const historyState = window.DashboardElectricityHistory?.state?.history || {};
     const rangeLabel = historyState.range === '24h' ? 'Last 24 hours'
       : historyState.range === '7d' ? 'Last 7 days'
@@ -377,7 +414,7 @@
     }
     const energySummaryHost = element('homeEnergySummary');
     if (energySummaryHost) {
-      energySummaryHost.innerHTML = `<div><span>Total consumption</span><strong>${total === null ? '--' : `${total.toFixed(2)} kWh`}</strong><small>${total === null ? 'No Data' : ''}</small></div><div><span>Estimated cost</span><strong>${cost === null ? '--' : `฿${cost.toFixed(2)}`}</strong><small>${cost === null ? 'No Data' : ''}</small></div>`;
+      energySummaryHost.innerHTML = `<div><span>Current Power</span><strong>${energy.currentPower === null ? '—' : `${energy.currentPower.toFixed(0)} W`}</strong></div><div><span>24h Usage</span><strong>${energy.usage === null ? '—' : `${energy.usage.toFixed(2)} kWh`}</strong></div><div><span>Estimated Cost</span><strong>${energy.cost === null ? '—' : `${energy.cost.toFixed(2)} THB`}</strong></div><div><span>Peak Demand</span><strong>${energy.peakPower === null ? '—' : `${energy.peakPower.toFixed(0)} W`}</strong><small>${energy.peakPower === null ? 'No Data' : '30-minute average'}</small></div>`;
     }
     const airGauge = element('homeAirGauge');
     const pm25 = number(state.air?.living_room?.value);
