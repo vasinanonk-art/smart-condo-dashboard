@@ -30,10 +30,11 @@ def test_presence_startup_initialization_runs_once_under_concurrency(monkeypatch
     assert calls == ["startup"]
 
 
-def test_electricity_startup_reuses_dashboard_refresh():
+def test_electricity_startup_uses_page_scoped_dashboard_lifecycle():
     source = (ROOT / "frontend/assets/dashboard_electricity.js").read_text()
-    assert "document.readyState === 'loading'" in source
-    assert "const initialData" in source
+    assert "DashboardDataLifecycle?.register" in source
+    assert "['overview', 'electricity', 'history']" in source
+    assert "const initialData" not in source
 
 
 def test_settings_polling_only_runs_while_settings_page_is_open():

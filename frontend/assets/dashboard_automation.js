@@ -234,8 +234,8 @@
   const originalRender = window.renderPage;
   window.renderPage = function renderPageWithAutomation(page = window.currentPage()) {
     originalRender(page);
-    if (page === 'automation') { render(); if (!state.status) load(); }
+    if (page === 'automation') render();
   };
+  window.DashboardDataLifecycle?.register('automation-editor', ['automation'], load);
   document.querySelectorAll('[data-nav]').forEach(button => button.onclick = () => window.nav(button.dataset.nav));
-  load();
 })();

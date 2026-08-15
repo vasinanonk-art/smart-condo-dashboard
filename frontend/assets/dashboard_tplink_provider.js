@@ -141,5 +141,5 @@
     load,
     endpoints:endpointNames,
   });
-  document.addEventListener('DOMContentLoaded', load);
+  window.DashboardDataLifecycle?.register('tplink-provider', ['system'], load);
 })();

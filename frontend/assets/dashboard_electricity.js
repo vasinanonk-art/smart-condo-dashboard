@@ -1009,23 +1009,27 @@
   }
 
   installUi();
-  const originalRefresh = window.refresh;
   const originalRenderPage = window.renderPage;
-  window.refresh = async function refreshWithElectricity() {
-    await Promise.allSettled([originalRefresh(), loadStatus(), loadSummary(), loadTariff(), loadTariffSync()]);
-    window.renderPage(window.currentPage());
-  };
+  async function loadPageData(page) {
+    if (page === 'overview') {
+      return Promise.allSettled([loadStatus(), loadHistory()]);
+    }
+    if (page === 'history') {
+      return Promise.allSettled([loadStatus(), loadHistory(), loadComparison()]);
+    }
+    return Promise.allSettled([
+      loadStatus(), loadSummary(), loadTariff(), loadTariffSync(),
+      loadHistory(), loadComparison(),
+    ]);
+  }
+  window.DashboardDataLifecycle?.register(
+    'electricity', ['overview', 'electricity', 'history'], loadPageData
+  );
   window.renderPage = function renderPageWithElectricity(page = window.currentPage()) {
     originalRenderPage(page);
     if (page === 'electricity') render();
   };
   document.querySelectorAll('[data-nav]').forEach(button => button.onclick = () => window.nav(button.dataset.nav));
-  const initialData = document.readyState === 'loading'
-    ? Promise.resolve()
-    : Promise.allSettled([loadStatus(), loadSummary(), loadTariff(), loadTariffSync()]);
-  initialData
-    .then(() => Promise.allSettled([loadHistory(), loadComparison()]))
-    .then(() => { if (window.currentPage() === 'electricity') render(); });
   window.DashboardElectricityHistory = {
     state, historyRequest, csvExport, axisLabelStride, splitSegments,
     movingAverage, analyticsStatistics, tooltipContent, bucketLabel,

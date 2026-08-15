@@ -61,15 +61,25 @@
     return `<article class="camera-card${unavailable ? ' is-unavailable' : ''}"><div class="camera-card-head"><div><h2>${safe(camera.name || camera.display_name || camera.id || 'Camera')}</h2><span class="camera-status ${current.cls}">${current.label}</span></div></div>${snapshot}<div class="camera-card-actions">${actions || '<span class="muted">No camera actions available.</span>'}</div><details class="camera-advanced"><summary>Details</summary><dl>${technical.map(([label, value]) => `<div><dt>${safe(label)}</dt><dd>${safe(value)}</dd></div>`).join('')}</dl></details></article>`;
   }
 
-  async function render() {
+  let cameras = [];
+
+  function render() {
+    const host = document.getElementById('cameraPage');
+    if (!host) return;
+    const available = cameras.length ? cameras : (window.S?.cameras || []);
+    host.innerHTML = `<section class="camera-page-head"><p>View current camera availability and open a live view.</p><span class="muted">${available.length} camera${available.length === 1 ? '' : 's'}</span></section>${available.length ? `<div class="camera-grid">${available.map(cameraCard).join('')}</div>` : '<div class="card camera-empty">No camera configuration is available.</div>'}`;
+    host.querySelectorAll('[data-camera-snapshot]').forEach(button => button.onclick = () => window.open(`/api/camera-control/${button.dataset.cameraSnapshot}/snapshot`, '_blank', 'noopener'));
+    host.querySelectorAll('[data-camera-live]').forEach(button => button.onclick = () => window.open(`/api/camera-control/${button.dataset.cameraLive}/live`, '_blank', 'noopener'));
+  }
+
+  async function load() {
     const host = document.getElementById('cameraPage');
     if (!host) return;
     try {
       const payload = await window.get('/api/camera-control/devices');
-      const cameras = Array.isArray(payload?.cameras) ? payload.cameras : [];
-      host.innerHTML = `<section class="camera-page-head"><p>View current camera availability and open a live view.</p><span class="muted">${cameras.length} camera${cameras.length === 1 ? '' : 's'}</span></section>${cameras.length ? `<div class="camera-grid">${cameras.map(cameraCard).join('')}</div>` : '<div class="card camera-empty">No camera configuration is available.</div>'}`;
-      host.querySelectorAll('[data-camera-snapshot]').forEach(button => button.onclick = () => window.open(`/api/camera-control/${button.dataset.cameraSnapshot}/snapshot`, '_blank', 'noopener'));
-      host.querySelectorAll('[data-camera-live]').forEach(button => button.onclick = () => window.open(`/api/camera-control/${button.dataset.cameraLive}/live`, '_blank', 'noopener'));
+      cameras = Array.isArray(payload?.cameras) ? payload.cameras : [];
+      if (window.S) window.S.cameras = cameras;
+      render();
     } catch (error) {
       host.innerHTML = '<div class="card camera-empty">Camera status is temporarily unavailable.</div>';
     }
@@ -81,6 +91,7 @@
     originalRenderPage(page);
     if (page === 'camera') render();
   };
+  window.DashboardDataLifecycle?.register('camera-page', ['camera'], load);
   document.querySelectorAll('[data-nav]').forEach(button => button.onclick = () => window.nav(button.dataset.nav));
-  window.DashboardCameras = Object.freeze({status, render});
+  window.DashboardCameras = Object.freeze({status, load, render});
 })();

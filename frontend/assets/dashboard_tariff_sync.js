@@ -140,8 +140,11 @@
   }
 
   const observer = new MutationObserver(() => {
-    if (!state.loading && document.getElementById('electricitySettingsForm') && !document.getElementById('tariffSyncPanel')) load();
+    if (window.currentPage?.() !== 'settings' || state.loading) return;
+    if (document.getElementById('electricitySettingsForm') && !document.getElementById('tariffSyncPanel')) {
+      state.status ? render() : load();
+    }
   });
   observer.observe(document.documentElement,{childList:true,subtree:true});
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded',load); else load();
+  window.DashboardDataLifecycle?.register('tariff-sync', ['settings'], load);
 })();

@@ -147,14 +147,26 @@
 
   function start() {
     if (state.timer) return;
-    load();
     state.timer = window.setInterval(load, POLL_INTERVAL_MS);
   }
 
+  function stop() {
+    if (!state.timer) return;
+    window.clearInterval(state.timer);
+    state.timer = null;
+  }
+
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) load();
+    if (!document.hidden && window.currentPage?.() === 'system') load();
   });
-  document.addEventListener('DOMContentLoaded', start);
+  window.addEventListener('dashboard:pagechange', event => {
+    if (event.detail?.page === 'system') start();
+    else stop();
+  });
+  window.DashboardDataLifecycle?.register('device-health', ['system'], async () => {
+    start();
+    await load();
+  });
 
   window.DeviceHealthDashboard = {
     load,
@@ -163,6 +175,8 @@
     statusLabel,
     healthClass,
     metricRows,
+    start,
+    stop,
     uptimeLabel,
     state,
   };

@@ -113,6 +113,7 @@ def test_environment_keeps_one_responsive_chart_and_air_quality_is_compact():
     assert 'id="overviewPmChart"' not in HTML
     assert 'id="homeEnvironmentCurrent"' in HTML
     assert 'id="homeAirSummary"' in HTML
+    assert 'home-environment-widget sc-span-12' in HTML
     assert "drawChart('overviewPmChart'" not in HOME
     assert "height: auto" in CSS
     assert "min-height: 0" in CSS
@@ -124,6 +125,7 @@ def test_environment_keeps_one_responsive_chart_and_air_quality_is_compact():
     for status in ("Good", "Moderate", "Unhealthy", "Stale", "Unavailable"):
         assert f"label:'{status}'" in HOME
     assert ".home-air-summary" in CSS and ".home-air-room" in CSS
+    assert "margin: var(--sc-space-2) 0 var(--sc-space-4)" in CSS
 
 
 def test_advanced_details_are_mobile_collapsed_stats_only():

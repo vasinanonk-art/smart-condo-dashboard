@@ -42,13 +42,14 @@ def test_frontend_billing_owner_is_page_scoped_and_non_overlapping():
 def test_global_refresh_and_polish_startup_do_not_fetch_billing_endpoints():
     electricity = (ROOT / "frontend/assets/dashboard_electricity.js").read_text()
     polish = (ROOT / "frontend/assets/dashboard_polish10.js").read_text()
-    global_refresh = electricity.split("window.refresh = async function refreshWithElectricity()", 1)[1].split("window.renderPage =", 1)[0]
-    initial = electricity.split("const initialData", 1)[1].split("initialData", 1)[0]
+    page_loader = electricity.split("async function loadPageData(page)", 1)[1].split("window.DashboardDataLifecycle", 1)[0]
     polish_load = polish.split("async function load()", 1)[1].split("function ensureHistoryPage", 1)[0]
-    for source in (global_refresh, initial, polish_load):
+    for source in (page_loader, polish_load):
         assert "/api/electricity/billing-cycle" not in source
         assert "loadBilling()" not in source
         assert "loadBillingCycleStatus()" not in source
+    assert "window.refresh =" not in electricity
+    assert "const initialData" not in electricity
 
 
 def test_segmented_request_reads_history_once(monkeypatch):

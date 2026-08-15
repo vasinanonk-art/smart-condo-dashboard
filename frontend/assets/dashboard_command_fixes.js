@@ -45,11 +45,3 @@
     }
   }, true);
 })();
-
-// This file is parser-loaded after dashboard_v3.js. Insert the topology module
-// synchronously so it extends the existing renderer and refresh timer without
-// creating a second polling interval.
-if (!window.__smartCondoTopologyLoaded) {
-  window.__smartCondoTopologyLoaded = true;
-  document.write('<script src="/assets/dashboard_topology.js"><\/script>');
-}

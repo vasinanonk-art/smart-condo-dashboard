@@ -9,7 +9,7 @@
   const state = {
     status:null, capabilities:null, timer:null, inventoryTimer:null, busy:false,
     detailsLoaded:false, detailsLoading:false, pairing:null, diagnostics:null,
-    pendingCommands:new Set(), inventoryAttempts:0,
+    pendingCommands:new Set(), inventoryAttempts:0, bound:false,
   };
   const safe = UI.safe;
   const serviceMessage = url => url.includes('/pairing/')
@@ -206,6 +206,8 @@
   }
 
   function bind() {
+    if (state.bound) return;
+    state.bound = true;
     document.querySelector('[data-lg-details]')?.addEventListener('toggle', event => {
       if (event.currentTarget.open) loadDetails();
     });
@@ -243,8 +245,9 @@
     if (mount()) render();
   };
 
-  if (mount()) {
+  window.DashboardDataLifecycle?.register('lg-status', ['entertainment'], async () => {
+    if (!mount()) return;
     bind();
-    refresh();
-  }
+    await refresh();
+  });
 })();

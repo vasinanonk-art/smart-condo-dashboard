@@ -22,6 +22,57 @@ def run_node(script: str):
     return json.loads(result.stdout)
 
 
+def page_scoped_loading_behavior():
+    source = json.dumps(str(ROOT / "frontend/assets/dashboard_v3.js"))
+    return run_node(
+        f"""
+const fs=require('fs'),vm=require('vm');
+const callbacks={{}};
+const calls=[];
+const elements={{}};
+const element=id=>elements[id]||(elements[id]={{
+  id,dataset:{{}},style:{{}},classList:{{toggle:()=>{{}}}},textContent:'',innerHTML:'',
+  setAttribute:()=>{{}},removeAttribute:()=>{{}},querySelector:()=>null,
+  querySelectorAll:()=>[],addEventListener:()=>{{}},insertAdjacentHTML:()=>{{}}
+}});
+const document={{
+  hidden:false,documentElement:{{dataset:{{dashboardPage:'overview'}}}},
+  body:{{contains:()=>true}},
+  getElementById:id=>element(id),querySelector:()=>null,querySelectorAll:()=>[],
+  addEventListener:(name,fn)=>{{callbacks[name]=fn;}}
+}};
+const window={{
+  setTimeout:(fn)=>{{fn();return 1;}},clearTimeout:()=>{{}},
+  setInterval:()=>1,clearInterval:()=>{{}},requestAnimationFrame:()=>1,
+  addEventListener:()=>{{}},dispatchEvent:()=>{{}},matchMedia:()=>({{matches:false}})
+}};
+const fetch=async url=>{{calls.push(url);return {{ok:true,json:async()=>({{}})}};}};
+const context={{
+  window,document,fetch,console,Promise,URL,Blob,XMLSerializer:class {{}},Image:class {{}},
+  location:{{hash:'#overview'}},history:{{replaceState:()=>{{}}}},
+  DashboardModules:{{loadZones:async()=>{{}},loadAutomations:async()=>{{}},renderZones:()=>{{}}}},
+  setTimeout:window.setTimeout,clearTimeout:window.clearTimeout,
+}};
+vm.createContext(context);
+vm.runInContext(fs.readFileSync({source},'utf8'),context);
+(async()=>{{
+  const first=window.DashboardDataLifecycle.refresh({{page:'overview'}});
+  const duplicate=window.DashboardDataLifecycle.refresh({{page:'overview'}});
+  await Promise.all([first,duplicate]);
+  const homeCalls=calls.slice();
+  window.DashboardDataLifecycle.register('settings-probe',['settings'],async()=>calls.push('settings-probe'));
+  await window.DashboardDataLifecycle.refresh({{page:'settings'}});
+  process.stdout.write(JSON.stringify({{
+    homeCalls,
+    homeCallCount:homeCalls.length,
+    settingsCalls:calls.slice(homeCalls.length),
+    diagnostics:window.DashboardDataLifecycle.diagnostics(),
+  }}));
+}})().catch(error=>{{console.error(error);process.exit(1);}});
+"""
+    )
+
+
 def chart_behavior():
     source = json.dumps(str(ROOT / "frontend/assets/dashboard_pm25_hotfix.js"))
     return run_node(

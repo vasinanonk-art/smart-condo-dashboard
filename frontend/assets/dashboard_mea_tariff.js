@@ -133,7 +133,12 @@
     });
   }
 
-  const observer=new MutationObserver(()=>{if(document.getElementById('electricitySettingsForm')&&!document.getElementById('meaOfficialSync'))load();});
+  const observer=new MutationObserver(()=>{
+    if(window.currentPage?.()!=='settings')return;
+    if(document.getElementById('electricitySettingsForm')&&!document.getElementById('meaOfficialSync')){
+      state.status?render():load();
+    }
+  });
   observer.observe(document.documentElement,{childList:true,subtree:true});
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',load);else load();
+  window.DashboardDataLifecycle?.register('mea-tariff', ['settings'], load);
 })();

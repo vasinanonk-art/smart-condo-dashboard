@@ -171,10 +171,8 @@
   }
 
   installUi();
-  const originalRefresh = window.refresh;
   const originalRenderPage = window.renderPage;
-  window.refresh = async function refreshWithSettings() { await Promise.allSettled([originalRefresh(), loadAll()]); window.renderPage(window.currentPage()); };
+  window.DashboardDataLifecycle?.register('settings', ['settings'], loadAll);
   window.renderPage = function renderPageWithSettings(page = window.currentPage()) { originalRenderPage(page); if (page === 'settings') render(); };
   document.querySelectorAll('[data-nav]').forEach(button => button.onclick = () => window.nav(button.dataset.nav));
-  loadAll().then(() => { if (window.currentPage() === 'settings') render(); });
 })();

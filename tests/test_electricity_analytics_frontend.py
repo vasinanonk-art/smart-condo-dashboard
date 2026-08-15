@@ -76,5 +76,8 @@ def test_responsive_layout_and_no_duplicate_history_request():
     assert "@media(max-width:1180px)" in CSS
     assert "@media(max-width:820px)" in CSS
     assert "@media(max-width:560px)" in CSS
-    initial = JS[JS.index("const initialData"):JS.index("window.DashboardElectricityHistory")]
-    assert initial.count("loadHistory()") == 1
+    loader = JS[JS.index("async function loadPageData"):JS.index("window.DashboardElectricityHistory")]
+    overview = loader[loader.index("if (page === 'overview')"):loader.index("if (page === 'history')")]
+    assert overview.count("loadHistory()") == 1
+    assert "DashboardDataLifecycle?.register" in JS
+    assert "const initialData" not in JS

@@ -3,7 +3,7 @@
   if (window.__dashboardPolish10Installed) return;
   window.__dashboardPolish10Installed = true;
 
-  const state = {status:null,maintenance:null};
+  const state = {status:null,maintenance:null,loadPromise:null};
   const safe = value => window.safeText ? window.safeText(value) : String(value ?? '');
   const timeLabel = ts => ts ? new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Bangkok',year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(Number(ts)*1000)) : 'Not available';
   const relative = ts => { if (!ts) return ''; const seconds=Math.max(0,Math.floor(Date.now()/1000-Number(ts))); if(seconds<60)return 'just now'; if(seconds<3600)return `${Math.floor(seconds/60)} min ago`; if(seconds<86400)return `${Math.floor(seconds/3600)} hr ago`; return `${Math.floor(seconds/86400)} d ago`; };
@@ -13,13 +13,17 @@
   const category = item => { const kind=String(item.kind||''); if(/billing|tariff|history|import|retention/.test(kind))return 'Electricity'; if(/maintenance|analysis|prune/.test(kind))return 'Maintenance'; if(/presence/.test(kind))return 'Presence'; if(/camera/.test(kind))return 'Camera'; return 'System'; };
 
   async function load() {
-    const results = await Promise.allSettled([
+    if (state.loadPromise) return state.loadPromise;
+    state.loadPromise = Promise.allSettled([
       window.get('/api/settings/electricity/status'),
       window.get('/api/maintenance/status')
-    ]);
-    if(results[0].status==='fulfilled')state.status=results[0].value;
-    if(results[1].status==='fulfilled')state.maintenance=results[1].value;
-    renderAll();
+    ]).then(results => {
+      if(results[0].status==='fulfilled')state.status=results[0].value;
+      if(results[1].status==='fulfilled')state.maintenance=results[1].value;
+      renderAll();
+      return results;
+    }).finally(() => { state.loadPromise = null; });
+    return state.loadPromise;
   }
 
   function ensureHistoryPage(){
@@ -71,5 +75,8 @@
 
   const originalRenderPage=window.renderPage;
   window.renderPage=function polishedRender(page=window.currentPage()){originalRenderPage(page);setTimeout(renderAll,0);};
-  ensureHistoryPage();load();
+  window.DashboardDataLifecycle?.register(
+    'polish-details', ['electricity','history','settings','system','more'], load
+  );
+  ensureHistoryPage();
 })();

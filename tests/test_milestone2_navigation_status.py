@@ -6,6 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 INDEX = (ROOT / "frontend/index.html").read_text()
 M2 = (ROOT / "frontend/assets/dashboard_milestone2.js").read_text()
 M2_CSS = (ROOT / "frontend/assets/dashboard_milestone2.css").read_text()
+PAGE_CHROME = (ROOT / "frontend/assets/dashboard_page_chrome.js").read_text()
+HOME_CSS = (ROOT / "frontend/assets/dashboard_home.css").read_text()
 HOME = (ROOT / "frontend/assets/dashboard_home.js").read_text()
 CAMERAS = (ROOT / "frontend/assets/dashboard_cameras.js").read_text()
 CAMERA_CSS = (ROOT / "frontend/assets/dashboard_cameras.css").read_text()
@@ -40,6 +42,29 @@ def test_more_and_devices_landings_link_to_preserved_routes():
     assert "Household tools" in INDEX
     assert "System and configuration" in INDEX
     assert '<h2>Devices</h2>' not in M2
+
+
+def test_secondary_destinations_have_explicit_parent_back_navigation():
+    for route in ("lighting", "climate", "entertainment", "presence"):
+        assert f"{route}: {{page:'devices', label:'Devices'}}" in PAGE_CHROME
+    for route in ("system", "topology", "history", "automation", "settings"):
+        assert f"{route}: {{page:'more', label:'More'}}" in PAGE_CHROME
+    assert "button.id = 'pageBackButton'" in PAGE_CHROME
+    assert "button.onclick = () => window.nav(parent.page)" in PAGE_CHROME
+    assert "Back to ${parent.label}" in PAGE_CHROME
+    assert "window.scrollTo({top:0, left:0, behavior:'auto'});" in PAGE_CHROME
+
+
+def test_desktop_pages_use_shared_container_and_navigation_does_not_overlay_content():
+    assert '.main > .page:not([data-page="overview"])' in HOME_CSS
+    assert "width: min(100%, var(--sc-content-max))" in HOME_CSS
+    desktop_navigation = HOME_CSS.split(
+        ".sc-dashboard-shell > .sc-bottom-navigation-container", 1
+    )[1].split("}", 1)[0]
+    assert "position: relative" in desktop_navigation
+    mobile = HOME_CSS.split("@media (max-width: 760px)", 1)[1]
+    assert "position: fixed" in mobile
+    assert "padding-bottom: calc(152px + env(safe-area-inset-bottom))" in mobile
 
 
 def test_status_contract_and_lg_truthfulness():

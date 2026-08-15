@@ -16,6 +16,13 @@ const SERIES = {
 const chartState = {};
 const sonoffCards = new Map();
 let refreshTimer = null;
+let refreshInFlight = null;
+let refreshPage = null;
+let queuedRefreshPage = null;
+let dashboardReady = false;
+let renderFrame = null;
+let homeDetailsHistoryPromise = null;
+const dashboardPageLoaders = new Map();
 
 const $ = id => document.getElementById(id);
 const num = value => value === null || value === undefined || value === '' ? null : Number(value);
@@ -47,6 +54,43 @@ function toast(text) {
 function currentPage() {
   return (location.hash || '#overview').slice(1);
 }
+function registerDashboardPageLoader(name, pages, loader) {
+  if (!name || typeof loader !== 'function') return () => {};
+  const pageSet = new Set(Array.isArray(pages) ? pages : [pages]);
+  dashboardPageLoaders.set(name, {pages:pageSet, loader});
+  return () => dashboardPageLoaders.delete(name);
+}
+function schedulePageRender(page) {
+  if (currentPage() !== page || renderFrame) return;
+  const schedule = window.requestAnimationFrame || (callback => window.setTimeout(callback, 0));
+  renderFrame = schedule(() => {
+    renderFrame = null;
+    if (currentPage() !== page) return;
+    renderBadges();
+    renderPage(page);
+  });
+}
+function coreLoadersForPage(page) {
+  const loaders = {
+    overview:[loadStatus, loadAir, loadHealth, loadCameras],
+    devices:[loadSonoff, loadLights, loadClimateDevices, loadCameras, loadHealth, () => DashboardModules.loadZones(get)],
+    lighting:[loadSonoff, loadLights, loadScenes, loadHealth, () => DashboardModules.loadZones(get)],
+    climate:[loadStatus, loadHistory, loadAir, loadClimateDevices],
+    entertainment:[loadHealth, loadSystem],
+    presence:[loadStatus],
+    system:[loadHealth, loadSystem, loadSonoff, loadCameras],
+    camera:[],
+    more:[loadHealth],
+    automation:[() => DashboardModules.loadAutomations(get)],
+  };
+  return loaders[page] || [];
+}
+function pageLoaders(page) {
+  const registered = [...dashboardPageLoaders.values()]
+    .filter(item => item.pages.has(page) || item.pages.has('*'))
+    .map(item => () => item.loader(page));
+  return [...coreLoadersForPage(page), ...registered];
+}
 function nav(page) {
   const previousPage = document.documentElement.dataset.dashboardPage;
   document.documentElement.dataset.dashboardPage = page;
@@ -64,6 +108,11 @@ function nav(page) {
   const names = {overview:'Overview', lighting:'Lighting', climate:'Climate & Air Quality', entertainment:'Entertainment', presence:'Presence & Automation', system:'System'};
   if ($('pageTitle')) $('pageTitle').textContent = names[page] || 'Dashboard';
   if (location.hash !== `#${page}`) history.replaceState(null, '', `#${page}`);
+  if (typeof window.CustomEvent === 'function') {
+    window.dispatchEvent(new window.CustomEvent('dashboard:pagechange', {
+      detail:{page, previousPage},
+    }));
+  }
   const settings = window.DashboardElectricitySettings;
   if (page === 'settings') {
     if (previousPage !== 'settings') settings?.activate?.();
@@ -83,6 +132,9 @@ function nav(page) {
     });
   });
   window.requestAnimationFrame(() => renderPage(page));
+  if (dashboardReady && previousPage !== page) {
+    window.setTimeout(() => refresh({page, reason:'navigation'}), 0);
+  }
 }
 function renderPage(page = currentPage()) {
   if (page === 'overview') renderOverview();
@@ -440,17 +492,44 @@ function renderBadges() {
     topHealth.setAttribute('aria-label', `${topHealth.textContent}. View system details.`);
   }
 }
-async function refresh() {
-  await Promise.allSettled([
-    loadStatus(), loadHistory(), loadAir(), loadClimateDevices(), loadSonoff(), loadLights(), loadScenes(), loadHealth(), loadSystem(), loadCameras(),
-    DashboardModules.loadZones(get), DashboardModules.loadAutomations(get)
-  ]);
-  renderBadges();
-  renderPage(currentPage());
-  if (currentPage() === 'electricity' || currentPage() === 'history') {
-    await window.DashboardElectricityBilling?.refresh?.();
+async function refresh(options = {}) {
+  const requestedPage = typeof options === 'string'
+    ? options : options.page || currentPage();
+  if (refreshInFlight) {
+    if (requestedPage !== refreshPage) queuedRefreshPage = requestedPage;
+    return refreshInFlight;
   }
+  const loaders = pageLoaders(requestedPage);
+  refreshPage = requestedPage;
+  refreshInFlight = Promise.allSettled(loaders.map(loader => (
+    Promise.resolve().then(loader).finally(() => schedulePageRender(requestedPage))
+  ))).then(async results => {
+    schedulePageRender(requestedPage);
+    if (requestedPage === 'electricity' || requestedPage === 'history') {
+      await window.DashboardElectricityBilling?.refresh?.();
+    }
+    return results;
+  }).finally(() => {
+    refreshInFlight = null;
+    refreshPage = null;
+    const nextPage = queuedRefreshPage;
+    queuedRefreshPage = null;
+    if (nextPage && nextPage !== requestedPage) {
+      window.setTimeout(() => refresh({page:nextPage, reason:'queued'}), 0);
+    }
+  });
+  return refreshInFlight;
 }
+
+window.DashboardDataLifecycle = {
+  register:registerDashboardPageLoader,
+  refresh,
+  diagnostics:() => ({
+    active_page:currentPage(),
+    refresh_in_flight:Boolean(refreshInFlight),
+    registered_loaders:[...dashboardPageLoaders.keys()],
+  }),
+};
 
 function bindStaticControls() {
   document.querySelectorAll('[data-nav]').forEach(button => button.onclick = () => nav(button.dataset.nav));
@@ -470,9 +549,24 @@ function bindStaticControls() {
 document.addEventListener('DOMContentLoaded', async () => {
   bindStaticControls();
   nav(currentPage());
-  await refresh();
+  renderBadges();
+  renderPage(currentPage());
+  const homeDetails = document.querySelector('details.home-details');
+  homeDetails?.addEventListener('toggle', () => {
+    if (!homeDetails.open || S.history.length || homeDetailsHistoryPromise) return;
+    homeDetailsHistoryPromise = loadHistory()
+      .then(() => schedulePageRender('overview'))
+      .finally(() => { homeDetailsHistoryPromise = null; });
+  });
+  dashboardReady = true;
+  await refresh({page:currentPage(), reason:'startup'});
   if (refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = window.setInterval(refresh, 15000);
+  refreshTimer = window.setInterval(() => {
+    if (!document.hidden) refresh({page:currentPage(), reason:'poll'});
+  }, 15000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refresh({page:currentPage(), reason:'visible'});
+  });
   window.addEventListener('resize', () => {
     if (currentPage() === 'overview') { redrawChart('overviewChart'); redrawChart('overviewPmChart'); }
     if (currentPage() === 'climate') redrawChart('airChart');

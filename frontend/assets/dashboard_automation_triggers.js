@@ -104,6 +104,6 @@
   const observer=new MutationObserver(()=>enhance());
   observer.observe(document.body,{childList:true,subtree:true});
   const originalRenderPage=window.renderPage;
-  window.renderPage=function triggerRuntimeRender(page=window.currentPage()){originalRenderPage(page);if(page==='automation'){setTimeout(()=>{loadRuntime();enhance();},0);}};
-  loadRuntime();
+  window.renderPage=function triggerRuntimeRender(page=window.currentPage()){originalRenderPage(page);if(page==='automation'){setTimeout(enhance,0);}};
+  window.DashboardDataLifecycle?.register('automation-runtime', ['automation'], loadRuntime);
 })();

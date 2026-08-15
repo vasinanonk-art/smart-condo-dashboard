@@ -93,7 +93,6 @@
 
   install();
   const state = {data:null, selected:null, fitted:null};
-  const originalRefresh = window.refresh;
   const originalRender = window.renderPage;
 
   function normalize(raw) {
@@ -375,10 +374,7 @@
     document.getElementById('topologyEvents').innerHTML = (state.data.events || []).slice(0, 10).map(event => `<div class="event-row"><time>${safe(event.time || '')}</time><strong>${safe(event.message || event.event || '')}</strong></div>`).join('');
   }
 
-  window.refresh = async function refreshWithTopology() {
-    await Promise.allSettled([originalRefresh(), load()]);
-    window.renderPage(window.currentPage());
-  };
+  window.DashboardDataLifecycle?.register('topology', ['topology'], load);
   window.renderPage = function renderPageWithTopology(page = window.currentPage()) {
     originalRender(page);
     if (page === 'topology') render();
@@ -396,9 +392,6 @@
   });
   document.querySelectorAll('[data-nav]').forEach(button => {
     button.onclick = () => window.nav(button.dataset.nav);
-  });
-  load().then(() => {
-    if (window.currentPage() === 'topology') render();
   });
   window.DashboardTopologyModel = {edges:EDGES, groups:GROUPS, order:ORDER, normalize, layout, routes, diagnostics, summary, linkHealth, statusLabel, pathMidpoint};
 })();

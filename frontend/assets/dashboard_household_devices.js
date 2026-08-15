@@ -383,11 +383,14 @@
     originalRenderPage(page);
     render();
   };
+  window.DashboardDataLifecycle?.register(
+    'household-devices', ['overview','devices','climate','entertainment','camera'], load
+  );
   window.DashboardHouseholdDevices = Object.freeze({
     bindIrCommands,
     irActions,
+    load,
     quickActionState,
     sendIrCommand,
   });
-  load();
 })();
