@@ -108,33 +108,39 @@ def test_home_details_has_one_compact_current_state_summary():
     assert "home-detail-boundary" not in HTML
 
 
-def test_environment_and_air_quality_each_have_one_mobile_chart():
+def test_environment_keeps_one_responsive_chart_and_air_quality_is_compact():
     assert HTML.count('id="overviewChart"') == 1
-    assert HTML.count('id="overviewPmChart"') == 1
+    assert 'id="overviewPmChart"' not in HTML
     assert 'id="homeEnvironmentCurrent"' in HTML
-    assert 'id="homeAirCurrent"' in HTML
-    assert "height: 190px" in CSS
-    assert "min-height: 190px" in CSS
+    assert 'id="homeAirSummary"' in HTML
+    assert "drawChart('overviewPmChart'" not in HOME
+    assert "height: auto" in CSS
+    assert "min-height: 0" in CSS
+    assert "aspect-ratio: 16 / 9" in CSS
     assert "home-range-segments" in HTML
     assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in CSS
+    for room in ("Living Room", "Bedroom"):
+        assert f"['{room}', state.air?." in HOME
+    for status in ("Good", "Moderate", "Unhealthy", "Stale", "Unavailable"):
+        assert f"label:'{status}'" in HOME
+    assert ".home-air-summary" in CSS and ".home-air-room" in CSS
 
 
-def test_mobile_chart_controls_and_range_details_are_advanced_by_default():
+def test_advanced_details_are_mobile_collapsed_stats_only():
     assert 'id="homeAdvancedDetails"' in HTML
     assert '<summary>Advanced details</summary>' in HTML
-    assert 'id="homeAdvancedChartTools"' in HTML
+    assert 'id="homeAdvancedChartTools"' not in HTML
     assert "advanced.open = !mobile" in HOME
-    assert 'data-home-export-chart="overviewChart"' in HOME
-    assert 'data-home-export-chart="overviewPmChart"' in HOME
-    assert HOME.count('data-home-export="png"') == 2
-    assert HOME.count('data-home-export="csv"') == 2
-    assert "Export PNG" in HOME and "Export CSV" in HOME
-    assert "tools.hidden = mobile" in HOME
-    mobile_organizer = HOME[HOME.index("function organizeHomeDetails"):HOME.index("function render({")]
-    assert "chartZoom" not in mobile_organizer
-    assert "chartPan" not in mobile_organizer
-    assert "chartReset" not in mobile_organizer
+    assert 'data-home-export-chart=' not in HOME
+    assert 'data-home-export=' not in HOME
+    assert "Export PNG" not in HOME and "Export CSV" not in HOME
+    assert "ensureChartToolbar('overviewChart')" not in HOME
+    assert 'id="overviewStats"' in HTML
+    for label in ("Average", "Minimum", "Maximum"):
+        assert f"['{label}'," in HOME
     assert ".home-advanced-details:not([open])" in CSS
+    assert "min-height: 0" in CSS
+    assert "padding: 0" in CSS
 
 
 def test_empty_device_summary_is_not_rendered_as_large_status_card():
@@ -157,10 +163,7 @@ def test_home_details_mobile_axis_is_compact_and_stays_inside_chart():
 
 
 def test_home_details_legends_are_outside_plot_and_before_charts():
-    environment = HTML[HTML.index('class="sc-line-chart-card home-environment-widget'):HTML.index('class="sc-line-chart-card home-air-widget')]
-    air = HTML[HTML.index('class="sc-line-chart-card home-air-widget'):HTML.index('id="homeAdvancedDetails"')]
+    environment = HTML[HTML.index('class="sc-line-chart-card home-environment-widget'):HTML.index('class="sc-widget-container home-air-widget')]
     assert environment.index("home-chart-legend") < environment.index('class="chart-wrap"')
-    assert air.index("home-chart-legend") < air.index('class="chart-wrap"')
     assert "Temperature</span>" in environment and "Humidity</span>" in environment
-    assert "Living Room</span>" in air and "Bedroom</span>" in air
     assert ".home-chart-legend" in CSS

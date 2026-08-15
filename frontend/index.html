@@ -101,14 +101,12 @@
             <div class="legend home-chart-legend" aria-label="Environment chart legend"><span><i style="background:var(--yellow)"></i>Temperature</span><span><i style="background:var(--cyan)"></i>Humidity</span></div>
             <div class="chart-wrap"><svg id="overviewChart" class="chart"></svg><div class="tooltip"></div></div>
           </section>
-          <section class="sc-line-chart-card home-air-widget sc-span-12">
-            <header class="sc-widget-header"><div><h2 class="sc-widget-title">Air Quality</h2><p class="sc-widget-subtitle">Living room and bedroom PM2.5 trends</p><div id="homeAirCurrent" class="home-chart-current"></div></div></header>
-            <div class="legend home-chart-legend" aria-label="Air quality chart legend"><span><i style="background:var(--accent)"></i>Living Room</span><span><i style="background:var(--purple)"></i>Bedroom</span></div>
-            <div class="chart-wrap"><svg id="overviewPmChart" class="chart"></svg><div class="tooltip"></div></div>
+          <section class="sc-widget-container home-air-widget sc-span-12">
+            <header class="sc-widget-header"><div><h2 class="sc-widget-title">Air Quality</h2><p class="sc-widget-subtitle">Current PM2.5 by room</p></div></header>
+            <div id="homeAirSummary" class="home-air-summary" aria-label="Current air quality"></div>
           </section>
           <details id="homeAdvancedDetails" class="sc-widget-container home-advanced-details sc-span-12">
             <summary>Advanced details</summary>
-            <div id="homeAdvancedChartTools" class="home-advanced-chart-tools"></div>
             <div id="overviewStats" class="sc-responsive-grid"></div>
           </details>
           <section class="sc-widget-container sc-span-12">

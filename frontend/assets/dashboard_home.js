@@ -354,41 +354,37 @@
     )).join('');
   }
 
-  function organizeHomeDetails(chartPng, chartCsv) {
+  function airQualityStatus(value, stale) {
+    if (stale) return {label:'Stale', status:'warning'};
+    if (value === null) return {label:'Unavailable', status:'neutral'};
+    if (value <= 15) return {label:'Good', status:'success'};
+    if (value <= 37.5) return {label:'Moderate', status:'warning'};
+    return {label:'Unhealthy', status:'critical'};
+  }
+
+  function renderAirSummary(state, safeText) {
+    const host = element('homeAirSummary');
+    const ui = window.SmartCondoUI;
+    if (!host || !ui) return;
+    const rooms = [
+      ['Living Room', state.air?.living_room],
+      ['Bedroom', state.air?.bedroom],
+    ];
+    host.innerHTML = rooms.map(([label, reading]) => {
+      const value = number(reading?.value);
+      const quality = airQualityStatus(value, reading?.stale === true);
+      return `<article class="home-air-room"><div><span>${safeText(label)}</span><strong>${value === null ? '—' : `${value.toFixed(1)} µg/m³`}</strong></div>${ui.statusChip(quality)}</article>`;
+    }).join('');
+  }
+
+  function organizeHomeDetails() {
     const advanced = element('homeAdvancedDetails');
-    const toolHost = element('homeAdvancedChartTools');
-    if (!advanced || !toolHost) return;
+    if (!advanced) return;
     const mobile = window.matchMedia?.('(max-width: 680px)')?.matches === true;
     if (!advanced.dataset.homeDisclosureInitialized) {
       advanced.dataset.homeDisclosureInitialized = 'true';
       advanced.open = !mobile;
     }
-    const chartTools = document.querySelectorAll('[data-tools-for="overviewChart"],[data-tools-for="overviewPmChart"]');
-    chartTools.forEach(tools => { tools.hidden = mobile; });
-    if (!mobile) {
-      toolHost.innerHTML = '';
-      return;
-    }
-    toolHost.dataset.exportChart = toolHost.dataset.exportChart || 'overviewChart';
-    toolHost.innerHTML = `<div class="home-export-chart-selector" role="group" aria-label="Chart to export">
-      <button class="sc-button sc-button-secondary" type="button" data-home-export-chart="overviewChart">Environment</button>
-      <button class="sc-button sc-button-secondary" type="button" data-home-export-chart="overviewPmChart">Air Quality</button>
-    </div><div class="home-export-actions">
-      <button class="sc-button sc-button-secondary" type="button" data-home-export="png">Export PNG</button>
-      <button class="sc-button sc-button-secondary" type="button" data-home-export="csv">Export CSV</button>
-    </div>`;
-    const syncSelection = () => toolHost.querySelectorAll('[data-home-export-chart]').forEach(button => {
-      const selected = button.dataset.homeExportChart === toolHost.dataset.exportChart;
-      button.classList.toggle('active', selected);
-      button.setAttribute('aria-pressed', String(selected));
-    });
-    toolHost.querySelectorAll('[data-home-export-chart]').forEach(button => button.onclick = () => {
-      toolHost.dataset.exportChart = button.dataset.homeExportChart;
-      syncSelection();
-    });
-    toolHost.querySelector('[data-home-export="png"]').onclick = () => chartPng(toolHost.dataset.exportChart);
-    toolHost.querySelector('[data-home-export="csv"]').onclick = () => chartCsv(toolHost.dataset.exportChart);
-    syncSelection();
   }
 
   function render({
@@ -441,13 +437,11 @@
     if (energySummaryHost) {
       energySummaryHost.innerHTML = `<div><span>Current Power</span><strong>${energy.currentPower === null ? '—' : `${energy.currentPower.toFixed(0)} W`}</strong></div><div><span>24h Usage</span><strong>${energy.usage === null ? '—' : `${energy.usage.toFixed(2)} kWh`}</strong></div><div><span>Estimated Cost</span><strong>${energy.cost === null ? '—' : `${energy.cost.toFixed(2)} THB`}</strong></div><div><span>Peak (30m Avg)</span><strong>${energy.peakPower === null ? '—' : `${energy.peakPower.toFixed(0)} W`}</strong><small>${energy.peakPower === null ? 'No Data' : '30-minute average'}</small></div>`;
     }
-    const pm25 = number(state.air?.living_room?.value);
     const temperature = number(state.sensor?.temperature);
     const humidity = number(state.sensor?.humidity);
     const environmentCurrent = element('homeEnvironmentCurrent');
     if (environmentCurrent) environmentCurrent.innerHTML = `<span><strong>${temperature === null ? '—' : `${temperature.toFixed(1)} °C`}</strong> Temperature</span><span><strong>${humidity === null ? '—' : `${humidity.toFixed(0)}%`}</strong> Humidity</span>`;
-    const airCurrent = element('homeAirCurrent');
-    if (airCurrent) airCurrent.innerHTML = `<span><strong>${pm25 === null ? '—' : `${pm25.toFixed(1)} µg/m³`}</strong> Living room${state.air?.living_room?.stale ? ' · stale' : ''}</span>`;
+    renderAirSummary(state, safeText);
     const ranges = element('overviewRanges');
     if (ranges) {
       ranges.innerHTML = ['24h', '3d', '7d'].map(range => (
@@ -457,10 +451,7 @@
     }
     renderStatistics(history, stat, fmt, safeText);
     drawChart('overviewChart', history, series.overview);
-    drawChart('overviewPmChart', history, series.air);
-    ensureChartToolbar('overviewChart');
-    ensureChartToolbar('overviewPmChart');
-    organizeHomeDetails(chartPng, chartCsv);
+    organizeHomeDetails();
     drawEnergyChart();
     renderSecondaryWidgets(state);
     renderQuickActions(state);

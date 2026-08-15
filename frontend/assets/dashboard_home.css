@@ -715,19 +715,8 @@ html[data-dashboard-page="overview"] .sc-dashboard-shell .sc-top-bar {
   border-bottom: 1px solid var(--sc-color-border);
 }
 
-.home-advanced-chart-tools {
-  display: grid;
-  padding: var(--sc-space-3);
-  gap: var(--sc-space-2);
-}
-
-.home-advanced-chart-tools:empty {
-  display: none;
-}
-
 #homeDevicesWidget[hidden],
-[data-tools-for="overviewChart"][hidden],
-[data-tools-for="overviewPmChart"][hidden] {
+[data-tools-for="overviewChart"][hidden] {
   display: none !important;
 }
 
@@ -736,16 +725,39 @@ html[data-dashboard-page="overview"] .sc-dashboard-shell .sc-top-bar {
   margin: 0 0 var(--sc-space-2);
 }
 
-.home-export-chart-selector,
-.home-export-actions {
+.home-air-summary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--sc-space-2);
+  gap: var(--sc-space-3);
 }
 
-.home-export-chart-selector .active {
-  border-color: var(--sc-color-accent);
-  color: var(--sc-color-accent);
+.home-air-room {
+  display: flex;
+  min-width: 0;
+  padding: var(--sc-space-3) var(--sc-space-4);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sc-space-3);
+  border: 1px solid var(--sc-color-border);
+  border-radius: var(--sc-radius-md);
+  background: rgba(255, 255, 255, .025);
+}
+
+.home-air-room > div {
+  display: grid;
+  min-width: 0;
+  gap: var(--sc-space-1);
+}
+
+.home-air-room span {
+  color: var(--sc-color-text-secondary);
+  font-size: var(--sc-font-xs);
+}
+
+.home-air-room strong {
+  overflow-wrap: anywhere;
+  font-size: var(--sc-font-lg);
+  font-variant-numeric: tabular-nums;
 }
 
 .home-secondary-card {
@@ -883,6 +895,7 @@ html[data-dashboard-page="overview"] .sc-dashboard-shell .sc-top-bar {
 .home-dashboard-grid > .sc-widget-container,
 .home-dashboard-grid > .sc-line-chart-card,
 .home-dashboard-grid > .sc-gauge-card {
+  min-height: 0;
   padding: clamp(var(--sc-space-5), 2.2vw, var(--sc-space-6));
 }
 
@@ -1249,20 +1262,17 @@ html[data-dashboard-page="overview"] .sc-dashboard-shell .sc-top-bar {
     min-height: var(--sc-touch-target);
   }
 
-  .home-dashboard-grid .chart-wrap,
-  .home-dashboard-grid .chart {
+  .home-environment-widget .chart-wrap {
     width: 100%;
-    height: 190px;
-    min-height: 190px;
+    height: auto;
+    min-height: 0;
   }
 
-  .home-advanced-chart-tools .sc-button {
-    min-width: 0;
-    min-height: var(--sc-touch-target);
-  }
-
-  .home-advanced-chart-tools {
-    padding: var(--sc-space-3);
+  .home-environment-widget .chart {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    aspect-ratio: 16 / 9;
   }
 
   .home-chart-legend {
@@ -1280,6 +1290,11 @@ html[data-dashboard-page="overview"] .sc-dashboard-shell .sc-top-bar {
     display: none;
   }
 
+  .home-advanced-details:not([open]) {
+    min-height: 0;
+    padding: 0;
+  }
+
   .home-stat-card {
     min-height: 0;
     padding: var(--sc-space-3);
@@ -1287,6 +1302,10 @@ html[data-dashboard-page="overview"] .sc-dashboard-shell .sc-top-bar {
 
   .home-stat-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .home-air-summary {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .home-quick-actions > header {
