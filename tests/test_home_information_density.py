@@ -95,3 +95,41 @@ def test_security_empty_state_is_neutral_and_human_readable():
     assert ": 'Unavailable'" in HOME
     assert ": 'No camera data'" in HOME
     assert "camerasDisconnected ? 'critical'" in HOME
+
+
+def test_home_details_has_one_compact_current_state_summary():
+    for label in ("Temperature", "Humidity", "PM2.5"):
+        assert f"['{label}'," in HOME
+    assert 'class="home-details-summary"' in HTML
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in CSS
+    assert "home-secondary-card" not in HOME
+    assert "homeAirGauge" not in HOME and 'id="homeAirGauge"' not in HTML
+    assert "home-detail-boundary" not in HTML
+
+
+def test_environment_and_air_quality_each_have_one_mobile_chart():
+    assert HTML.count('id="overviewChart"') == 1
+    assert HTML.count('id="overviewPmChart"') == 1
+    assert 'id="homeEnvironmentCurrent"' in HTML
+    assert 'id="homeAirCurrent"' in HTML
+    assert "height: 190px" in CSS
+    assert "min-height: 190px" in CSS
+    assert "home-range-segments" in HTML
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in CSS
+
+
+def test_mobile_chart_controls_and_range_details_are_advanced_by_default():
+    assert 'id="homeAdvancedDetails"' in HTML
+    assert '<summary>Advanced details</summary>' in HTML
+    assert 'id="homeAdvancedChartTools"' in HTML
+    assert "advanced.open = !mobile" in HOME
+    assert "toolHost.appendChild(tools)" in HOME
+    assert "Environment chart advanced controls" in HOME
+    assert "Air quality chart advanced controls" in HOME
+    assert ".home-advanced-details:not([open])" in CSS
+
+
+def test_empty_device_summary_is_not_rendered_as_large_status_card():
+    assert "widget.hidden = !hasUsefulData" in HOME
+    assert "if (!hasUsefulData)" in HOME
+    assert "No Data" not in HOME[HOME.index("function renderSecondaryWidgets"):HOME.index("function bedroomCamera")]

@@ -204,6 +204,13 @@
     const sonoff = state.sonoff?.devices || [];
     const lights = state.lights || [];
     const cameras = state.cameras || [];
+    const widget = element('homeDevicesWidget');
+    const hasUsefulData = sonoff.length + lights.length + cameras.length > 0;
+    if (widget) widget.hidden = !hasUsefulData;
+    if (!hasUsefulData) {
+      host.innerHTML = '';
+      return;
+    }
     const cards = [
       {
         title:'Lighting',
@@ -236,44 +243,18 @@
   }
 
   function renderSecondaryWidgets(state) {
-    const ui = window.SmartCondoUI;
     const host = element('homeSecondaryWidgets');
     if (!host) return;
-    const sonoff = state.sonoff?.devices || [];
-    const lights = state.lights || [];
-    const cameras = state.cameras || [];
-    const deviceTotal = sonoff.length + lights.length + cameras.length;
-    const onlineTotal = sonoff.filter(device => device.online).length
-      + lights.filter(device => device.online).length
-      + cameras.filter(device => device.online).length;
     const temperature = number(state.sensor?.temperature);
     const humidity = number(state.sensor?.humidity);
     const pm25 = number(state.air?.living_room?.value);
-    const widgets = [
-      {
-        icon:'house-plug',
-        title:'Devices',
-        value:deviceTotal ? `${onlineTotal} online` : '--',
-        summary:deviceTotal ? `${deviceTotal} household devices` : 'No Data',
-        status:deviceTotal ? 'success' : 'neutral',
-      },
-      {
-        icon:'thermometer-sun',
-        title:'Environment',
-        value:temperature === null ? '--' : `${temperature.toFixed(1)}°`,
-        summary:humidity === null ? 'No Data' : `${humidity.toFixed(0)}% humidity`,
-        status:temperature === null ? 'neutral' : 'success',
-      },
-      {
-        icon:'wind',
-        title:'Air Quality',
-        value:pm25 === null ? '--' : `${pm25.toFixed(1)} µg/m³`,
-        summary:pm25 === null ? 'No Data' : state.air?.living_room?.stale ? 'Last reading is stale' : 'Current living room reading',
-        status:pm25 === null ? 'neutral' : state.air?.living_room?.stale ? 'warning' : 'success',
-      },
+    const items = [
+      ['Temperature', temperature === null ? 'Unavailable' : `${temperature.toFixed(1)} °C`],
+      ['Humidity', humidity === null ? 'Unavailable' : `${humidity.toFixed(0)}%`],
+      ['PM2.5', pm25 === null ? 'Unavailable' : `${pm25.toFixed(1)} µg/m³`],
     ];
-    host.innerHTML = widgets.map(widget => (
-      `<article class="home-secondary-card"><div class="home-secondary-icon">${ui.icon(widget.icon)}</div><div class="home-secondary-copy"><div class="home-secondary-title"><h2>${widget.title}</h2>${ui.statusChip({label:widget.status === 'success' ? 'Current' : widget.status === 'warning' ? 'Attention' : 'No Data', status:widget.status})}</div><strong>${widget.value}</strong><span>${widget.summary}</span></div></article>`
+    host.innerHTML = items.map(([label, value]) => (
+      `<div class="home-details-summary-item"><span>${label}</span><strong>${value}</strong></div>`
     )).join('');
   }
 
@@ -365,11 +346,32 @@
       ['Bedroom PM2.5', stat(history, 'pm25_bedroom'), 'µg/m³'],
     ];
     host.innerHTML = groups.map(([label, values, unit]) => (
-      `<article class="home-stat-card"><h3 class="sc-widget-title">${safeText(label)}</h3><div class="home-stat-grid">${[
-        ['Current', values.current],
+      `<article class="home-stat-card"><h3 class="sc-widget-title">${safeText(label)} range</h3><div class="home-stat-grid">${[
         ['Average', values.avg],
-      ].map(([name, value]) => `<div class="home-stat-value"><span>${name}</span><strong>${fmt(value)}${value === null ? '' : ` ${safeText(unit)}`}</strong></div>`).join('')}</div><details class="home-stat-details"><summary>Range details</summary><div><span>Minimum</span><strong>${fmt(values.min)}${values.min === null ? '' : ` ${safeText(unit)}`}</strong><span>Maximum</span><strong>${fmt(values.max)}${values.max === null ? '' : ` ${safeText(unit)}`}</strong></div></details></article>`
+        ['Minimum', values.min],
+        ['Maximum', values.max],
+      ].map(([name, value]) => `<div class="home-stat-value"><span>${name}</span><strong>${fmt(value)}${value === null ? '' : ` ${safeText(unit)}`}</strong></div>`).join('')}</div></article>`
     )).join('');
+  }
+
+  function organizeHomeDetails() {
+    const advanced = element('homeAdvancedDetails');
+    const toolHost = element('homeAdvancedChartTools');
+    if (!advanced || !toolHost) return;
+    const mobile = window.matchMedia?.('(max-width: 680px)')?.matches === true;
+    if (!advanced.dataset.homeDisclosureInitialized) {
+      advanced.dataset.homeDisclosureInitialized = 'true';
+      advanced.open = !mobile;
+    }
+    document.querySelectorAll('[data-tools-for="overviewChart"],[data-tools-for="overviewPmChart"]').forEach(tools => {
+      if (!tools._homeOriginalParent) tools._homeOriginalParent = tools.parentElement;
+      tools.setAttribute('aria-label', tools.dataset.toolsFor === 'overviewChart'
+        ? 'Environment chart advanced controls' : 'Air quality chart advanced controls');
+      if (mobile && tools.parentElement !== toolHost) toolHost.appendChild(tools);
+      if (!mobile && tools._homeOriginalParent && tools.parentElement !== tools._homeOriginalParent) {
+        tools._homeOriginalParent.appendChild(tools);
+      }
+    });
   }
 
   function render({
@@ -420,11 +422,13 @@
     if (energySummaryHost) {
       energySummaryHost.innerHTML = `<div><span>Current Power</span><strong>${energy.currentPower === null ? '—' : `${energy.currentPower.toFixed(0)} W`}</strong></div><div><span>24h Usage</span><strong>${energy.usage === null ? '—' : `${energy.usage.toFixed(2)} kWh`}</strong></div><div><span>Estimated Cost</span><strong>${energy.cost === null ? '—' : `${energy.cost.toFixed(2)} THB`}</strong></div><div><span>Peak (30m Avg)</span><strong>${energy.peakPower === null ? '—' : `${energy.peakPower.toFixed(0)} W`}</strong><small>${energy.peakPower === null ? 'No Data' : '30-minute average'}</small></div>`;
     }
-    const airGauge = element('homeAirGauge');
     const pm25 = number(state.air?.living_room?.value);
-    if (airGauge) {
-      airGauge.innerHTML = `<strong class="home-gauge-value">${pm25 === null ? '—' : pm25.toFixed(1)}</strong><span>${pm25 === null ? 'Unavailable' : 'µg/m³'}</span>${ui.statusChip({label:state.air?.living_room?.stale ? 'Stale' : pm25 === null ? 'Unknown' : 'Current', status:state.air?.living_room?.stale ? 'warning' : pm25 === null ? 'neutral' : 'success'})}`;
-    }
+    const temperature = number(state.sensor?.temperature);
+    const humidity = number(state.sensor?.humidity);
+    const environmentCurrent = element('homeEnvironmentCurrent');
+    if (environmentCurrent) environmentCurrent.innerHTML = `<span><strong>${temperature === null ? '—' : `${temperature.toFixed(1)} °C`}</strong> Temperature</span><span><strong>${humidity === null ? '—' : `${humidity.toFixed(0)}%`}</strong> Humidity</span>`;
+    const airCurrent = element('homeAirCurrent');
+    if (airCurrent) airCurrent.innerHTML = `<span><strong>${pm25 === null ? '—' : `${pm25.toFixed(1)} µg/m³`}</strong> Living room${state.air?.living_room?.stale ? ' · stale' : ''}</span>`;
     const ranges = element('overviewRanges');
     if (ranges) {
       ranges.innerHTML = ['24h', '3d', '7d'].map(range => (
@@ -437,6 +441,7 @@
     drawChart('overviewPmChart', history, series.air);
     ensureChartToolbar('overviewChart');
     ensureChartToolbar('overviewPmChart');
+    organizeHomeDetails();
     drawEnergyChart();
     renderSecondaryWidgets(state);
     renderQuickActions(state);
