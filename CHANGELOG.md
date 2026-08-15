@@ -2,7 +2,18 @@
 
 ## [Unreleased]
 
-No changes after v1.0.16.
+No changes after v1.0.17.
+
+## [1.0.17] - 2026-08-15
+
+### Home Details mobile layout
+
+- Keep the Environment temperature and humidity trend chart responsive without
+  fixed mobile heights that can overlap following cards.
+- Replace the Home Air Quality chart with a compact Living Room and Bedroom
+  PM2.5 summary and status.
+- Collapse Advanced Details by default on mobile and remove Home chart export
+  controls while preserving Min, Average, and Max statistics.
 
 ## [1.0.16] - 2026-08-15
 
