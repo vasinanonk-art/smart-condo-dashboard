@@ -29,7 +29,7 @@ def test_single_mount_without_observer_or_remount_loop():
 def test_only_one_timer_owns_status_refresh():
     assert "state.timer" in UI
     assert "setInterval" not in UI
-    assert UI.count("setTimeout(refresh, 15000)") == 1
+    assert UI.count("setTimeout(() => refresh(), 15000)") == 1
 
 
 def test_compact_summary_has_no_always_visible_diagnostics():

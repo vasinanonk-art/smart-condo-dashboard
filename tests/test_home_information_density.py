@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HOME = (ROOT / "frontend/assets/dashboard_home.js").read_text(encoding="utf-8")
 CSS = (ROOT / "frontend/assets/dashboard_home.css").read_text(encoding="utf-8")
+NAV_CSS = (ROOT / "frontend/assets/dashboard_milestone2.css").read_text(encoding="utf-8")
 UI = (ROOT / "frontend/assets/dashboard_design_system.js").read_text(encoding="utf-8")
 HTML = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
 
@@ -55,7 +56,7 @@ def test_energy_chart_is_compact_readable_and_responsive():
     assert "home-energy-axis-x" in HOME
     assert "'Now'" in HOME
     assert "height: clamp(180px, 16vw, 220px)" in CSS
-    assert "height: clamp(160px, 44vw, 180px)" in CSS
+    assert "height: clamp(150px, 40vw, 168px)" in CSS
     assert "grid-template-columns: repeat(4, minmax(0, 1fr))" in CSS
     assert CSS.count("grid-template-columns: repeat(2, minmax(0, 1fr))") >= 2
 
@@ -74,3 +75,23 @@ def test_mobile_actions_preserve_tap_targets_and_no_horizontal_layout():
     assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in CSS
     assert "min-width: 0" in CSS
     assert "overflow-x: scroll" not in CSS
+    assert HOME.count("${ac.reason}") == 1
+    assert "Bedroom Camera: ${shortcuts[0].reason}" in HOME
+    assert "})}${action.enabled ? ''" not in HOME
+
+
+def test_mobile_safe_area_energy_and_hero_are_compact():
+    assert "padding-bottom:calc(152px + env(safe-area-inset-bottom))" in NAV_CSS
+    assert "scroll-padding-bottom:calc(120px + env(safe-area-inset-bottom))" in NAV_CSS
+    assert "min-height: 150px" in CSS
+    assert "height: clamp(150px, 40vw, 168px)" in CSS
+    assert "#homeHero" in CSS
+    assert "font-size: clamp(1.45rem, 7vw, 1.8rem)" in CSS
+    assert "font-size: clamp(2.2rem, 12vw, 3rem)" in CSS
+
+
+def test_security_empty_state_is_neutral_and_human_readable():
+    assert "value:camerasDisconnected ? 'Offline'" in HOME
+    assert ": 'Unavailable'" in HOME
+    assert ": 'No camera data'" in HOME
+    assert "camerasDisconnected ? 'critical'" in HOME

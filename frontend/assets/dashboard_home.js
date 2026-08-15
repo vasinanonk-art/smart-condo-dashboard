@@ -66,9 +66,9 @@
       {
         label:'Security',
         iconName:'shield-check',
-        value:camerasDisconnected ? 'Offline' : cameraStatusKnown ? `${onlineCameras} / ${cameraCount}` : '--',
-        footnote:camerasDisconnected ? 'Camera connection' : cameraStatusKnown ? 'Cameras available' : 'No Data',
-        status:camerasDisconnected ? 'warning' : cameraStatusKnown ? onlineCameras ? 'success' : 'warning' : 'neutral',
+        value:camerasDisconnected ? 'Offline' : cameraStatusKnown ? `${onlineCameras} / ${cameraCount}` : 'Unavailable',
+        footnote:camerasDisconnected ? 'Camera connection' : cameraStatusKnown ? 'Cameras available' : 'No camera data',
+        status:camerasDisconnected ? 'critical' : cameraStatusKnown ? onlineCameras ? 'success' : 'warning' : 'neutral',
       },
     ];
     return cards.map(card => ui.metricCard(card)).join('');
@@ -311,9 +311,13 @@
         iconName:action.iconName,
         disabled:!action.enabled,
         attributes:`data-quick-action="${action.kind}"${action.command ? ` data-command="${action.command}"` : ''}${action.page ? ` data-page="${action.page}"` : ''}${action.cameraId ? ` data-camera-id="${action.cameraId}"` : ''}${action.confirm ? ' data-confirm="true"' : ''} aria-label="${action.enabled ? action.accessibleLabel || action.label : `${action.accessibleLabel || action.label}. ${action.reason}`}"${action.enabled ? '' : ` title="${action.reason}"`}`,
-      })}${action.enabled ? '' : `<small>${action.reason}</small>`}</div>`
+      })}</div>`
     );
-    host.innerHTML = `<section class="home-quick-action-group" aria-labelledby="homeBedroomAcActions"><h3 id="homeBedroomAcActions">Bedroom AC</h3><div class="home-quick-action-row home-bedroom-ac-actions">${climateActions.map(actionMarkup).join('')}</div></section><section class="home-quick-action-group" aria-labelledby="homeShortcutActions"><h3 id="homeShortcutActions">Shortcuts</h3><div class="home-quick-action-row home-shortcut-actions">${shortcuts.map(actionMarkup).join('')}</div></section>`;
+    const acStatus = climateActions.every(action => !action.enabled)
+      ? `<p class="home-quick-action-group-status" role="status">${ac.reason}</p>` : '';
+    const cameraStatus = snapshotAvailable ? ''
+      : `<p class="home-quick-action-group-status" role="status">Bedroom Camera: ${shortcuts[0].reason}</p>`;
+    host.innerHTML = `<section class="home-quick-action-group" aria-labelledby="homeBedroomAcActions"><div class="home-quick-action-group-heading"><h3 id="homeBedroomAcActions">Bedroom AC</h3>${acStatus}</div><div class="home-quick-action-row home-bedroom-ac-actions">${climateActions.map(actionMarkup).join('')}</div></section><section class="home-quick-action-group" aria-labelledby="homeShortcutActions"><div class="home-quick-action-group-heading"><h3 id="homeShortcutActions">Shortcuts</h3>${cameraStatus}</div><div class="home-quick-action-row home-shortcut-actions">${shortcuts.map(actionMarkup).join('')}</div></section>`;
     host.querySelectorAll('[data-quick-action]').forEach(button => button.addEventListener('click', async () => {
       if (button.dataset.quickAction === 'nav') {
         window.nav?.(button.dataset.page);

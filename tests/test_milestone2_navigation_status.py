@@ -95,7 +95,8 @@ def test_responsive_navigation_has_no_horizontal_rail():
         assert f"@media(max-width:{width}px)" in M2_CSS
     assert "grid-template-columns:minmax(0,1fr)" in M2_CSS
     assert "@media(max-width:480px)" in M2_CSS
-    assert "calc(118px + env(safe-area-inset-bottom))" in M2_CSS
+    assert "calc(152px + env(safe-area-inset-bottom))" in M2_CSS
+    assert "scroll-padding-bottom:calc(120px + env(safe-area-inset-bottom))" in M2_CSS
     assert "min-height:44px" in M2_CSS
     assert "touch-action:manipulation" in M2_CSS
 

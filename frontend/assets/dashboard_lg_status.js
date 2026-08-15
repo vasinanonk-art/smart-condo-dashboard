@@ -12,6 +12,11 @@
     pendingCommands:new Set(), inventoryAttempts:0,
   };
   const safe = UI.safe;
+  const serviceMessage = url => url.includes('/pairing/')
+    ? 'LG TV pairing service is unavailable.'
+    : url.includes('/capabilities')
+      ? 'LG TV controls are unavailable.'
+      : 'LG TV status is unavailable.';
   const request = async (url, method='GET', body) => {
     const options = {method, headers:{}};
     if (body !== undefined) {
@@ -20,7 +25,15 @@
     }
     const response = await fetch(url, options);
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.detail || 'request_failed');
+    if (!response.ok) {
+      const error = new Error(serviceMessage(url));
+      error.diagnostic = {
+        endpoint:url,
+        status:response.status,
+        detail:payload.detail || 'request_failed',
+      };
+      throw error;
+    }
     return payload;
   };
 
@@ -137,7 +150,7 @@
     }
   }
 
-  async function refresh() {
+  async function refresh({notify=false}={}) {
     if (state.busy) return;
     state.busy = true;
     try {
@@ -153,11 +166,12 @@
         state.inventoryAttempts = 0;
       }
     } catch (error) {
-      UI.toast(error.message || 'LG TV status unavailable', 'error');
+      console.warn('LG TV status refresh failed', error.diagnostic || {message:error.message});
+      if (notify) UI.toast(error.message || 'LG TV status is unavailable.', 'error');
     } finally {
       state.busy = false;
       clearTimeout(state.timer);
-      state.timer = setTimeout(refresh, 15000);
+      state.timer = setTimeout(() => refresh(), 15000);
     }
   }
 
@@ -195,7 +209,7 @@
     document.querySelector('[data-lg-details]')?.addEventListener('toggle', event => {
       if (event.currentTarget.open) loadDetails();
     });
-    document.querySelector('[data-lg-refresh]')?.addEventListener('click', refresh);
+    document.querySelector('[data-lg-refresh]')?.addEventListener('click', () => refresh({notify:true}));
     document.querySelector('[data-lg-pair-test]')?.addEventListener('click', () => runPairing('/api/lg-tv/pairing/test', 'Pairing connection verified.'));
     document.querySelector('[data-lg-pair-request]')?.addEventListener('click', () => runPairing('/api/lg-tv/pairing/request', 'Approve the pairing request on the TV.'));
     document.querySelector('[data-lg-pair-save]')?.addEventListener('click', () => runPairing('/api/lg-tv/pairing/save', 'Pairing key saved.'));

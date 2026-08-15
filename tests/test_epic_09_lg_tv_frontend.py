@@ -20,9 +20,18 @@ def test_compact_live_status_and_stable_mount():
 
 
 def test_background_polling_is_single_and_bounded():
-    assert "state.timer = setTimeout(refresh, 15000)" in UI
+    assert "state.timer = setTimeout(() => refresh(), 15000)" in UI
     assert "setInterval" not in UI
     assert "if (state.busy) return" in UI
+
+
+def test_background_failure_is_diagnostic_without_raw_or_repeated_toast():
+    assert "error.diagnostic" in UI
+    assert "LG TV status is unavailable." in UI
+    assert "console.warn('LG TV status refresh failed'" in UI
+    assert "if (notify) UI.toast" in UI
+    assert "refresh({notify:true})" in UI
+    assert "new Error(payload.detail || 'request_failed')" not in UI
 
 
 def test_pairing_actions_are_inside_compact_details():
