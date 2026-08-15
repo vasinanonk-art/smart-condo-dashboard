@@ -332,7 +332,8 @@ def _automation_payload() -> Dict[str, Any]:
             "departure_action": state.get("departure_action", {}),
             "last_transition": state.get("last_transition"),
             "reason": state.get("reason"),
-            "recent_events": [],
+            "recent_events": state.get("recent_events", []),
+            "event_history": state.get("event_history", {}),
         }
     except Exception:
         return {"enabled": True, "people": {}, "recent_events": []}

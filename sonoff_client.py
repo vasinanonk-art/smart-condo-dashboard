@@ -10,6 +10,7 @@ try:
     import os
     import threading
     import time
+    from pathlib import Path
     from backend.household_presence_automation import HouseholdPresenceAutomation
     from backend.presence_stabilizer import resolve_presence
     from fastapi import FastAPI, HTTPException, Request
@@ -44,6 +45,15 @@ HOUSEHOLD_DEPARTURE_TARGETS = [
     {"deviceid": deviceid, "channel": channel, "action": "off"}
     for deviceid, channel in HOUSEHOLD_DEPARTURE_CHANNELS
 ]
+if os is not None:
+    _PRESENCE_DATA_ROOT = os.getenv("SMART_CONDO_DATA_DIR", os.path.expanduser("~/.smart-condo-dashboard"))
+    _PRESENCE_STATE_PATH = os.path.join(_PRESENCE_DATA_ROOT, "presence_automation_state.json")
+    _PRESENCE_EVENT_DB_PATH = os.getenv("PRESENCE_EVENT_DB_PATH", os.path.join(_PRESENCE_DATA_ROOT, "presence_events.sqlite3"))
+    _PRESENCE_EVENT_BACKUP_DIR = os.getenv("PRESENCE_EVENT_BACKUP_DIR", "").strip() or None
+else:  # pragma: no cover
+    _PRESENCE_STATE_PATH = "presence_automation_state.json"
+    _PRESENCE_EVENT_DB_PATH = "presence_events.sqlite3"
+    _PRESENCE_EVENT_BACKUP_DIR = None
 HISTORY_RANGE_SEC = {"24h": 86400, "3d": 259200, "7d": 604800}
 HISTORY_MAX_RETURN = {"24h": 720, "3d": 720, "7d": 840}
 _household_automation = None
@@ -183,8 +193,15 @@ async def _sensor_history_handler(request: Request):
 
 
 def _presence_state_path():
-    root = os.getenv("SMART_CONDO_DATA_DIR", os.path.expanduser("~/.smart-condo-dashboard"))
-    return os.path.join(root, "presence_automation_state.json")
+    return _PRESENCE_STATE_PATH
+
+
+def _presence_event_db_path():
+    return _PRESENCE_EVENT_DB_PATH
+
+
+def _presence_event_backup_dir():
+    return _PRESENCE_EVENT_BACKUP_DIR
 
 
 def _all_sonoff_lights_off():
@@ -204,11 +221,14 @@ def _all_sonoff_lights_off():
 def _initialize_household_automation():
     global _household_automation
     if _household_automation is None and HouseholdPresenceAutomation is not None:
+        backup_dir = _presence_event_backup_dir()
         _household_automation = HouseholdPresenceAutomation(
             _presence_state_path(),
             _all_sonoff_lights_off,
             mode=os.getenv("PRESENCE_AUTOMATION_MODE", "shadow"),
             intended_channels=HOUSEHOLD_DEPARTURE_TARGETS,
+            event_db_path=Path(_presence_event_db_path()),
+            event_backup_dir=Path(backup_dir) if backup_dir else None,
         )
     return _household_automation
 
@@ -220,7 +240,12 @@ def _evaluate_household_presence(presence):
 
 def household_automation_status():
     automation = _initialize_household_automation()
-    return automation.snapshot() if automation is not None else None
+    if automation is None:
+        return None
+    snapshot = automation.snapshot()
+    snapshot["recent_events"] = automation.recent_events()
+    snapshot["event_history"] = automation.event_history_status()
+    return snapshot
 
 
 def reset_household_presence(reason="presence_identity_changed"):

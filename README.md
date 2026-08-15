@@ -141,6 +141,12 @@ CAMERA_CONFIG_FILE=/root/.smart-condo-dashboard/cameras.local.json
 EWELINK_CONFIG_FILE=/root/.smart-condo-dashboard/ewelink.local.json
 ```
 
+Presence transition history defaults to
+`/root/.smart-condo-dashboard/presence_events.sqlite3` with 30-day retention.
+Set `PRESENCE_EVENT_DB_PATH` only when a different local path is required.
+`PRESENCE_EVENT_BACKUP_DIR` enables a daily SQLite backup with 90-day
+retention; leave it unset unless the destination enforces owner-only files.
+
 Never commit passwords, tokens, local keys, vendor account identifiers, camera
 URLs, IR data, device identifiers, MAC addresses, or client keys.
 

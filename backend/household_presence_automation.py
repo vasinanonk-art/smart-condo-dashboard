@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from zoneinfo import ZoneInfo
 
+from backend.presence_event_store import PresenceEventStore
+
 
 SCHEMA_VERSION = 1
 HOME = "HOME"
@@ -118,6 +120,9 @@ class HouseholdPresenceAutomation:
         transition_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
         mode: str | None = None,
         intended_channels: list[dict[str, Any]] | None = None,
+        event_store: PresenceEventStore | None = None,
+        event_db_path: Path | None = None,
+        event_backup_dir: Path | None = None,
     ) -> None:
         self.state_path = Path(state_path)
         self.all_off = all_off
@@ -126,7 +131,20 @@ class HouseholdPresenceAutomation:
         self.mode = execution_mode(mode)
         self.intended_channels = copy.deepcopy(intended_channels or [])
         self._lock = threading.RLock()
+        self._startup_prior_state: str | None = None
         self.state = self._load()
+        self.event_store = event_store or PresenceEventStore(
+            event_db_path or self.state_path.with_name("presence_events.sqlite3"),
+            clock=self.clock,
+            backup_dir=event_backup_dir,
+        )
+        self._record_event(
+            "startup",
+            ts=int(self.clock()),
+            from_state=self._startup_prior_state,
+            to_state=self.state.get("state"),
+            reason=self.state.get("reason"),
+        )
 
     def _load(self) -> dict[str, Any]:
         now = int(self.clock())
@@ -141,11 +159,13 @@ class HouseholdPresenceAutomation:
             _atomic_write(self.state_path, payload)
             return payload
         if payload.get("mode") not in {SHADOW, ACTIVE} or payload.get("mode") != self.mode:
+            self._startup_prior_state = payload.get("state")
             payload = initial_state(now, mode=self.mode, intended_channels=self.intended_channels)
             payload["reason"] = "execution_mode_changed_reset_home"
             _atomic_write(self.state_path, payload)
             return payload
         if payload.get("state") == CONFIRMED_AWAY:
+            self._startup_prior_state = CONFIRMED_AWAY
             restored = initial_state(now, mode=self.mode, intended_channels=self.intended_channels)
             restored.update(payload)
             restored["mode"] = self.mode
@@ -156,6 +176,7 @@ class HouseholdPresenceAutomation:
             _atomic_write(self.state_path, restored)
             return restored
         prior_state = payload.get("state")
+        self._startup_prior_state = prior_state
         # HOME and PENDING_AWAY both restart conservatively from HOME. A pending
         # timer can never be shortened by process downtime.
         payload = initial_state(now, mode=self.mode, intended_channels=self.intended_channels)
@@ -172,6 +193,52 @@ class HouseholdPresenceAutomation:
             snapshot["pending_remaining_seconds"] = max(0, AWAY_DWELL_SECONDS - elapsed) if pending_since else 0
             return snapshot
 
+    def recent_events(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self.event_store.recent(limit)
+
+    def event_history_status(self) -> dict[str, Any]:
+        return self.event_store.status()
+
+    def _record_event(self, event_type: str, **values: Any) -> None:
+        self.event_store.record(event_type, mode=self.mode, **values)
+
+    def _record_people_changes(
+        self,
+        previous_people: Mapping[str, Any],
+        people: Mapping[str, Any],
+        now: int,
+    ) -> None:
+        for person in PEOPLE:
+            before = dict(previous_people.get(person) or {})
+            after = dict(people.get(person) or {})
+            if before.get("classification") == after.get("classification") and before.get("reason") == after.get("reason"):
+                continue
+            self._record_event(
+                "person_classification",
+                ts=now,
+                person=person,
+                from_state=before.get("classification"),
+                to_state=after.get("classification"),
+                reason=after.get("reason"),
+            )
+
+    def _record_household_transition(
+        self,
+        previous: str | None,
+        current: str,
+        now: int,
+        reason: str,
+        transition_id: str | None = None,
+    ) -> None:
+        self._record_event(
+            "household_transition",
+            ts=now,
+            from_state=previous,
+            to_state=current,
+            reason=reason,
+            transition_id=transition_id,
+        )
+
     def reset_home(self, reason: str = "presence_identity_changed") -> dict[str, Any]:
         with self._lock:
             now = int(self.clock())
@@ -179,6 +246,7 @@ class HouseholdPresenceAutomation:
             self.state["reason"] = reason
             self.state["last_transition"] = {"from": "CONFIG_CHANGE", "to": HOME, "at": now}
             self._save()
+            self._record_household_transition("CONFIG_CHANGE", HOME, now, reason)
             return self.snapshot()
 
     def _save(self) -> None:
@@ -203,6 +271,7 @@ class HouseholdPresenceAutomation:
         self.state["last_transition"] = {"from": previous, "to": HOME, "at": now}
         self.state["reason"] = reason
         self._save()
+        self._record_household_transition(previous, HOME, now, reason)
 
     @staticmethod
     def _eligible_at(now: int) -> bool:
@@ -220,6 +289,8 @@ class HouseholdPresenceAutomation:
         presence = presence if isinstance(presence, Mapping) else {}
         people = {person: classify_presence(presence.get(person)) for person in PEOPLE}
         self.state["people"] = people
+        self._record_people_changes(previous.get("people") or {}, people, now)
+        self.event_store.maintenance(now=now)
         classes = {item["classification"] for item in people.values()}
         both_away = all(people[p]["classification"] == AWAY_CANDIDATE for p in PEOPLE)
         any_present = PRESENT in classes
@@ -259,6 +330,14 @@ class HouseholdPresenceAutomation:
             if not eligible:
                 self.state["departure_action"]["status"] = "outside_time_window"
                 self._save()
+                self._record_household_transition(PENDING_AWAY, CONFIRMED_AWAY, now, "continuous_away_confirmed", transition_id)
+                self._record_event(
+                    "action_decision",
+                    ts=now,
+                    reason="outside_time_window",
+                    transition_id=transition_id,
+                    details={"eligible": False, "would_execute": False, "actual_command_executed": False},
+                )
                 return self.snapshot()
 
             if self.mode != ACTIVE:
@@ -269,6 +348,14 @@ class HouseholdPresenceAutomation:
                 })
                 self.state["reason"] = "shadow_would_turn_off"
                 self._save()
+                self._record_household_transition(PENDING_AWAY, CONFIRMED_AWAY, now, "continuous_away_confirmed", transition_id)
+                self._record_event(
+                    "action_decision",
+                    ts=now,
+                    reason="shadow_would_turn_off",
+                    transition_id=transition_id,
+                    details={"eligible": True, "would_execute": True, "actual_command_executed": False},
+                )
                 print(
                     f"presence automation shadow: WOULD TURN OFF transition_id={transition_id}",
                     flush=True,
@@ -279,6 +366,14 @@ class HouseholdPresenceAutomation:
             # an uncontrolled retry; missing one off action is safer than repeats.
             self.state["departure_action"].update({"attempted": True, "attempted_at": now, "status": "attempting"})
             self._save()
+            self._record_household_transition(PENDING_AWAY, CONFIRMED_AWAY, now, "continuous_away_confirmed", transition_id)
+            self._record_event(
+                "action_attempt",
+                ts=now,
+                reason="active_departure_action",
+                transition_id=transition_id,
+                details={"eligible": True, "actual_command_executed": False},
+            )
             # Hard physical-command boundary: shadow mode returned above and can
             # never reach the Sonoff callable.
             try:
@@ -298,6 +393,17 @@ class HouseholdPresenceAutomation:
             })
             self.state["updated_at"] = int(self.clock())
             self._save()
+            self._record_event(
+                "action_result",
+                ts=self.state["updated_at"],
+                reason=self.state["departure_action"]["status"],
+                transition_id=transition_id,
+                details={
+                    "completed": ok,
+                    "error": error,
+                    "actual_command_executed": True,
+                },
+            )
             return self.snapshot()
 
         if both_away:
@@ -312,6 +418,7 @@ class HouseholdPresenceAutomation:
                 "updated_at": now,
             })
             self._save()
+            self._record_household_transition(HOME, PENDING_AWAY, now, "both_away_candidate")
         else:
             self.state["pending_since"] = None
             self.state["reason"] = "home_present" if any_present else "home_unknown"
