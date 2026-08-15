@@ -35,7 +35,7 @@ def test_quick_actions_are_room_specific_and_preserve_exact_bedroom_contract():
 
 
 def test_energy_summary_uses_existing_authoritative_history_contract():
-    for label in ("Current Power", "24h Usage", "Estimated Cost", "Peak Demand"):
+    for label in ("Current Power", "24h Usage", "Estimated Cost", "Peak (30m Avg)"):
         assert f"<span>{label}</span>" in HOME
     for unit in (" W", " kWh", " THB"):
         assert unit in HOME

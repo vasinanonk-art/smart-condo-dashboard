@@ -414,7 +414,7 @@
     }
     const energySummaryHost = element('homeEnergySummary');
     if (energySummaryHost) {
-      energySummaryHost.innerHTML = `<div><span>Current Power</span><strong>${energy.currentPower === null ? '—' : `${energy.currentPower.toFixed(0)} W`}</strong></div><div><span>24h Usage</span><strong>${energy.usage === null ? '—' : `${energy.usage.toFixed(2)} kWh`}</strong></div><div><span>Estimated Cost</span><strong>${energy.cost === null ? '—' : `${energy.cost.toFixed(2)} THB`}</strong></div><div><span>Peak Demand</span><strong>${energy.peakPower === null ? '—' : `${energy.peakPower.toFixed(0)} W`}</strong><small>${energy.peakPower === null ? 'No Data' : '30-minute average'}</small></div>`;
+      energySummaryHost.innerHTML = `<div><span>Current Power</span><strong>${energy.currentPower === null ? '—' : `${energy.currentPower.toFixed(0)} W`}</strong></div><div><span>24h Usage</span><strong>${energy.usage === null ? '—' : `${energy.usage.toFixed(2)} kWh`}</strong></div><div><span>Estimated Cost</span><strong>${energy.cost === null ? '—' : `${energy.cost.toFixed(2)} THB`}</strong></div><div><span>Peak (30m Avg)</span><strong>${energy.peakPower === null ? '—' : `${energy.peakPower.toFixed(0)} W`}</strong><small>${energy.peakPower === null ? 'No Data' : '30-minute average'}</small></div>`;
     }
     const airGauge = element('homeAirGauge');
     const pm25 = number(state.air?.living_room?.value);
