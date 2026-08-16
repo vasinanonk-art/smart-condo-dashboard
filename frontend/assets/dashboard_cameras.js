@@ -20,6 +20,7 @@
     if (camera?.online === false) return {label:'Offline', cls:'critical'};
     return {label:'Unknown', cls:'neutral'};
   };
+  const ptzInFlight = new Set();
 
   function install() {
     document.querySelectorAll('.nav,.mobile-nav').forEach(host => {
@@ -52,24 +53,83 @@
       capabilities.snapshot && camera.online === true ? `<button class="btn primary" data-camera-snapshot="${id}">Snapshot</button>` : '',
       capabilities.live_stream && camera.online === true ? `<button class="btn ghost" data-camera-live="${id}">Live View</button>` : '',
     ].filter(Boolean).join('');
+    const ptz = capabilities.ptz_move && capabilities.ptz_stop && camera.online === true
+      ? `<div class="camera-ptz-grid" role="group" aria-label="${safe(camera.name || camera.display_name || 'Camera')} pan and tilt">
+          <button class="btn ghost camera-ptz-up" data-camera-ptz="${id}" data-camera-direction="up">Up</button>
+          <button class="btn ghost camera-ptz-left" data-camera-ptz="${id}" data-camera-direction="left">Left</button>
+          <button class="btn ghost camera-ptz-stop" data-camera-ptz="${id}" data-camera-command="stop_ptz">Stop</button>
+          <button class="btn ghost camera-ptz-right" data-camera-ptz="${id}" data-camera-direction="right">Right</button>
+          <button class="btn ghost camera-ptz-down" data-camera-ptz="${id}" data-camera-direction="down">Down</button>
+        </div>`
+      : '';
     const technical = [
       ['Provider', camera.provider],
       ['Model', camera.model],
       ['Reason', camera.unavailable_reason],
       ['Capabilities', Object.keys(capabilities).filter(key => capabilities[key]).join(', ') || 'Not available'],
     ].filter(([, value]) => value !== null && value !== undefined && value !== '');
-    return `<article class="camera-card${unavailable ? ' is-unavailable' : ''}"><div class="camera-card-head"><div><h2>${safe(camera.name || camera.display_name || camera.id || 'Camera')}</h2><span class="camera-status ${current.cls}">${current.label}</span></div></div>${snapshot}<div class="camera-card-actions">${actions || '<span class="muted">No camera actions available.</span>'}</div><details class="camera-advanced"><summary>Details</summary><dl>${technical.map(([label, value]) => `<div><dt>${safe(label)}</dt><dd>${safe(value)}</dd></div>`).join('')}</dl></details></article>`;
+    return `<article class="camera-card${unavailable ? ' is-unavailable' : ''}"><div class="camera-card-head"><div><h2>${safe(camera.name || camera.display_name || camera.id || 'Camera')}</h2><span class="camera-status ${current.cls}">${current.label}</span></div></div>${snapshot}<div class="camera-card-actions">${actions || '<span class="muted">No camera actions available.</span>'}</div>${ptz}<details class="camera-advanced"><summary>Details</summary><dl>${technical.map(([label, value]) => `<div><dt>${safe(label)}</dt><dd>${safe(value)}</dd></div>`).join('')}</dl></details></article>`;
   }
 
   let cameras = [];
+  let renderedSignature = '';
+
+  function stableSignature(available) {
+    return JSON.stringify(available.map(camera => ({
+      id:camera.id,
+      name:camera.name || camera.display_name,
+      online:camera.online,
+      unavailable_reason:camera.unavailable_reason,
+      provider:camera.provider,
+      model:camera.model,
+      capabilities:camera.capabilities || {},
+    })));
+  }
+
+  async function sendPtz(button) {
+    const target = button.dataset.cameraPtz;
+    const stopping = button.dataset.cameraCommand === 'stop_ptz';
+    if (!target || (ptzInFlight.has(target) && !stopping)) return;
+    const controls = [...button.closest('.camera-card').querySelectorAll('[data-camera-ptz]')];
+    if (stopping) button.disabled = true;
+    else {
+      ptzInFlight.add(target);
+      controls.forEach(control => { control.disabled = control.dataset.cameraCommand !== 'stop_ptz'; });
+    }
+    const body = stopping
+      ? {command:'stop_ptz'}
+      : {command:'move', direction:button.dataset.cameraDirection, duration:0.2};
+    try {
+      const response = await window.fetch(`/api/camera-control/${target}/command`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || 'Camera movement failed');
+      window.toast?.(stopping ? 'Camera stopped.' : 'Camera moved and stopped.');
+    } catch (error) {
+      window.toast?.(error.message);
+    } finally {
+      if (stopping) button.disabled = false;
+      else {
+        ptzInFlight.delete(target);
+        controls.forEach(control => { control.disabled = false; });
+      }
+    }
+  }
 
   function render() {
     const host = document.getElementById('cameraPage');
     if (!host) return;
     const available = cameras.length ? cameras : (window.S?.cameras || []);
+    const signature = stableSignature(available);
+    if (signature === renderedSignature && host.querySelector('.camera-grid,.camera-empty')) return;
+    renderedSignature = signature;
     host.innerHTML = `<section class="camera-page-head"><p>View current camera availability and open a live view.</p><span class="muted">${available.length} camera${available.length === 1 ? '' : 's'}</span></section>${available.length ? `<div class="camera-grid">${available.map(cameraCard).join('')}</div>` : '<div class="card camera-empty">No camera configuration is available.</div>'}`;
     host.querySelectorAll('[data-camera-snapshot]').forEach(button => button.onclick = () => window.open(`/api/camera-control/${button.dataset.cameraSnapshot}/snapshot`, '_blank', 'noopener'));
     host.querySelectorAll('[data-camera-live]').forEach(button => button.onclick = () => window.open(`/api/camera-control/${button.dataset.cameraLive}/live`, '_blank', 'noopener'));
+    host.querySelectorAll('[data-camera-ptz]').forEach(button => button.onclick = () => sendPtz(button));
   }
 
   async function load() {
