@@ -30,8 +30,18 @@ def test_camera_view_uses_existing_api_and_capability_gates_actions():
     assert "Online" in CAMERAS and "Attention" in CAMERAS and "Offline" in CAMERAS and "Unavailable" in CAMERAS
     assert "capabilities.snapshot" in CAMERAS
     assert "capabilities.live_stream" in CAMERAS
+    assert "capabilities.ptz_move && capabilities.ptz_stop" in CAMERAS
+    assert "data-camera-command=\"stop_ptz\"" in CAMERAS
+    assert "duration:0.2" in CAMERAS
     assert "camera-advanced" in CAMERAS
     assert "dashboard_cameras.js" in INDEX and "dashboard_cameras.css" in INDEX
+
+
+def test_camera_polling_preserves_loaded_snapshot_when_status_is_unchanged():
+    assert "function stableSignature(available)" in CAMERAS
+    assert "signature === renderedSignature" in CAMERAS
+    assert "host.querySelector('.camera-grid,.camera-empty')" in CAMERAS
+    assert ".camera-ptz-grid" in CAMERA_CSS
 
 
 def test_electricity_cycle_chart_is_primary_and_daily_power_integration_is_explicit():
