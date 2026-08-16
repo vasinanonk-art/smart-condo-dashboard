@@ -42,8 +42,9 @@ def test_camera_polling_preserves_loaded_snapshot_when_status_is_unchanged():
     assert "signature === renderedSignature" in CAMERAS
     assert "host.querySelector('.camera-grid,.camera-empty')" in CAMERAS
     assert ".camera-ptz-grid" in CAMERA_CSS
-    assert "max-width:800px" in CAMERA_CSS
-    assert "max-width:480px" in CAMERA_CSS
+    assert "camera-primary-layout" in CAMERAS
+    assert "grid-template-columns:minmax(0,1.65fr) minmax(260px,.85fr)" in CAMERA_CSS
+    assert "max-width:1120px" in CAMERA_CSS
 
 
 def test_electricity_cycle_chart_is_primary_and_daily_power_integration_is_explicit():
@@ -87,7 +88,8 @@ def test_dangerous_actions_are_visually_distinct_and_confirmed():
 def test_mobile_layout_keeps_new_sections_single_column():
     assert "@media(max-width:640px)" in HOME_CSS
     assert ".home-action-state" in HOME_CSS
-    assert "grid-template-columns:1fr" in (ROOT / "frontend/assets/dashboard_cameras.css").read_text(encoding="utf-8")
+    assert "@media(max-width:720px)" in CAMERA_CSS
+    assert "grid-template-columns:1fr" in CAMERA_CSS
     assert "overflow-x:hidden" in ELECTRICITY_CSS
 
 
