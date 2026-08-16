@@ -52,8 +52,8 @@ certification pass remains a release follow-up.
 - Home Assistant PM2.5 and configured automation inventory
 - household scenes, favorites, topology, and device registry
 - TP-Link provider and camera inventory: authenticated and read-only
-- Tapo C200: verified ONVIF metadata, authenticated snapshot, and explicitly
-  opened on-demand local live view; PTZ remains disabled
+- Tapo C200: verified ONVIF metadata, authenticated snapshot, explicitly
+  opened on-demand local live view, and bounded directional PTZ with automatic stop
 - Bedroom AC: verified Tuya IR Cloud power and target-temperature controls with
   assumed-state labeling and structured audit records
 - Tapo H110: bridge/inventory diagnostics only; unverified IR transmission is

@@ -6,17 +6,21 @@ import threading
 import time
 import urllib.request
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Dict
 
-from fastapi import Body
+from fastapi import Body, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from backend import app as app_module
+from backend import camera_command_audit
 
 app = app_module.app
 NETWORK_TIMEOUT_SEC = 5.0
-MAX_MOVE_SEC = 2.0
+MAX_MOVE_SEC = 0.5
+DEFAULT_MOVE_SEC = 0.2
+PTZ_SPEED = 0.35
 _LOCKS_GUARD = threading.Lock()
 _LOCKS: Dict[str, threading.Lock] = {}
 
@@ -38,39 +42,53 @@ class CameraRecord:
     reason: str | None
 
 
-def _provider(config: Dict[str, Any]) -> tuple[str, Dict[str, bool], str | None]:
-    brand = str(config.get("brand") or "").lower()
-    model = str(config.get("model") or "").lower()
-    onvif_configured = bool(config.get("onvif_enabled") or config.get("onvif_port"))
-    declared = {
-        str(item) for item in config.get("control_capabilities", [])
-        if isinstance(config.get("control_capabilities"), list)
-    }
-    if onvif_configured and importlib.util.find_spec("onvif") is not None:
-        return "onvif", {
-            "snapshot": bool(config.get("snapshot_url")),
-            "live_stream": bool(config.get("rtsp_url") or config.get("rtsp")),
-            "ptz_move": "ptz_move" in declared, "ptz_stop": "ptz_stop" in declared,
-            "zoom": "zoom" in declared, "goto_preset": "goto_preset" in declared,
-            "set_preset": "set_preset" in declared, "home_position": "home_position" in declared,
-        }, None
-    reason = "provider_dependency_unavailable" if onvif_configured or ("tapo" in brand and "c220" in model) else "control_provider_not_configured"
-    return "read_only", {
-        "snapshot": bool(config.get("snapshot_url")),
-        "live_stream": bool(config.get("rtsp_url") or config.get("rtsp")),
-        "ptz_move": False, "ptz_stop": False, "zoom": False,
-        "goto_preset": False, "set_preset": False, "home_position": False,
-    }, reason
-
-
 def inventory() -> list[CameraRecord]:
-    payload = app_module.camera_config_payload()
+    from backend import camera_read_providers as providers
+
+    status, specs = providers.load_inventory()
+    if status not in {"configured", "configuration_partial"}:
+        return []
     records = []
-    for index, config in enumerate(payload.get("cameras") or []):
-        if not isinstance(config, dict) or config.get("enabled") is False:
+    for spec in specs:
+        if not spec.enabled:
             continue
-        provider, capabilities, reason = _provider(config)
-        records.append(CameraRecord(f"camera-{index + 1}", config, provider, capabilities, reason))
+        credentials = providers._credentials(spec)
+        onvif_ready = bool(
+            spec.verification_status == "verified"
+            and spec.provider in {"auto", "onvif"}
+            and spec.host
+            and spec.onvif_port
+            and credentials
+            and importlib.util.find_spec("onvif") is not None
+        )
+        declared = spec.declared_capabilities
+        capabilities = {
+            "snapshot": False,
+            "live_stream": False,
+            "ptz_move": onvif_ready and "ptz_move" in declared,
+            "ptz_stop": onvif_ready and "ptz_stop" in declared,
+            "zoom": False,
+            "goto_preset": False,
+            "set_preset": False,
+            "home_position": False,
+        }
+        reason = None if onvif_ready else "control_provider_not_configured"
+        username, password = credentials or ("", "")
+        records.append(CameraRecord(
+            spec.id,
+            {
+                "name": spec.display_name,
+                "brand": spec.vendor or "",
+                "model": spec.model or "",
+                "host": spec.host or "",
+                "onvif_port": spec.onvif_port or 80,
+                "username": username,
+                "password": password,
+            },
+            "onvif" if onvif_ready else "read_only",
+            capabilities,
+            reason,
+        ))
     return records
 
 
@@ -85,14 +103,20 @@ def _public(record: CameraRecord) -> Dict[str, Any]:
         "capabilities": dict(record.capabilities),
         "unsupported_reason": record.reason,
         "stream": {
-            "available": record.capabilities["live_stream"],
-            "access": "authenticated_proxy_required" if record.capabilities["live_stream"] else "unavailable",
+            "available": bool(record.capabilities.get("live_stream")),
+            "access": "authenticated_proxy_required" if record.capabilities.get("live_stream") else "unavailable",
         },
     }
 
 
 def _record(camera_id: str) -> CameraRecord | None:
-    return next((item for item in inventory() if item.public_id == camera_id), None)
+    from backend.camera_read_providers import PUBLIC_CAMERA_ALIASES
+
+    direct = next((item for item in inventory() if item.public_id == camera_id), None)
+    if direct is not None:
+        return direct
+    resolved = PUBLIC_CAMERA_ALIASES.get(camera_id, camera_id)
+    return next((item for item in inventory() if item.public_id == resolved), None)
 
 
 def _lock(camera_id: str) -> threading.Lock:
@@ -130,17 +154,27 @@ def _onvif_ptz(record: CameraRecord, payload: CameraCommand) -> None:
     if command == "set_preset":
         ptz.SetPreset({"ProfileToken": token, "PresetName": str(payload.preset or "")})
         return
+    duration = min(MAX_MOVE_SEC, max(0.05, float(payload.duration or DEFAULT_MOVE_SEC)))
     if command == "zoom":
         if payload.zoom is None or not -1 <= payload.zoom <= 1:
             raise ValueError("invalid_zoom")
-        request = {"ProfileToken": token, "Velocity": {"Zoom": {"x": payload.zoom}}}
+        request = {
+            "ProfileToken": token,
+            "Velocity": {"Zoom": {"x": payload.zoom}},
+            "Timeout": timedelta(seconds=duration),
+        }
     else:
         vectors = {"up": (0, 1), "down": (0, -1), "left": (-1, 0), "right": (1, 0)}
         if payload.direction not in vectors:
             raise ValueError("invalid_direction")
         x, y = vectors[payload.direction]
-        request = {"ProfileToken": token, "Velocity": {"PanTilt": {"x": x, "y": y}}}
-    duration = min(MAX_MOVE_SEC, max(0.05, float(payload.duration or 0.3)))
+        x *= PTZ_SPEED
+        y *= PTZ_SPEED
+        request = {
+            "ProfileToken": token,
+            "Velocity": {"PanTilt": {"x": x, "y": y}},
+            "Timeout": timedelta(seconds=duration),
+        }
     try:
         ptz.ContinuousMove(request)
         time.sleep(duration)
@@ -187,24 +221,72 @@ def camera_snapshot(camera_id: str):
     return Response(content, media_type=content_type, headers={"Cache-Control": "no-store"})
 
 
-@app.post("/api/camera-control/{camera_id}/command")
-def camera_command(camera_id: str, payload: CameraCommand = Body(...)):
+def _camera_command(
+    camera_id: str,
+    payload: CameraCommand,
+    *,
+    user: str | None = None,
+    request_id: str | None = None,
+):
+    started = time.monotonic()
+    correlation_id = camera_command_audit.correlation_id(request_id)
+    outbound_attempts = 0
+
+    def finish(response, status: int, result_code: str, outcome: str):
+        camera_command_audit.emit(
+            user=user,
+            device_id=camera_id,
+            command_type=payload.command,
+            value=payload.direction,
+            outcome=outcome,
+            http_status=status,
+            result_code=result_code,
+            latency_ms=(time.monotonic() - started) * 1000,
+            outbound_attempts=outbound_attempts,
+            retry_count=0,
+            request_id=correlation_id,
+        )
+        return response
+
     record = _record(camera_id)
     if record is None:
-        return JSONResponse({"detail": "camera_not_found"}, status_code=404)
+        return finish(JSONResponse({"detail": "camera_not_found"}, status_code=404), 404, "camera_not_found", "rejected")
     lock = _lock(camera_id)
-    if not lock.acquire(blocking=False):
-        return JSONResponse({"detail": "camera_busy"}, status_code=409)
+    acquired = payload.command != "stop_ptz" and lock.acquire(blocking=False)
+    if payload.command != "stop_ptz" and not acquired:
+        return finish(JSONResponse({"detail": "camera_busy"}, status_code=409), 409, "camera_busy", "rejected")
     try:
+        outbound_attempts = 1
         _execute(record, payload)
-        return {"ok": True, "camera": _public(record), "command": payload.command, "movement_stopped": payload.command in {"move", "zoom"}}
+        result = {
+            "ok": True,
+            "camera": _public(record),
+            "command": payload.command,
+            "movement_stopped": payload.command in {"move", "zoom", "stop_ptz"},
+        }
+        return finish(result, 200, "ok", "success")
     except LookupError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=422)
+        outbound_attempts = 0
+        return finish(JSONResponse({"detail": str(exc)}, status_code=422), 422, str(exc), "rejected")
     except ValueError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=422)
+        outbound_attempts = 0
+        return finish(JSONResponse({"detail": str(exc)}, status_code=422), 422, str(exc), "rejected")
     except TimeoutError:
-        return JSONResponse({"detail": "camera_timeout", "stop_attempted": True, "movement_stopped": False}, status_code=504)
+        response = JSONResponse({"detail": "camera_timeout", "stop_attempted": True, "movement_stopped": False}, status_code=504)
+        return finish(response, 504, "camera_timeout", "failed")
     except Exception:
-        return JSONResponse({"detail": "camera_command_failed", "stop_attempted": True, "movement_stopped": False}, status_code=502)
+        response = JSONResponse({"detail": "camera_command_failed", "stop_attempted": True, "movement_stopped": False}, status_code=502)
+        return finish(response, 502, "camera_command_failed", "failed")
     finally:
-        lock.release()
+        if acquired:
+            lock.release()
+
+
+@app.post("/api/camera-control/{camera_id}/command")
+def camera_command(camera_id: str, request: Request, payload: CameraCommand = Body(...)):
+    return _camera_command(
+        camera_id,
+        payload,
+        user=getattr(request.state, "dashboard_user", None),
+        request_id=getattr(request.state, "camera_audit_correlation_id", None),
+    )

@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from backend import app as app_module
+from backend import camera_command_audit
 from backend import ir_command_audit
 
 app = app_module.app
@@ -189,18 +190,24 @@ async def dashboard_auth_middleware(request: Request, call_next):
         and path.startswith("/api/ir/")
         and path.endswith("/command")
     )
-    request_id = ir_command_audit.correlation_id(
-        request.headers.get("x-request-id")
+    is_camera_command = (
+        request.method.upper() == "POST"
+        and path.startswith("/api/camera-control/")
+        and path.endswith("/command")
     )
+    audit_module = camera_command_audit if is_camera_command else ir_command_audit
+    request_id = audit_module.correlation_id(request.headers.get("x-request-id"))
     request.state.ir_audit_correlation_id = request_id
+    request.state.camera_audit_correlation_id = request_id
     ir_device = path.removeprefix("/api/ir/").removesuffix("/command").strip("/")
+    camera_device = path.removeprefix("/api/camera-control/").removesuffix("/command").strip("/")
 
     def audit_rejection(user: str | None, status: int, result: str) -> None:
-        if not is_ir_command:
+        if not (is_ir_command or is_camera_command):
             return
-        ir_command_audit.emit(
+        audit_module.emit(
             user=user,
-            device_id=ir_device,
+            device_id=ir_device if is_ir_command else camera_device,
             command_type="unknown",
             value=None,
             outcome="rejected",

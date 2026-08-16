@@ -1,9 +1,10 @@
 # EPIC 20 Camera Provisioning
 
-EPIC 20 provisions production camera inventory for bounded, read-only
-discovery. The verified Tapo C200 supports an authenticated snapshot and an
-on-demand live view. PTZ, recordings, motion, microphone, and speaker controls
-remain disabled.
+EPIC 20 provisions production camera inventory for bounded discovery and
+capability-gated controls. The verified Tapo C200 supports an authenticated
+snapshot, an on-demand live view, and short directional PTZ nudges that always
+attempt an automatic stop. Recordings, motion, microphone, speaker, presets,
+home position, and zoom controls remain disabled.
 
 ## Persistent configuration
 

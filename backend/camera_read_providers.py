@@ -484,6 +484,16 @@ def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
             and _go2rtc_live_available(spec)
         )
         result["capabilities"]["live_stream"] = live_available
+        result["capabilities"]["ptz_move"] = bool(
+            ptz_available
+            and spec.verification_status == "verified"
+            and "ptz_move" in spec.declared_capabilities
+        )
+        result["capabilities"]["ptz_stop"] = bool(
+            ptz_available
+            and spec.verification_status == "verified"
+            and "ptz_stop" in spec.declared_capabilities
+        )
         manufacturer = _safe_text(getattr(information, "Manufacturer", None))
         result.update({
             "vendor": manufacturer or result["vendor"],

@@ -123,7 +123,8 @@ def test_tapo_onvif_discovery_is_per_camera_and_secret_safe(monkeypatch, tmp_pat
     assert item["serial"] == "***5678"
     assert item["capabilities"]["onvif_profiles"] is True
     assert item["capabilities"]["snapshot"] is True
-    assert item["capabilities"]["ptz_move"] is False
+    assert item["capabilities"]["ptz_move"] is True
+    assert item["capabilities"]["ptz_stop"] is True
     assert item["capabilities"]["presets"] is False
     assert item["capabilities"]["live_stream"] is False
     assert item["profiles_available"] is True

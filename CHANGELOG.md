@@ -2,7 +2,14 @@
 
 ## [Unreleased]
 
-No changes after v1.0.17.
+### Camera PTZ candidate
+
+- Add capability-gated directional PTZ nudges for the verified Bedroom Tapo
+  C200 with bounded speed, a 0.5-second movement ceiling, and automatic stop.
+- Keep zoom, presets, home position, Xiaomi controls, and all unverified camera
+  capabilities disabled.
+- Audit authenticated, rejected, and failed camera command attempts without
+  exposing camera credentials or provider identifiers.
 
 ## [1.0.17] - 2026-08-15
 

@@ -296,6 +296,57 @@
     video.src = `/api/camera-control/${identifier}/live`;
   }
 
+  function ptzControls(device) {
+    const button = (label, direction, position) => UI.actionButton({
+      label,
+      className:`household-ptz-${position}`,
+      attributes:`data-household-camera="${safe(device.id)}" data-camera-action="ptz-move" data-camera-direction="${safe(direction)}"`,
+    });
+    return `<div class="household-ptz-grid" role="group" aria-label="${safe(`${device.display_name} pan and tilt`)}">
+      ${button('Up', 'up', 'up')}
+      ${button('Left', 'left', 'left')}
+      ${UI.actionButton({label:'Stop', className:'household-ptz-stop', attributes:`data-household-camera="${safe(device.id)}" data-camera-action="ptz-stop"`})}
+      ${button('Right', 'right', 'right')}
+      ${button('Down', 'down', 'down')}
+    </div>`;
+  }
+
+  async function sendCameraPtz(button, host) {
+    const target = button.dataset.householdCamera;
+    const stopping = button.dataset.cameraAction === 'ptz-stop';
+    if (!target || (state.inFlight.has(target) && !stopping)) return false;
+    const controls = [...host.querySelectorAll('[data-household-camera]')]
+      .filter(item => item.dataset.householdCamera === target);
+    if (stopping) button.disabled = true;
+    else {
+      state.inFlight.add(target);
+      controls.forEach(item => { item.disabled = item.dataset.cameraAction !== 'ptz-stop'; });
+    }
+    const body = stopping
+      ? {command:'stop_ptz'}
+      : {command:'move', direction:button.dataset.cameraDirection, duration:0.2};
+    try {
+      const response = await fetch(`/api/camera-control/${encodeURIComponent(target)}/command`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || 'Camera movement failed');
+      UI.toast(stopping ? 'Camera stopped.' : 'Camera moved and stopped.', 'success');
+      return true;
+    } catch (error) {
+      UI.toast(error.message, 'error');
+      return false;
+    } finally {
+      if (stopping) button.disabled = false;
+      else {
+        state.inFlight.delete(target);
+        controls.forEach(item => { item.disabled = false; });
+      }
+    }
+  }
+
   function renderCameras() {
     const host = document.getElementById('cameraControls');
     if (!host) return;
@@ -313,7 +364,8 @@
       } else {
         if (capabilities.snapshot) controls.push(UI.actionButton({label:'Snapshot', attributes:`data-household-camera="${safe(device.id)}" data-camera-action="snapshot"`}));
         if (capabilities.live_stream) controls.push(UI.actionButton({label:'Live View', attributes:`data-household-camera="${safe(device.id)}" data-camera-action="live"`}));
-        if (discovered.includes('ptz_move')) controls.push(disabledButton('PTZ', readonlyReason));
+        if (capabilities.ptz_move && capabilities.ptz_stop) controls.push(ptzControls(device));
+        else if (discovered.includes('ptz_move')) controls.push(disabledButton('PTZ', readonlyReason));
         if (capabilities.presets) controls.push(UI.actionButton({label:'Presets', attributes:`data-household-camera="${safe(device.id)}" data-camera-action="presets"`}));
         if (discovered.includes('home_position')) controls.push(disabledButton('Home', readonlyReason));
       }
@@ -354,6 +406,10 @@
       if (button.dataset.cameraAction === 'live') {
         const device = state.devices.find(item => item.id === button.dataset.householdCamera);
         if (device) openCameraLiveView(device, identifier);
+        return;
+      }
+      if (button.dataset.cameraAction === 'ptz-move' || button.dataset.cameraAction === 'ptz-stop') {
+        await sendCameraPtz(button, host);
         return;
       }
       button.disabled = true;

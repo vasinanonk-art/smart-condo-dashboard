@@ -64,6 +64,28 @@
   background: #000;
 }
 
+.household-ptz-grid {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-areas:
+    ". up ."
+    "left stop right"
+    ". down .";
+  grid-template-columns: repeat(3, minmax(72px, 1fr));
+  gap: 8px;
+}
+
+.household-ptz-up { grid-area: up; }
+.household-ptz-left { grid-area: left; }
+.household-ptz-stop { grid-area: stop; }
+.household-ptz-right { grid-area: right; }
+.household-ptz-down { grid-area: down; }
+
+.household-ptz-stop {
+  border-color: rgba(255, 99, 117, .7);
+  color: var(--red, #ff6375);
+}
+
 .household-ir-group {
   display: grid;
   grid-column: 1 / -1;
@@ -104,5 +126,9 @@
 @media (max-width: 520px) {
   .household-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .household-ptz-grid {
+    grid-template-columns: repeat(3, minmax(64px, 1fr));
   }
 }
