@@ -42,6 +42,8 @@ def test_camera_polling_preserves_loaded_snapshot_when_status_is_unchanged():
     assert "signature === renderedSignature" in CAMERAS
     assert "host.querySelector('.camera-grid,.camera-empty')" in CAMERAS
     assert ".camera-ptz-grid" in CAMERA_CSS
+    assert "max-width:800px" in CAMERA_CSS
+    assert "max-width:480px" in CAMERA_CSS
 
 
 def test_electricity_cycle_chart_is_primary_and_daily_power_integration_is_explicit():
