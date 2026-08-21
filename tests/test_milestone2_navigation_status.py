@@ -97,8 +97,11 @@ def test_camera_reason_is_human_readable_and_unavailable_card_is_compact():
     assert "Camera provider is not available." in CAMERAS
     assert "safe(reasonText(camera.unavailable_reason))" in CAMERAS
     assert "['Reason', camera.unavailable_reason]" in CAMERAS
-    assert ".camera-grid{align-items:start}" in CAMERA_CSS
-    assert ".camera-card.is-unavailable{height:fit-content;align-self:start}" in CAMERA_CSS
+    camera_grid = re.search(r"\.camera-grid\{([^}]*)\}", CAMERA_CSS).group(1)
+    unavailable_card = re.search(r"\.camera-card\.is-unavailable\{([^}]*)\}", CAMERA_CSS).group(1)
+    assert "align-items:start" in camera_grid
+    assert "height:fit-content" in unavailable_card
+    assert "align-self:start" in unavailable_card
 
 
 def test_electricity_primary_layout_and_kpis_are_unchanged():
