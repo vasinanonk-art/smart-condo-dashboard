@@ -43,8 +43,20 @@ def test_camera_polling_preserves_loaded_snapshot_when_status_is_unchanged():
     assert "host.querySelector('.camera-grid,.camera-empty')" in CAMERAS
     assert ".camera-ptz-grid" in CAMERA_CSS
     assert "camera-primary-layout" in CAMERAS
-    assert "grid-template-columns:minmax(0,1.65fr) minmax(260px,.85fr)" in CAMERA_CSS
-    assert "max-width:1120px" in CAMERA_CSS
+    assert "grid-template-columns:minmax(0,680px) minmax(240px,300px)" in CAMERA_CSS
+    assert "max-width:1040px" in CAMERA_CSS
+
+
+def test_camera_placeholder_and_wide_layout_are_compact():
+    assert 'class="camera-snapshot-frame"' in CAMERAS
+    assert 'class="camera-snapshot-placeholder"' in CAMERAS
+    assert "image.naturalWidth / image.naturalHeight" in CAMERAS
+    assert "ratio < 1.2 || ratio > 2.4" in CAMERAS
+    assert ".camera-snapshot-frame.is-placeholder .camera-latest-snapshot{display:none}" in CAMERA_CSS
+    assert "max-width:680px" in CAMERA_CSS
+    assert "max-width:260px" in CAMERA_CSS
+    assert "camera-page-active" in CAMERAS
+    assert ".sc-dashboard-shell.camera-page-active>.sc-bottom-navigation-container{display:none}" in CAMERA_CSS
 
 
 def test_electricity_cycle_chart_is_primary_and_daily_power_integration_is_explicit():
