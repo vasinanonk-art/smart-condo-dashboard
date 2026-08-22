@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [1.0.21] - 2026-08-22
+
+### Camera Live View controls
+
+- Add the existing capability-gated PTZ controls below the live camera video.
+- Keep PTZ movement bounded to the existing 0.5-second command duration.
+- Pause periodic snapshot refreshes while Live View is open so the live stream
+  is the only camera view being refreshed.
+
 ## [1.0.20] - 2026-08-22
 
 ### Safari camera Live View

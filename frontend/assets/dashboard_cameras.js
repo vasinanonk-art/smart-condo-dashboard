@@ -117,7 +117,7 @@
   function startSnapshotRefresh() {
     if (snapshotTimer) return;
     snapshotTimer = window.setInterval(() => {
-      if (document.hidden || window.currentPage?.() !== 'camera') return;
+      if (document.hidden || window.currentPage?.() !== 'camera' || document.querySelector('.camera-live-dialog[open]')) return;
       document.querySelectorAll('#cameraPage .camera-latest-snapshot').forEach(image => refreshSnapshot(image));
     }, SNAPSHOT_REFRESH_MS);
   }
@@ -131,10 +131,20 @@
   function openLiveView(camera, identifier) {
     document.querySelector('.camera-live-dialog button')?.click();
     const name = camera.name || camera.display_name || 'Camera';
+    const capabilities = camera.capabilities || {};
+    const ptz = capabilities.ptz_move && capabilities.ptz_stop
+      ? `<div class="camera-ptz-grid camera-live-ptz" role="group" aria-label="${safe(`${name} live pan and tilt`)}">
+          <button class="btn ghost camera-ptz-up" data-camera-ptz="${identifier}" data-camera-direction="up">Up</button>
+          <button class="btn ghost camera-ptz-left" data-camera-ptz="${identifier}" data-camera-direction="left">Left</button>
+          <button class="btn ghost camera-ptz-stop" data-camera-ptz="${identifier}" data-camera-command="stop_ptz">Stop</button>
+          <button class="btn ghost camera-ptz-right" data-camera-ptz="${identifier}" data-camera-direction="right">Right</button>
+          <button class="btn ghost camera-ptz-down" data-camera-ptz="${identifier}" data-camera-direction="down">Down</button>
+        </div>`
+      : '';
     const dialog = document.createElement('dialog');
     dialog.className = 'camera-live-dialog';
     dialog.setAttribute('aria-label', `${name} live view`);
-    dialog.innerHTML = `<div class="camera-live-shell"><header><strong>${safe(name)}</strong><button class="btn ghost" type="button">Close</button></header><video controls autoplay muted playsinline aria-label="${safe(`${name} live video`)}"></video></div>`;
+    dialog.innerHTML = `<div class="camera-live-shell"><header><strong>${safe(name)}</strong><button class="btn ghost" type="button">Close</button></header><video controls autoplay muted playsinline aria-label="${safe(`${name} live video`)}"></video>${ptz}</div>`;
     document.body.appendChild(dialog);
     const video = dialog.querySelector('video');
     let closed = false;
@@ -149,6 +159,7 @@
     dialog.querySelector('button').onclick = () => dialog.open ? dialog.close() : close();
     dialog.addEventListener('cancel', event => { event.preventDefault(); dialog.close(); });
     dialog.addEventListener('close', close);
+    dialog.querySelectorAll('[data-camera-ptz]').forEach(button => button.onclick = () => sendPtz(button));
     video.addEventListener('error', () => {
       window.toast?.('Live View could not start.');
       close();
@@ -178,7 +189,9 @@
     const target = button.dataset.cameraPtz;
     const stopping = button.dataset.cameraCommand === 'stop_ptz';
     if (!target || (ptzInFlight.has(target) && !stopping)) return;
-    const controls = [...button.closest('.camera-card').querySelectorAll('[data-camera-ptz]')];
+    const context = button.closest('.camera-card,.camera-live-dialog');
+    if (!context) return;
+    const controls = [...context.querySelectorAll('[data-camera-ptz]')];
     if (stopping) button.disabled = true;
     else {
       ptzInFlight.add(target);
@@ -197,8 +210,8 @@
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.detail || 'Camera movement failed');
-      if (!stopping) {
-        await refreshSnapshot(button.closest('.camera-card')?.querySelector('.camera-latest-snapshot'));
+      if (!stopping && !document.querySelector('.camera-live-dialog[open]')) {
+        await refreshSnapshot(context.querySelector('.camera-latest-snapshot'));
       }
       window.toast?.(stopping ? 'Camera stopped.' : 'Camera moved and stopped.');
     } catch (error) {

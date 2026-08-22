@@ -67,8 +67,14 @@ def test_camera_interactions_refresh_inline_and_release_live_media():
     assert "const SNAPSHOT_REFRESH_MS = 10000" in CAMERAS
     assert "async function refreshSnapshot(image, announce = false)" in CAMERAS
     assert "URL.createObjectURL(blob)" in CAMERAS
-    assert "if (document.hidden || window.currentPage?.() !== 'camera') return" in CAMERAS
+    assert "if (document.hidden || window.currentPage?.() !== 'camera' || document.querySelector('.camera-live-dialog[open]')) return" in CAMERAS
     assert "function openLiveView(camera, identifier)" in CAMERAS
+    assert 'class="camera-ptz-grid camera-live-ptz"' in CAMERAS
+    assert "dialog.querySelectorAll('[data-camera-ptz]')" in CAMERAS
+    assert "button.closest('.camera-card,.camera-live-dialog')" in CAMERAS
+    assert "document.querySelector('.camera-live-dialog[open]')" in CAMERAS
+    assert "{command:'move', direction:button.dataset.cameraDirection, duration:0.5}" in CAMERAS
+    assert "if (!stopping && !document.querySelector('.camera-live-dialog[open]'))" in CAMERAS
     assert "video.canPlayType('application/vnd.apple.mpegurl')" in CAMERAS
     assert "`/api/camera-control/${identifier}/live.m3u8?refresh=${Date.now()}`" in CAMERAS
     assert "video.removeAttribute('src')" in CAMERAS

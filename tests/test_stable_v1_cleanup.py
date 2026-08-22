@@ -62,4 +62,4 @@ def test_temporary_hotfix_object_diagnostics_are_not_printed():
 
 
 def test_release_version_has_one_canonical_source():
-    assert __version__ == "1.0.20"
+    assert __version__ == "1.0.21"

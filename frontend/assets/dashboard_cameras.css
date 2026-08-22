@@ -43,6 +43,7 @@
 .camera-live-dialog::backdrop{background:rgba(0,0,0,.72);backdrop-filter:blur(8px)}
 .camera-live-shell{display:grid;gap:12px;padding:16px}
 .camera-live-shell header{display:flex;align-items:center;justify-content:space-between;gap:16px}
-.camera-live-shell video{display:block;width:100%;max-height:min(76vh,720px);aspect-ratio:16/9;border-radius:12px;background:#000}
+.camera-live-shell video{display:block;width:100%;max-height:min(64vh,640px);aspect-ratio:16/9;border-radius:12px;background:#000}
+.camera-live-ptz{margin:0 auto}
 @media(min-width:761px){.sc-dashboard-shell.camera-page-active>.sc-bottom-navigation-container{display:none}}
-@media(max-width:720px){.camera-page-head{align-items:flex-start;flex-direction:column}.camera-grid{grid-template-columns:1fr}.camera-primary-layout{grid-template-columns:1fr}.camera-snapshot-frame{max-width:none}.camera-control-panel{max-width:none}.camera-card-actions .btn{flex:1 1 140px}.camera-ptz-grid{max-width:320px;margin:12px auto 0}}
+@media(max-width:720px){.camera-page-head{align-items:flex-start;flex-direction:column}.camera-grid{grid-template-columns:1fr}.camera-primary-layout{grid-template-columns:1fr}.camera-snapshot-frame{max-width:none}.camera-control-panel{max-width:none}.camera-card-actions .btn{flex:1 1 140px}.camera-ptz-grid{max-width:320px;margin:12px auto 0}.camera-live-shell video{max-height:52vh}.camera-live-ptz{margin:0 auto}}
