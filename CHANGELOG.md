@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.0.18] - 2026-08-22
+
+### Release identity and production-aligned fixes
+
+- Derive the global frontend asset cache version from the validated immutable
+  release marker before consulting managed-runtime Git metadata.
+- Include the bounded local lighting fallback and the capability-gated Bedroom
+  camera snapshot, live-view, and PTZ UI fixes currently validated in production.
+- Fall back to Git or frontend modification time when the release marker is
+  absent or invalid, without blocking dashboard startup.
+
 ### Camera PTZ candidate
 
 - Add capability-gated directional PTZ nudges for the verified Bedroom Tapo

@@ -1,6 +1,7 @@
 """Serve dashboard HTML with one stable build-version query string per deploy."""
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Callable
@@ -13,6 +14,28 @@ app = app_module.app
 FRONTEND_DIR = Path(app_module.FRONTEND_DIR)
 TOKEN = "__ASSET_VERSION__"
 CHART_DEBUG_TOKEN = "__CHART_DEBUG__"
+
+
+def _release_marker_revision() -> str | None:
+    root = FRONTEND_DIR.parent
+    try:
+        marker = json.loads(
+            (root / ".smart-condo-release.json").read_text(encoding="utf-8")
+        )
+        version = (root / "VERSION").read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(marker, dict):
+        return None
+    required = ("version", "commit", "source", "generated_at")
+    if not all(isinstance(marker.get(key), str) and marker[key] for key in required):
+        return None
+    commit = marker["commit"]
+    if marker["version"] != version or marker["source"] != "git-archive":
+        return None
+    if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
+        return None
+    return commit[:12]
 
 
 def _git_revision() -> str | None:
@@ -47,7 +70,7 @@ def build_version() -> str:
     explicit = os.getenv("DASHBOARD_BUILD_VERSION", "").strip()
     if explicit:
         return "".join(char for char in explicit if char.isalnum() or char in {"-", "_", "."})[:80] or "build"
-    return _git_revision() or _mtime_revision()
+    return _release_marker_revision() or _git_revision() or _mtime_revision()
 
 
 def chart_debug_enabled() -> bool:
