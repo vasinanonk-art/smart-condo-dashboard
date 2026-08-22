@@ -1,8 +1,10 @@
-"""Stable Home Assistant zone-light state and white-mode handling.
+"""Stable Home Assistant zone-light state and bounded local fallback.
 
 Keeps the existing lighting API contracts. Brightness and color-temperature
 commands explicitly use white mode, while recent successful commands are kept
 as short-lived optimistic values until Home Assistant reports the same state.
+Local Tuya is used only when the Home Assistant preflight is unavailable; an
+ambiguous Home Assistant service failure is never retried locally.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from typing import Any, Dict
 from backend import app as app_module
 from backend import dashboard_extensions
 from backend import runtime_ha_lighting as base
+from backend import runtime_fixes
 
 PENDING_TTL_SEC = 8.0
 DEFAULT_WHITE_KELVIN = 4000
@@ -98,24 +101,73 @@ def _service_payload(entity_id: str, body: dashboard_extensions.ZoneCommand, pre
     return payload
 
 
+def _set_pending(device_id: str, body: dashboard_extensions.ZoneCommand, preset: Dict[str, Any] | None) -> None:
+    values = _pending_values(body, preset)
+    if values:
+        with _pending_lock:
+            _pending[device_id] = {"expires": time.monotonic() + PENDING_TTL_SEC, "values": values}
+
+
+def _local_command(
+    device: Dict[str, Any],
+    body: dashboard_extensions.ZoneCommand,
+    preset: Dict[str, Any] | None,
+    reason: str,
+) -> Dict[str, Any]:
+    device_id = _device_id(device)
+    action = body.action.strip().lower()
+    normalized = "temperature" if action in ("temperature", "temp", "cct") else action
+    if not dashboard_extensions._supports(device, normalized, preset):
+        return {
+            "deviceid": device_id,
+            "ok": False,
+            "unsupported": True,
+            "error": "capability not supported",
+            "control_source": "local_tuya",
+            "fallback_reason": reason,
+        }
+    body_data = body.model_dump() if hasattr(body, "model_dump") else body.dict()
+    outcome = runtime_fixes._run_bounded(device, body_data, preset)
+    item = {
+        "deviceid": device_id,
+        **outcome,
+        "control_source": "local_tuya",
+        "fallback_reason": reason,
+    }
+    if item.get("ok"):
+        runtime_fixes._cache_success(device, body_data, preset)
+        runtime_fixes._refresh_success_async(device)
+        _set_pending(device_id, body, preset)
+    else:
+        item["error"] = runtime_fixes._safe_error(item.get("error") or item.get("steps"))
+    return item
+
+
 def _command_one(device: Dict[str, Any], body: dashboard_extensions.ZoneCommand, preset: Dict[str, Any] | None) -> Dict[str, Any]:
     device_id = _device_id(device)
     entity_id = base._entity_for_device(device)
     if not entity_id:
-        return {"deviceid": device_id, "ok": False, "error": "entity unavailable"}
+        return _local_command(device, body, preset, "entity_unavailable")
     try:
         current = base._ha_request(f"/api/states/{entity_id}")
-        if current.get("state") in ("unavailable", "unknown", None):
-            return {"deviceid": device_id, "ok": False, "error": "entity unavailable"}
+    except Exception:
+        return _local_command(device, body, preset, "home_assistant_unavailable")
+    if current.get("state") in ("unavailable", "unknown", None):
+        return _local_command(device, body, preset, "entity_unavailable")
+    try:
         payload = _service_payload(entity_id, body, preset)
         base._ha_request("/api/services/light/turn_on", "POST", payload)
-        values = _pending_values(body, preset)
-        if values:
-            with _pending_lock:
-                _pending[device_id] = {"expires": time.monotonic() + PENDING_TTL_SEC, "values": values}
-        return {"deviceid": device_id, "ok": True}
+        _set_pending(device_id, body, preset)
+        return {"deviceid": device_id, "ok": True, "control_source": "home_assistant"}
     except Exception as exc:
-        return {"deviceid": device_id, "ok": False, "error": base._safe_error(exc)}
+        # The service request may have reached Home Assistant. Do not duplicate
+        # an uncertain physical command through the local fallback.
+        return {
+            "deviceid": device_id,
+            "ok": False,
+            "error": base._safe_error(exc),
+            "control_source": "home_assistant",
+        }
 
 
 def _confirmed(actual: Any, expected: Any, key: str) -> bool:
@@ -151,7 +203,48 @@ def _overlay_pending(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _zones_payload() -> Dict[str, Any]:
-    return _overlay_pending(base._zones_payload())
+    payload = base._zones_payload()
+    presets, _ = dashboard_extensions._presets()
+    local_zones = {
+        name: dashboard_extensions._zone_payload(name, presets)
+        for name in dashboard_extensions._zones()
+    }
+    for zone in payload.get("zones", []):
+        local = local_zones.get(str(zone.get("zone") or ""))
+        if not local:
+            continue
+        ha_by_id = {str(item.get("deviceid") or ""): item for item in zone.get("devices", [])}
+        merged = []
+        used = set()
+        local_added = False
+        for local_item in local.get("devices", []):
+            device_id = str(local_item.get("deviceid") or "")
+            if device_id in ha_by_id:
+                item = ha_by_id[device_id]
+                item["state_source"] = "home_assistant"
+            else:
+                item = dict(local_item)
+                item["state_source"] = "local_cache"
+                local_added = True
+            merged.append(item)
+            used.add(device_id)
+        for device_id, item in ha_by_id.items():
+            if device_id not in used:
+                item["state_source"] = "home_assistant"
+                merged.append(item)
+        zone["devices"] = merged
+        zone["support"] = {
+            action: sum(1 for item in merged if (item.get("capabilities") or {}).get(action))
+            for action in ("brightness", "temperature", "rgb")
+        }
+        total = len(merged)
+        zone["partial_support"] = any(
+            0 < count < total for count in zone["support"].values()
+        ) if total else False
+        zone["presets"] = local.get("presets", [])
+        if local_added:
+            zone["state_source"] = "home_assistant_with_local_cache"
+    return _overlay_pending(payload)
 
 
 def _zone_command(body: dashboard_extensions.ZoneCommand):
@@ -178,6 +271,7 @@ def _zone_command(body: dashboard_extensions.ZoneCommand):
     order = {_device_id(device): index for index, device in enumerate(devices)}
     results.sort(key=lambda item: order.get(item["deviceid"], 999))
     success = sum(1 for item in results if item.get("ok"))
+    used_local = any(item.get("control_source") == "local_tuya" for item in results)
     return {
         "ok": success > 0,
         "zone": zone,
@@ -186,7 +280,7 @@ def _zone_command(body: dashboard_extensions.ZoneCommand):
         "partial": success != len(results),
         "missing_members": missing,
         "results": results,
-        "control_source": "home_assistant",
+        "control_source": "home_assistant_with_local_fallback" if used_local else "home_assistant",
     }
 
 
@@ -210,4 +304,4 @@ _install_routes()
 @app_module.app.on_event("startup")
 def ensure_stable_ha_lighting_routes() -> None:
     _install_routes()
-    print("lighting zone state mode: optimistic-white", flush=True)
+    print("lighting zone state mode: optimistic-white-local-fallback", flush=True)

@@ -47,7 +47,7 @@
     const id = encodeURIComponent(camera.id || '');
     const unavailable = camera.online !== true || current.label === 'Unavailable';
     const snapshot = capabilities.snapshot && camera.online === true
-      ? `<img class="camera-latest-snapshot" loading="lazy" src="/api/camera-control/${id}/snapshot" alt="Latest snapshot from ${safe(camera.name || camera.display_name || 'camera')}">`
+      ? `<div class="camera-snapshot-frame"><img class="camera-latest-snapshot" loading="lazy" src="/api/camera-control/${id}/snapshot" alt="Latest snapshot from ${safe(camera.name || camera.display_name || 'camera')}"><div class="camera-snapshot-placeholder" role="status"><strong>Snapshot unavailable</strong><span>Open Live View to check the camera.</span></div></div>`
       : `<div class="camera-snapshot-unavailable"><strong>${unavailable ? current.label : 'Snapshot unavailable'}</strong>${camera.unavailable_reason ? `<span>${safe(reasonText(camera.unavailable_reason))}</span>` : ''}</div>`;
     const actions = [
       capabilities.snapshot && camera.online === true ? `<button class="btn primary" data-camera-snapshot="${id}">Snapshot</button>` : '',
@@ -127,6 +127,16 @@
     if (signature === renderedSignature && host.querySelector('.camera-grid,.camera-empty')) return;
     renderedSignature = signature;
     host.innerHTML = `<section class="camera-page-head"><p>View current camera availability and open a live view.</p><span class="muted">${available.length} camera${available.length === 1 ? '' : 's'}</span></section>${available.length ? `<div class="camera-grid">${available.map(cameraCard).join('')}</div>` : '<div class="card camera-empty">No camera configuration is available.</div>'}`;
+    host.querySelectorAll('.camera-latest-snapshot').forEach(image => {
+      const frame = image.closest('.camera-snapshot-frame');
+      const classify = () => {
+        const ratio = image.naturalWidth && image.naturalHeight ? image.naturalWidth / image.naturalHeight : 0;
+        frame?.classList.toggle('is-placeholder', ratio < 1.2 || ratio > 2.4);
+      };
+      image.addEventListener('load', classify);
+      image.addEventListener('error', () => frame?.classList.add('is-placeholder'));
+      if (image.complete) classify();
+    });
     host.querySelectorAll('[data-camera-snapshot]').forEach(button => button.onclick = () => window.open(`/api/camera-control/${button.dataset.cameraSnapshot}/snapshot`, '_blank', 'noopener'));
     host.querySelectorAll('[data-camera-live]').forEach(button => button.onclick = () => window.open(`/api/camera-control/${button.dataset.cameraLive}/live`, '_blank', 'noopener'));
     host.querySelectorAll('[data-camera-ptz]').forEach(button => button.onclick = () => sendPtz(button));
@@ -149,6 +159,7 @@
   const originalRenderPage = window.renderPage;
   window.renderPage = function renderPageWithCameras(page = window.currentPage()) {
     originalRenderPage(page);
+    document.querySelector('.sc-dashboard-shell')?.classList.toggle('camera-page-active', page === 'camera');
     if (page === 'camera') render();
   };
   window.DashboardDataLifecycle?.register('camera-page', ['camera'], load);
