@@ -140,7 +140,7 @@ def test_dry_run_is_strictly_non_mutating(tmp_path, arguments):
 
     assert result.returncode == 0, result.stderr
     assert "no production lock, runtime, venv, systemd, go2rtc, or persistent state" in result.stdout
-    assert "VERSION=1.0.19" in result.stdout
+    assert "VERSION=1.0.20" in result.stdout
     assert not (tmp_path / "install.lock").exists()
     assert not systemctl_log.exists()
     for path, digest in before.items():

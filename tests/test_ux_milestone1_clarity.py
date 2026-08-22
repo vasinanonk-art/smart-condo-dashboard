@@ -69,6 +69,8 @@ def test_camera_interactions_refresh_inline_and_release_live_media():
     assert "URL.createObjectURL(blob)" in CAMERAS
     assert "if (document.hidden || window.currentPage?.() !== 'camera') return" in CAMERAS
     assert "function openLiveView(camera, identifier)" in CAMERAS
+    assert "video.canPlayType('application/vnd.apple.mpegurl')" in CAMERAS
+    assert "`/api/camera-control/${identifier}/live.m3u8?refresh=${Date.now()}`" in CAMERAS
     assert "video.removeAttribute('src')" in CAMERAS
     assert "video.load()" in CAMERAS
     assert "window.open(`/api/camera-control/" not in CAMERAS

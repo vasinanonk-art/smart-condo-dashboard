@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import subprocess
 import time
 import urllib.error
@@ -28,6 +29,7 @@ READINESS_PATH = "/api/auth/status"
 READINESS_TIMEOUT_SEC = 30.0
 READINESS_RETRY_SEC = 0.25
 RELEASE_MARKER_NAME = ".smart-condo-release.json"
+HLS_SESSION_ID = r"[a-zA-Z0-9_-]{1,64}"
 
 
 def verify_release_marker(
@@ -250,6 +252,26 @@ def _fetch(cookie: str, path: str, *, limit: int = 2_000_000) -> tuple[int, str,
         return response.status, response.headers.get("Content-Type", ""), response.read(limit)
 
 
+def verified_hls_child_path(camera_id: str, content: bytes) -> str:
+    text = content.decode("utf-8", "strict")
+    match = re.search(rf"^hls/playlist\.m3u8\?id=({HLS_SESSION_ID})$", text, re.MULTILINE)
+    if match is None:
+        raise ValueError("camera_hls_master_invalid")
+    return f"/api/camera-control/{camera_id}/hls/playlist.m3u8?id={match.group(1)}"
+
+
+def verified_hls_segment_path(camera_id: str, content: bytes) -> str:
+    text = content.decode("utf-8", "strict")
+    match = re.search(
+        rf"^segment\.ts\?id=({HLS_SESSION_ID})&n=([0-9]{{1,7}})$",
+        text,
+        re.MULTILINE,
+    )
+    if match is None or int(match.group(2)) > 1_000_000:
+        raise ValueError("camera_hls_playlist_invalid")
+    return f"/api/camera-control/{camera_id}/hls/segment.ts?id={match.group(1)}&n={match.group(2)}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--expected-commit")
@@ -300,6 +322,25 @@ def main(argv: list[str] | None = None) -> int:
         "status": status,
         "content_type": content_type,
         "bytes": len(content),
+    }
+
+    status, content_type, content = _fetch(
+        cookie, f"/api/camera-control/{camera_id}/live.m3u8", limit=64_000
+    )
+    if status != 200 or "mpegurl" not in content_type.lower() or not content.startswith(b"#EXTM3U"):
+        raise RuntimeError("camera_hls_master_verification_failed")
+    child_path = verified_hls_child_path(camera_id, content)
+    status, content_type, content = _fetch(cookie, child_path, limit=64_000)
+    if status != 200 or "mpegurl" not in content_type.lower() or not content.startswith(b"#EXTM3U"):
+        raise RuntimeError("camera_hls_playlist_verification_failed")
+    segment_path = verified_hls_segment_path(camera_id, content)
+    status, content_type, content = _fetch(cookie, segment_path, limit=4_000_000)
+    if status != 200 or not content_type.lower().startswith("video/mp2t") or not content:
+        raise RuntimeError("camera_hls_segment_verification_failed")
+    results["camera_hls"] = {
+        "status": status,
+        "content_type": content_type,
+        "segment_bytes": len(content),
     }
 
     status, content_type, content = _fetch(cookie, "/")

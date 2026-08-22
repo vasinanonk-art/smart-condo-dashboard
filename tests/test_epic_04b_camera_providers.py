@@ -4,6 +4,7 @@ import time
 from types import SimpleNamespace
 
 import bcrypt
+import pytest
 from fastapi.testclient import TestClient
 from fastapi.responses import Response
 
@@ -430,6 +431,71 @@ def test_live_proxy_streams_and_releases_upstream(monkeypatch):
     assert "password" not in requested[0]
 
 
+def test_hls_proxy_uses_bounded_loopback_playlists_and_segments(monkeypatch):
+    class Upstream:
+        status = 200
+
+        def __init__(self, body):
+            self.body = body
+
+        def read(self, size):
+            return self.body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    requested = []
+
+    def open_upstream(request, timeout):
+        requested.append(request.full_url)
+        if "stream.m3u8" in request.full_url:
+            return Upstream(b'#EXTM3U\n#EXT-X-STREAM-INF:CODECS="avc1.640029"\nhls/playlist.m3u8?id=session-one\n')
+        if "playlist.m3u8" in request.full_url:
+            return Upstream(b"#EXTM3U\n#EXTINF:0.500,\nsegment.ts?id=session-one&n=0\n")
+        return Upstream(b"transport-stream")
+
+    monkeypatch.setenv("GO2RTC_API_URL", "http://127.0.0.1:1984")
+    monkeypatch.setenv("GO2RTC_TAPO_C200_STREAM", "tapo_c200_main")
+    monkeypatch.setattr(providers.urllib.request, "urlopen", open_upstream)
+    spec = providers.CameraSpec(
+        id="tapo-c220", display_name="Camera", room="bed_room",
+        vendor="TP-Link", model="C200", host="camera.local", enabled=True,
+        provider="onvif", rtsp_port=554, onvif_port=2020, stream_path=None,
+        username_env="USER_ENV", password_env="PASSWORD_ENV",
+        declared_capabilities=frozenset({"live_stream"}), verification_status="verified",
+    )
+
+    master = providers._go2rtc_hls_master_response(spec)
+    playlist = providers._go2rtc_hls_resource_response("playlist.m3u8", "session-one", None)
+    segment = providers._go2rtc_hls_resource_response("segment.ts", "session-one", 0)
+
+    assert master.media_type == "application/vnd.apple.mpegurl"
+    assert playlist.media_type == "application/vnd.apple.mpegurl"
+    assert segment.media_type == "video/mp2t"
+    assert segment.body == b"transport-stream"
+    assert requested == [
+        "http://127.0.0.1:1984/api/stream.m3u8?src=tapo_c200_main",
+        "http://127.0.0.1:1984/api/hls/playlist.m3u8?id=session-one",
+        "http://127.0.0.1:1984/api/hls/segment.ts?id=session-one&n=0",
+    ]
+
+
+def test_hls_proxy_rejects_unbounded_or_forged_resources(monkeypatch):
+    monkeypatch.setenv("GO2RTC_API_URL", "http://127.0.0.1:1984")
+    for arguments in (
+        ("other.ts", "session-one", 0),
+        ("segment.ts", "../session", 0),
+        ("segment.ts", "session-one", None),
+        ("segment.ts", "session-one", 1_000_001),
+        ("playlist.m3u8", "session-one", 0),
+    ):
+        with pytest.raises(LookupError):
+            providers._go2rtc_hls_resource_response(*arguments)
+
+
 def test_live_route_remains_fail_closed_without_verified_runtime(monkeypatch):
     monkeypatch.setattr(providers, "_spec", lambda camera_id: None)
     assert providers.camera_live_readonly("missing").status_code == 404
@@ -468,5 +534,7 @@ def test_camera_read_routes_require_dashboard_authentication(monkeypatch):
         "/api/camera-control/camera-one/presets",
         "/api/camera-control/camera-one/snapshot",
         "/api/camera-control/camera-one/live",
+        "/api/camera-control/camera-one/live.m3u8",
+        "/api/camera-control/camera-one/hls/playlist.m3u8?id=session-one",
     ):
         assert client.get(path).status_code == 401

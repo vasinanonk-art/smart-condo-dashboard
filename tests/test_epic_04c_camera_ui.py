@@ -92,7 +92,9 @@ def test_camera_ui_is_capability_driven_and_has_bounded_ptz_commands():
 
 def test_live_view_is_on_demand_and_releases_media_on_close():
     assert "function openCameraLiveView(device, identifier)" in SOURCE
-    assert "video.src = `/api/camera-control/${identifier}/live`" in SOURCE
+    assert "video.canPlayType('application/vnd.apple.mpegurl')" in SOURCE
+    assert "`/api/camera-control/${identifier}/live.m3u8`" in SOURCE
+    assert "`/api/camera-control/${identifier}/live`" in SOURCE
     assert "if (button.dataset.cameraAction === 'live')" in SOURCE
     assert "video.removeAttribute('src')" in SOURCE
     assert "video.load()" in SOURCE

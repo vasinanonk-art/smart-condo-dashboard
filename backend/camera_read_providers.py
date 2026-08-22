@@ -35,6 +35,10 @@ PUBLIC_CAMERA_ALIASES = {
     "camera-3": "xiaomi-camera-2",
 }
 _STREAM_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+_HLS_SESSION_ID = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+_HLS_RESOURCES = {"playlist.m3u8", "segment.ts"}
+MAX_HLS_PLAYLIST_BYTES = 64_000
+MAX_HLS_SEGMENT_BYTES = 4_000_000
 
 
 @dataclass(frozen=True)
@@ -436,6 +440,58 @@ def _go2rtc_live_response(spec: CameraSpec):
     )
 
 
+def _go2rtc_hls_master_response(spec: CameraSpec):
+    base_url = _go2rtc_base_url()
+    stream_name = _go2rtc_stream_name(spec)
+    if not base_url or not stream_name:
+        raise LookupError("live_stream_unavailable")
+    query = urllib.parse.urlencode({"src": stream_name})
+    request = urllib.request.Request(f"{base_url}/api/stream.m3u8?{query}", method="GET")
+    with urllib.request.urlopen(request, timeout=NETWORK_TIMEOUT_SEC + 4.0) as upstream:
+        content = upstream.read(MAX_HLS_PLAYLIST_BYTES + 1)
+        if (
+            upstream.status != 200
+            or len(content) > MAX_HLS_PLAYLIST_BYTES
+            or not content.startswith(b"#EXTM3U")
+        ):
+            raise LookupError("live_stream_unavailable")
+    return Response(
+        content,
+        media_type="application/vnd.apple.mpegurl",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+def _go2rtc_hls_resource_response(resource: str, session_id: str, sequence: int | None):
+    base_url = _go2rtc_base_url()
+    if (
+        not base_url
+        or resource not in _HLS_RESOURCES
+        or not _HLS_SESSION_ID.fullmatch(session_id)
+        or (resource == "segment.ts" and (sequence is None or not 0 <= sequence <= 1_000_000))
+        or (resource == "playlist.m3u8" and sequence is not None)
+    ):
+        raise LookupError("live_stream_unavailable")
+    query_values = {"id": session_id}
+    if sequence is not None:
+        query_values["n"] = str(sequence)
+    query = urllib.parse.urlencode(query_values)
+    request = urllib.request.Request(f"{base_url}/api/hls/{resource}?{query}", method="GET")
+    limit = MAX_HLS_PLAYLIST_BYTES if resource == "playlist.m3u8" else MAX_HLS_SEGMENT_BYTES
+    with urllib.request.urlopen(request, timeout=NETWORK_TIMEOUT_SEC + 4.0) as upstream:
+        content = upstream.read(limit + 1)
+        if upstream.status != 200 or not content or len(content) > limit:
+            raise LookupError("live_stream_unavailable")
+        if resource == "playlist.m3u8" and not content.startswith(b"#EXTM3U"):
+            raise LookupError("live_stream_unavailable")
+    media_type = "application/vnd.apple.mpegurl" if resource == "playlist.m3u8" else "video/mp2t"
+    return Response(
+        content,
+        media_type=media_type,
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
 def _discover_onvif(spec: CameraSpec) -> Dict[str, Any]:
     result = _base_result(spec, "onvif", None)
     started = time.monotonic()
@@ -726,6 +782,50 @@ def camera_live_readonly(camera_id: str):
         return JSONResponse({"detail": "live_stream_unavailable"}, status_code=502)
 
 
+def camera_hls_master_readonly(camera_id: str):
+    spec = _spec(camera_id)
+    if spec is None:
+        return JSONResponse({"detail": "camera_not_found"}, status_code=404)
+    if (
+        not spec.enabled
+        or spec.verification_status != "verified"
+        or "live_stream" not in spec.declared_capabilities
+        or spec.provider not in {"auto", "onvif"}
+        or not _go2rtc_live_available(spec)
+    ):
+        return JSONResponse({"detail": "live_stream_unavailable"}, status_code=422)
+    try:
+        return _go2rtc_hls_master_response(spec)
+    except (TimeoutError, socket.timeout):
+        return JSONResponse({"detail": "camera_timeout"}, status_code=504)
+    except Exception:
+        return JSONResponse({"detail": "live_stream_unavailable"}, status_code=502)
+
+
+def camera_hls_resource_readonly(
+    camera_id: str,
+    resource: str,
+    id: str,
+    n: int | None = None,
+):
+    spec = _spec(camera_id)
+    if spec is None:
+        return JSONResponse({"detail": "camera_not_found"}, status_code=404)
+    if (
+        not spec.enabled
+        or spec.verification_status != "verified"
+        or "live_stream" not in spec.declared_capabilities
+        or spec.provider not in {"auto", "onvif"}
+    ):
+        return JSONResponse({"detail": "live_stream_unavailable"}, status_code=422)
+    try:
+        return _go2rtc_hls_resource_response(resource, id, n)
+    except (TimeoutError, socket.timeout):
+        return JSONResponse({"detail": "camera_timeout"}, status_code=504)
+    except Exception:
+        return JSONResponse({"detail": "live_stream_unavailable"}, status_code=502)
+
+
 @app.get("/api/camera-control/{camera_id}/status")
 def camera_status_route(camera_id: str):
     return camera_status_readonly(camera_id)
@@ -752,5 +852,15 @@ _replace_endpoint("/api/cameras", {"GET"}, cameras_runtime)
 app.add_api_route(
     "/api/camera-control/{camera_id}/live",
     camera_live_readonly,
+    methods=["GET"],
+)
+app.add_api_route(
+    "/api/camera-control/{camera_id}/live.m3u8",
+    camera_hls_master_readonly,
+    methods=["GET"],
+)
+app.add_api_route(
+    "/api/camera-control/{camera_id}/hls/{resource}",
+    camera_hls_resource_readonly,
     methods=["GET"],
 )

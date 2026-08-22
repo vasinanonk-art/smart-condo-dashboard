@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.0.20] - 2026-08-22
+
+### Safari camera Live View
+
+- Serve a bounded, authenticated HLS proxy for the verified Bedroom camera
+  while keeping go2rtc listeners loopback-only.
+- Use native HLS playback on Safari and retain the existing fragmented MP4
+  stream as the fallback for other browsers.
+- Extend the release verifier through the HLS master playlist, media playlist,
+  and first transport-stream segment.
+
 ## [1.0.19] - 2026-08-22
 
 ### Camera interaction reliability

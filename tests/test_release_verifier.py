@@ -7,6 +7,8 @@ import pytest
 from scripts.verify_release import (
     count_journal_json_entries,
     verify_release_marker,
+    verified_hls_child_path,
+    verified_hls_segment_path,
     wait_for_dashboard_ready,
     verified_tapo_camera,
     verify_go2rtc_listener_output,
@@ -228,6 +230,29 @@ def test_release_verifier_uses_camera_api_cameras_envelope():
     incompatible = dict(payload, cameras=None, devices=payload["cameras"])
     with pytest.raises(ValueError, match="camera_inventory_invalid"):
         verified_tapo_camera(incompatible)
+
+
+def test_release_verifier_accepts_bounded_hls_paths():
+    assert verified_hls_child_path(
+        "tapo-c220",
+        b'#EXTM3U\n#EXT-X-STREAM-INF:CODECS="avc1.640029"\nhls/playlist.m3u8?id=session-one\n',
+    ) == "/api/camera-control/tapo-c220/hls/playlist.m3u8?id=session-one"
+    assert verified_hls_segment_path(
+        "tapo-c220",
+        b"#EXTM3U\n#EXTINF:0.500,\nsegment.ts?id=session-one&n=12\n",
+    ) == "/api/camera-control/tapo-c220/hls/segment.ts?id=session-one&n=12"
+
+
+@pytest.mark.parametrize(
+    "content",
+    (
+        b"hls/playlist.m3u8?id=../session",
+        b"https://camera.invalid/playlist.m3u8",
+    ),
+)
+def test_release_verifier_rejects_forged_hls_child_paths(content):
+    with pytest.raises(ValueError, match="camera_hls_master_invalid"):
+        verified_hls_child_path("tapo-c220", content)
 
 
 def _journal_record(message):

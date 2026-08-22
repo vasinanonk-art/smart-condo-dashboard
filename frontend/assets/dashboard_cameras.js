@@ -155,7 +155,10 @@
     });
     if (typeof dialog.showModal === 'function') dialog.showModal();
     else dialog.setAttribute('open', '');
-    video.src = `/api/camera-control/${identifier}/live?refresh=${Date.now()}`;
+    const hls = video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL');
+    video.src = hls
+      ? `/api/camera-control/${identifier}/live.m3u8?refresh=${Date.now()}`
+      : `/api/camera-control/${identifier}/live?refresh=${Date.now()}`;
     video.play().catch(() => window.toast?.('Press play to start Live View.'));
   }
 
