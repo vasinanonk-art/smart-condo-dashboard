@@ -57,6 +57,8 @@ def test_camera_placeholder_and_wide_layout_are_compact():
     assert "max-width:260px" in CAMERA_CSS
     assert "camera-page-active" in CAMERAS
     assert ".sc-dashboard-shell.camera-page-active>.sc-bottom-navigation-container{display:none}" in CAMERA_CSS
+    assert ".camera-page-head{display:flex;align-items:end;justify-content:space-between;width:100%;max-width:1040px;margin:0 auto" in CAMERA_CSS
+    assert "justify-items:center" in CAMERA_CSS
 
 
 def test_electricity_cycle_chart_is_primary_and_daily_power_integration_is_explicit():
