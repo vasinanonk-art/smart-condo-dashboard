@@ -32,7 +32,7 @@ def test_camera_view_uses_existing_api_and_capability_gates_actions():
     assert "capabilities.live_stream" in CAMERAS
     assert "capabilities.ptz_move && capabilities.ptz_stop" in CAMERAS
     assert "data-camera-command=\"stop_ptz\"" in CAMERAS
-    assert "duration:0.2" in CAMERAS
+    assert "duration:0.5" in CAMERAS
     assert "camera-advanced" in CAMERAS
     assert "dashboard_cameras.js" in INDEX and "dashboard_cameras.css" in INDEX
 
@@ -61,6 +61,18 @@ def test_camera_placeholder_and_wide_layout_are_compact():
     assert "justify-items:center" in CAMERA_CSS
     assert 'dashboard_cameras.css?v=__ASSET_VERSION__' in INDEX
     assert 'dashboard_cameras.js?v=__ASSET_VERSION__' in INDEX
+
+
+def test_camera_interactions_refresh_inline_and_release_live_media():
+    assert "const SNAPSHOT_REFRESH_MS = 10000" in CAMERAS
+    assert "async function refreshSnapshot(image, announce = false)" in CAMERAS
+    assert "URL.createObjectURL(blob)" in CAMERAS
+    assert "if (document.hidden || window.currentPage?.() !== 'camera') return" in CAMERAS
+    assert "function openLiveView(camera, identifier)" in CAMERAS
+    assert "video.removeAttribute('src')" in CAMERAS
+    assert "video.load()" in CAMERAS
+    assert "window.open(`/api/camera-control/" not in CAMERAS
+    assert ".camera-live-dialog" in CAMERA_CSS
 
 
 def test_electricity_cycle_chart_is_primary_and_daily_power_integration_is_explicit():

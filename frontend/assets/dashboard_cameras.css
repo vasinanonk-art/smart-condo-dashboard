@@ -39,5 +39,10 @@
 .camera-ptz-stop{grid-area:stop;border-color:rgba(255,100,100,.7);color:var(--red)}
 .camera-ptz-right{grid-area:right}
 .camera-ptz-down{grid-area:down}
+.camera-live-dialog{width:min(92vw,1100px);max-width:none;padding:0;border:1px solid var(--line);border-radius:18px;color:inherit;background:#09090b}
+.camera-live-dialog::backdrop{background:rgba(0,0,0,.72);backdrop-filter:blur(8px)}
+.camera-live-shell{display:grid;gap:12px;padding:16px}
+.camera-live-shell header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.camera-live-shell video{display:block;width:100%;max-height:min(76vh,720px);aspect-ratio:16/9;border-radius:12px;background:#000}
 @media(min-width:761px){.sc-dashboard-shell.camera-page-active>.sc-bottom-navigation-container{display:none}}
 @media(max-width:720px){.camera-page-head{align-items:flex-start;flex-direction:column}.camera-grid{grid-template-columns:1fr}.camera-primary-layout{grid-template-columns:1fr}.camera-snapshot-frame{max-width:none}.camera-control-panel{max-width:none}.camera-card-actions .btn{flex:1 1 140px}.camera-ptz-grid{max-width:320px;margin:12px auto 0}}

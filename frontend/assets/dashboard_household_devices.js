@@ -324,7 +324,7 @@
     }
     const body = stopping
       ? {command:'stop_ptz'}
-      : {command:'move', direction:button.dataset.cameraDirection, duration:0.2};
+      : {command:'move', direction:button.dataset.cameraDirection, duration:0.5};
     try {
       const response = await fetch(`/api/camera-control/${encodeURIComponent(target)}/command`, {
         method:'POST',

@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.0.19] - 2026-08-22
+
+### Camera interaction reliability
+
+- Refresh camera snapshots in place every 10 seconds while the Camera page is
+  visible, and retain the last good image when a refresh fails.
+- Open Live View in a closable in-page player and release the stream when the
+  player closes.
+- Extend user-requested PTZ nudges to the existing 0.5-second backend safety
+  ceiling and refresh the snapshot after a successful movement request.
+
 ## [1.0.18] - 2026-08-22
 
 ### Release identity and production-aligned fixes

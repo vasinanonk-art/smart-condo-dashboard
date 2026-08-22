@@ -21,6 +21,8 @@
     return {label:'Unknown', cls:'neutral'};
   };
   const ptzInFlight = new Set();
+  const SNAPSHOT_REFRESH_MS = 10000;
+  let snapshotTimer = null;
 
   function install() {
     document.querySelectorAll('.nav,.mobile-nav').forEach(host => {
@@ -47,7 +49,7 @@
     const id = encodeURIComponent(camera.id || '');
     const unavailable = camera.online !== true || current.label === 'Unavailable';
     const snapshot = capabilities.snapshot && camera.online === true
-      ? `<div class="camera-snapshot-frame"><img class="camera-latest-snapshot" loading="lazy" src="/api/camera-control/${id}/snapshot" alt="Latest snapshot from ${safe(camera.name || camera.display_name || 'camera')}"><div class="camera-snapshot-placeholder" role="status"><strong>Snapshot unavailable</strong><span>Open Live View to check the camera.</span></div></div>`
+      ? `<div class="camera-snapshot-frame"><img class="camera-latest-snapshot" data-camera-id="${id}" loading="lazy" src="/api/camera-control/${id}/snapshot" alt="Latest snapshot from ${safe(camera.name || camera.display_name || 'camera')}"><div class="camera-snapshot-placeholder" role="status"><strong>Snapshot unavailable</strong><span>Open Live View to check the camera.</span></div></div>`
       : `<div class="camera-snapshot-unavailable"><strong>${unavailable ? current.label : 'Snapshot unavailable'}</strong>${camera.unavailable_reason ? `<span>${safe(reasonText(camera.unavailable_reason))}</span>` : ''}</div>`;
     const actions = [
       capabilities.snapshot && camera.online === true ? `<button class="btn primary" data-camera-snapshot="${id}">Snapshot</button>` : '',
@@ -74,6 +76,89 @@
   let cameras = [];
   let renderedSignature = '';
 
+  async function refreshSnapshot(image, announce = false) {
+    const target = image?.dataset.cameraId;
+    if (!target || image.dataset.refreshing === 'true') return false;
+    image.dataset.refreshing = 'true';
+    try {
+      const response = await window.fetch(`/api/camera-control/${target}/snapshot?refresh=${Date.now()}`, {
+        cache:'no-store',
+      });
+      if (!response.ok) throw new Error('Snapshot unavailable');
+      const blob = await response.blob();
+      if (!blob.type.startsWith('image/')) throw new Error('Invalid snapshot');
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        await new Promise((resolve, reject) => {
+          const probe = new Image();
+          probe.onload = resolve;
+          probe.onerror = reject;
+          probe.src = objectUrl;
+        });
+      } catch (error) {
+        URL.revokeObjectURL(objectUrl);
+        throw error;
+      }
+      const previous = image.dataset.objectUrl;
+      image.dataset.objectUrl = objectUrl;
+      image.src = objectUrl;
+      image.closest('.camera-snapshot-frame')?.classList.remove('is-placeholder');
+      if (previous) URL.revokeObjectURL(previous);
+      if (announce) window.toast?.('Snapshot updated.');
+      return true;
+    } catch (error) {
+      if (announce) window.toast?.(error.message || 'Snapshot unavailable');
+      return false;
+    } finally {
+      image.dataset.refreshing = 'false';
+    }
+  }
+
+  function startSnapshotRefresh() {
+    if (snapshotTimer) return;
+    snapshotTimer = window.setInterval(() => {
+      if (document.hidden || window.currentPage?.() !== 'camera') return;
+      document.querySelectorAll('#cameraPage .camera-latest-snapshot').forEach(image => refreshSnapshot(image));
+    }, SNAPSHOT_REFRESH_MS);
+  }
+
+  function stopSnapshotRefresh() {
+    if (!snapshotTimer) return;
+    window.clearInterval(snapshotTimer);
+    snapshotTimer = null;
+  }
+
+  function openLiveView(camera, identifier) {
+    document.querySelector('.camera-live-dialog button')?.click();
+    const name = camera.name || camera.display_name || 'Camera';
+    const dialog = document.createElement('dialog');
+    dialog.className = 'camera-live-dialog';
+    dialog.setAttribute('aria-label', `${name} live view`);
+    dialog.innerHTML = `<div class="camera-live-shell"><header><strong>${safe(name)}</strong><button class="btn ghost" type="button">Close</button></header><video controls autoplay muted playsinline aria-label="${safe(`${name} live video`)}"></video></div>`;
+    document.body.appendChild(dialog);
+    const video = dialog.querySelector('video');
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      dialog.remove();
+    };
+    dialog.querySelector('button').onclick = () => dialog.open ? dialog.close() : close();
+    dialog.addEventListener('cancel', event => { event.preventDefault(); dialog.close(); });
+    dialog.addEventListener('close', close);
+    video.addEventListener('error', () => {
+      window.toast?.('Live View could not start.');
+      close();
+    });
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+    video.src = `/api/camera-control/${identifier}/live?refresh=${Date.now()}`;
+    video.play().catch(() => window.toast?.('Press play to start Live View.'));
+  }
+
   function stableSignature(available) {
     return JSON.stringify(available.map(camera => ({
       id:camera.id,
@@ -98,7 +183,9 @@
     }
     const body = stopping
       ? {command:'stop_ptz'}
-      : {command:'move', direction:button.dataset.cameraDirection, duration:0.2};
+      : {command:'move', direction:button.dataset.cameraDirection, duration:0.5};
+    const originalLabel = button.textContent;
+    if (!stopping) button.textContent = 'Moving…';
     try {
       const response = await window.fetch(`/api/camera-control/${target}/command`, {
         method:'POST',
@@ -107,12 +194,16 @@
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.detail || 'Camera movement failed');
+      if (!stopping) {
+        await refreshSnapshot(button.closest('.camera-card')?.querySelector('.camera-latest-snapshot'));
+      }
       window.toast?.(stopping ? 'Camera stopped.' : 'Camera moved and stopped.');
     } catch (error) {
       window.toast?.(error.message);
     } finally {
       if (stopping) button.disabled = false;
       else {
+        button.textContent = originalLabel;
         ptzInFlight.delete(target);
         controls.forEach(control => { control.disabled = false; });
       }
@@ -125,6 +216,9 @@
     const available = cameras.length ? cameras : (window.S?.cameras || []);
     const signature = stableSignature(available);
     if (signature === renderedSignature && host.querySelector('.camera-grid,.camera-empty')) return;
+    host.querySelectorAll('.camera-latest-snapshot').forEach(image => {
+      if (image.dataset.objectUrl) URL.revokeObjectURL(image.dataset.objectUrl);
+    });
     renderedSignature = signature;
     host.innerHTML = `<section class="camera-page-head"><p>View current camera availability and open a live view.</p><span class="muted">${available.length} camera${available.length === 1 ? '' : 's'}</span></section>${available.length ? `<div class="camera-grid">${available.map(cameraCard).join('')}</div>` : '<div class="card camera-empty">No camera configuration is available.</div>'}`;
     host.querySelectorAll('.camera-latest-snapshot').forEach(image => {
@@ -137,8 +231,18 @@
       image.addEventListener('error', () => frame?.classList.add('is-placeholder'));
       if (image.complete) classify();
     });
-    host.querySelectorAll('[data-camera-snapshot]').forEach(button => button.onclick = () => window.open(`/api/camera-control/${button.dataset.cameraSnapshot}/snapshot`, '_blank', 'noopener'));
-    host.querySelectorAll('[data-camera-live]').forEach(button => button.onclick = () => window.open(`/api/camera-control/${button.dataset.cameraLive}/live`, '_blank', 'noopener'));
+    host.querySelectorAll('[data-camera-snapshot]').forEach(button => button.onclick = async () => {
+      const label = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Refreshing…';
+      await refreshSnapshot(button.closest('.camera-card')?.querySelector('.camera-latest-snapshot'), true);
+      button.textContent = label;
+      button.disabled = false;
+    });
+    host.querySelectorAll('[data-camera-live]').forEach(button => button.onclick = () => {
+      const camera = available.find(item => encodeURIComponent(item.id || '') === button.dataset.cameraLive);
+      if (camera) openLiveView(camera, button.dataset.cameraLive);
+    });
     host.querySelectorAll('[data-camera-ptz]').forEach(button => button.onclick = () => sendPtz(button));
   }
 
@@ -160,7 +264,12 @@
   window.renderPage = function renderPageWithCameras(page = window.currentPage()) {
     originalRenderPage(page);
     document.querySelector('.sc-dashboard-shell')?.classList.toggle('camera-page-active', page === 'camera');
-    if (page === 'camera') render();
+    if (page === 'camera') {
+      render();
+      startSnapshotRefresh();
+    } else {
+      stopSnapshotRefresh();
+    }
   };
   window.DashboardDataLifecycle?.register('camera-page', ['camera'], load);
   document.querySelectorAll('[data-nav]').forEach(button => button.onclick = () => window.nav(button.dataset.nav));

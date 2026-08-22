@@ -85,7 +85,7 @@ def test_camera_ui_is_capability_driven_and_has_bounded_ptz_commands():
     assert "method:'POST'" in SOURCE
     assert "data-camera-action=\"ptz-move\"" in SOURCE
     assert "data-camera-action=\"ptz-stop\"" in SOURCE
-    assert "duration:0.2" in SOURCE
+    assert "duration:0.5" in SOURCE
     assert "state.inFlight.has(target) && !stopping" in SOURCE
     assert "data-camera-action=\"zoom\"" not in SOURCE
 
