@@ -25,6 +25,8 @@ from backend.camera_inventory_schema import CameraConfigError
 app = app_module.app
 NETWORK_TIMEOUT_SEC = min(10.0, max(0.5, float(os.getenv("CAMERA_READ_TIMEOUT_SEC", "4"))))
 MAX_SNAPSHOT_BYTES = 5_000_000
+XIAOMI_CAMERA_ID = "xiaomi-camera-1"
+XIAOMI_MODEL = "chuangmi.camera.ipc019"
 CAPABILITY_KEYS = (
     "snapshot", "live_stream", "onvif_profiles", "ptz_move", "ptz_stop",
     "zoom", "presets", "home_position", "firmware_info",
@@ -383,10 +385,20 @@ def _go2rtc_base_url() -> str | None:
 
 
 def _go2rtc_stream_name(spec: CameraSpec) -> str | None:
-    if spec.id != "tapo-c220":
+    if spec.id == "tapo-c220":
+        value = os.getenv("GO2RTC_TAPO_C200_STREAM", "tapo_c200_main").strip()
+    elif spec.id == XIAOMI_CAMERA_ID and spec.model == XIAOMI_MODEL:
+        value = os.getenv("GO2RTC_XIAOMI_LIVING_STREAM", "living_room_xiaomi").strip()
+    else:
         return None
-    value = os.getenv("GO2RTC_TAPO_C200_STREAM", "tapo_c200_main").strip()
     return value if _STREAM_NAME.fullmatch(value) else None
+
+
+def _go2rtc_live_stream_name(spec: CameraSpec) -> str | None:
+    if spec.id == XIAOMI_CAMERA_ID and spec.model == XIAOMI_MODEL:
+        value = os.getenv("GO2RTC_XIAOMI_LIVING_LIVE_STREAM", "living_room_xiaomi_h264").strip()
+        return value if _STREAM_NAME.fullmatch(value) else None
+    return _go2rtc_stream_name(spec)
 
 
 def _go2rtc_live_available(spec: CameraSpec) -> bool:
@@ -412,10 +424,13 @@ def _go2rtc_live_available(spec: CameraSpec) -> bool:
 
 def _go2rtc_live_response(spec: CameraSpec):
     base_url = _go2rtc_base_url()
-    stream_name = _go2rtc_stream_name(spec)
+    stream_name = _go2rtc_live_stream_name(spec)
     if not base_url or not stream_name:
         raise LookupError("live_stream_unavailable")
-    query = urllib.parse.urlencode({"src": stream_name, "video": "h264"})
+    query_values = {"src": stream_name}
+    if spec.id == "tapo-c220":
+        query_values["video"] = "h264"
+    query = urllib.parse.urlencode(query_values)
     request = urllib.request.Request(f"{base_url}/api/stream.mp4?{query}", method="GET")
     upstream = urllib.request.urlopen(request, timeout=NETWORK_TIMEOUT_SEC + 4.0)
     content_type = upstream.headers.get_content_type()
@@ -440,9 +455,34 @@ def _go2rtc_live_response(spec: CameraSpec):
     )
 
 
-def _go2rtc_hls_master_response(spec: CameraSpec):
+def _go2rtc_snapshot_response(spec: CameraSpec):
     base_url = _go2rtc_base_url()
     stream_name = _go2rtc_stream_name(spec)
+    if not base_url or not stream_name:
+        raise LookupError("snapshot_unavailable")
+    query = urllib.parse.urlencode({"src": stream_name})
+    request = urllib.request.Request(f"{base_url}/api/frame.jpeg?{query}", method="GET")
+    with urllib.request.urlopen(request, timeout=max(15.0, NETWORK_TIMEOUT_SEC + 4.0)) as upstream:
+        content_type = upstream.headers.get_content_type()
+        content = upstream.read(MAX_SNAPSHOT_BYTES + 1)
+        if (
+            upstream.status != 200
+            or content_type != "image/jpeg"
+            or len(content) > MAX_SNAPSHOT_BYTES
+            or not content.startswith(b"\xff\xd8")
+            or not content.endswith(b"\xff\xd9")
+        ):
+            raise LookupError("snapshot_unavailable")
+    return Response(
+        content,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+def _go2rtc_hls_master_response(spec: CameraSpec):
+    base_url = _go2rtc_base_url()
+    stream_name = _go2rtc_live_stream_name(spec)
     if not base_url or not stream_name:
         raise LookupError("live_stream_unavailable")
     query = urllib.parse.urlencode({"src": stream_name})
@@ -616,9 +656,49 @@ def _discover_rtsp(spec: CameraSpec, reason: str | None = None) -> Dict[str, Any
     return result
 
 
+def _xiaomi_go2rtc_verified(spec: CameraSpec) -> bool:
+    return bool(
+        spec.id == XIAOMI_CAMERA_ID
+        and spec.model == XIAOMI_MODEL
+        and spec.provider == "auto"
+        and spec.verification_status == "verified"
+    )
+
+
+def _discover_xiaomi_go2rtc(spec: CameraSpec) -> Dict[str, Any]:
+    result = _base_result(spec, "xiaomi", None)
+    started = time.monotonic()
+    available = _go2rtc_live_available(spec)
+    snapshot = available and "snapshot" in spec.declared_capabilities
+    live = available and "live_stream" in spec.declared_capabilities
+    discovered = []
+    if snapshot:
+        discovered.append("snapshot")
+    if live:
+        discovered.append("live_stream")
+    result["capabilities"]["snapshot"] = snapshot
+    result["capabilities"]["live_stream"] = live
+    result.update({
+        "online": True if available else None,
+        "health": "healthy" if available else "unknown",
+        "snapshot_capability": snapshot,
+        "discovered_capabilities": discovered,
+        "last_update": int(time.time()),
+        "unavailable_reason": None if available else "xiaomi_bridge_unavailable",
+        "stream": {
+            "available": live,
+            "access": "authenticated_proxy" if live else "unavailable",
+        },
+        "latency_ms": int((time.monotonic() - started) * 1000),
+    })
+    return result
+
+
 def discover(spec: CameraSpec) -> Dict[str, Any]:
     if not spec.enabled:
         return _base_result(spec, "unsupported", "camera_disabled")
+    if _xiaomi_go2rtc_verified(spec):
+        return _discover_xiaomi_go2rtc(spec)
     onvif_requested = spec.provider in {"auto", "onvif"} and bool(spec.onvif_port)
     if onvif_requested and _credentials(spec) is None:
         return _base_result(spec, "onvif", "camera_credentials_missing")
@@ -746,6 +826,15 @@ def camera_snapshot_readonly(camera_id: str):
     spec = _spec(camera_id)
     if spec is None:
         return JSONResponse({"detail": "camera_not_found"}, status_code=404)
+    if _xiaomi_go2rtc_verified(spec):
+        if "snapshot" not in spec.declared_capabilities or not _go2rtc_live_available(spec):
+            return JSONResponse({"detail": "snapshot_unavailable"}, status_code=422)
+        try:
+            return _go2rtc_snapshot_response(spec)
+        except (TimeoutError, socket.timeout):
+            return JSONResponse({"detail": "camera_timeout"}, status_code=504)
+        except Exception:
+            return JSONResponse({"detail": "snapshot_unavailable"}, status_code=502)
     if (
         not spec.enabled
         or spec.verification_status != "verified"
@@ -770,7 +859,7 @@ def camera_live_readonly(camera_id: str):
         not spec.enabled
         or spec.verification_status != "verified"
         or "live_stream" not in spec.declared_capabilities
-        or spec.provider not in {"auto", "onvif"}
+        or (spec.provider not in {"auto", "onvif"} and not _xiaomi_go2rtc_verified(spec))
         or not _go2rtc_live_available(spec)
     ):
         return JSONResponse({"detail": "live_stream_unavailable"}, status_code=422)
@@ -790,7 +879,7 @@ def camera_hls_master_readonly(camera_id: str):
         not spec.enabled
         or spec.verification_status != "verified"
         or "live_stream" not in spec.declared_capabilities
-        or spec.provider not in {"auto", "onvif"}
+        or (spec.provider not in {"auto", "onvif"} and not _xiaomi_go2rtc_verified(spec))
         or not _go2rtc_live_available(spec)
     ):
         return JSONResponse({"detail": "live_stream_unavailable"}, status_code=422)
@@ -815,7 +904,7 @@ def camera_hls_resource_readonly(
         not spec.enabled
         or spec.verification_status != "verified"
         or "live_stream" not in spec.declared_capabilities
-        or spec.provider not in {"auto", "onvif"}
+        or (spec.provider not in {"auto", "onvif"} and not _xiaomi_go2rtc_verified(spec))
     ):
         return JSONResponse({"detail": "live_stream_unavailable"}, status_code=422)
     try:

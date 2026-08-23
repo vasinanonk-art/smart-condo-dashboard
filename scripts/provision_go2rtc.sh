@@ -11,6 +11,7 @@ GO2RTC_UNIT="${GO2RTC_UNIT:-/etc/systemd/system/smart-condo-go2rtc.service}"
 GO2RTC_SERVICE="${GO2RTC_SERVICE:-smart-condo-go2rtc.service}"
 GO2RTC_ENV_FILE="${GO2RTC_ENV_FILE:-/etc/default/smart-condo-dashboard}"
 GO2RTC_CAMERA_CONFIG="${GO2RTC_CAMERA_CONFIG:-}"
+GO2RTC_XIAOMI_CONFIG="${GO2RTC_XIAOMI_CONFIG:-}"
 GO2RTC_SYSTEMCTL="${GO2RTC_SYSTEMCTL:-systemctl}"
 GO2RTC_PYTHON="${GO2RTC_PYTHON:-python3}"
 GO2RTC_RENDERER="${GO2RTC_RENDERER:-$(dirname "$0")/render_go2rtc_config.py}"
@@ -73,6 +74,7 @@ renderer() {
     go2rtc_mode=$1; shift
     set -- --environment-file "$GO2RTC_ENV_FILE" "$@"
     [ -z "$GO2RTC_CAMERA_CONFIG" ] || set -- "$@" --camera-config "$GO2RTC_CAMERA_CONFIG"
+    [ -z "$GO2RTC_XIAOMI_CONFIG" ] || set -- "$@" --xiaomi-config "$GO2RTC_XIAOMI_CONFIG"
     if [ "$go2rtc_mode" = validate ]; then
         set -- "$@" --validate-only
     fi

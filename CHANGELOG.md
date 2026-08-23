@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.0.22] - 2026-08-23
+
+### Xiaomi Living Room camera bridge
+
+- Add a strict root-only Xiaomi session contract for the verified Living Room
+  camera without storing a password or verification code.
+- Proxy bounded JPEG snapshots and an on-demand 640x360 H.264 compatibility
+  stream through authenticated camera routes while keeping go2rtc loopback-only.
+- Keep the Live View dialog open on transient player errors so startup failures
+  are visible instead of appearing as an unexpected page exit.
+- Keep Xiaomi PTZ, audio, recording, motion, presets, and every other command
+  capability disabled.
+
 ## [1.0.21] - 2026-08-22
 
 ### Camera Live View controls

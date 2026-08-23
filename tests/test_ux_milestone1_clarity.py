@@ -79,6 +79,7 @@ def test_camera_interactions_refresh_inline_and_release_live_media():
     assert "`/api/camera-control/${identifier}/live.m3u8?refresh=${Date.now()}`" in CAMERAS
     assert "video.removeAttribute('src')" in CAMERAS
     assert "video.load()" in CAMERAS
+    assert "window.toast?.('Live View could not start.');\n      close();" not in CAMERAS
     assert "window.open(`/api/camera-control/" not in CAMERAS
     assert ".camera-live-dialog" in CAMERA_CSS
 

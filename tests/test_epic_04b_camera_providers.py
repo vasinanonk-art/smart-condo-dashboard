@@ -67,6 +67,22 @@ def _verified_onvif(**updates):
     )
 
 
+def _verified_xiaomi(**updates):
+    return _camera(
+        id="xiaomi-camera-1",
+        display_name="Living Room Camera",
+        room="living_room",
+        vendor="Xiaomi",
+        model="chuangmi.camera.ipc019",
+        host="192.168.1.188",
+        enabled=True,
+        provider="auto",
+        declared_capabilities=["snapshot", "live_stream"],
+        verification_status="verified",
+        **updates,
+    )
+
+
 def _fake_onvif():
     profile = SimpleNamespace(
         token="vendor-profile-token",
@@ -164,6 +180,21 @@ def test_xiaomi_without_verified_provider_is_unknown_not_offline(monkeypatch, tm
     assert item["health"] == "unknown"
     assert item["unavailable_reason"] == "read_only_provider_unavailable"
     assert not any(item["capabilities"].values())
+
+
+def test_verified_xiaomi_bridge_exposes_read_only_media_without_ptz(monkeypatch, tmp_path):
+    _install_config(monkeypatch, tmp_path, _verified_xiaomi())
+    monkeypatch.setattr(providers, "_go2rtc_live_available", lambda spec: True)
+
+    item = providers.camera_devices_readonly()["cameras"][0]
+
+    assert item["provider"] == "xiaomi"
+    assert item["online"] is True
+    assert item["capabilities"]["snapshot"] is True
+    assert item["capabilities"]["live_stream"] is True
+    assert item["capabilities"]["ptz_move"] is False
+    assert item["capabilities"]["ptz_stop"] is False
+    assert item["stream"] == {"available": True, "access": "authenticated_proxy"}
 
 
 def test_timeout_is_safe_and_does_not_expose_exception(monkeypatch, tmp_path):
@@ -429,6 +460,90 @@ def test_live_proxy_streams_and_releases_upstream(monkeypatch):
     assert requested[0].startswith("http://127.0.0.1:1984/api/stream.mp4?")
     assert "rtsp" not in requested[0]
     assert "password" not in requested[0]
+
+
+def test_xiaomi_media_proxy_preserves_hevc_and_returns_bounded_jpeg(monkeypatch):
+    class Headers:
+        @staticmethod
+        def get_content_type():
+            return "image/jpeg"
+
+    class Upstream:
+        status = 200
+        headers = Headers()
+
+        def read(self, size):
+            return b"\xff\xd8jpeg\xff\xd9"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    requested = []
+    monkeypatch.setenv("GO2RTC_API_URL", "http://127.0.0.1:1984")
+    monkeypatch.setenv("GO2RTC_XIAOMI_LIVING_STREAM", "living_room_xiaomi")
+    monkeypatch.setattr(
+        providers.urllib.request,
+        "urlopen",
+        lambda request, timeout: requested.append(request.full_url) or Upstream(),
+    )
+    spec = providers.CameraSpec(
+        id="xiaomi-camera-1", display_name="Living Room Camera", room="living_room",
+        vendor="Xiaomi", model="chuangmi.camera.ipc019", host="192.168.1.188", enabled=True,
+        provider="auto", rtsp_port=None, onvif_port=None, stream_path=None,
+        username_env=None, password_env=None,
+        declared_capabilities=frozenset({"snapshot", "live_stream"}), verification_status="verified",
+    )
+
+    response = providers._go2rtc_snapshot_response(spec)
+
+    assert response.body == b"\xff\xd8jpeg\xff\xd9"
+    assert requested == ["http://127.0.0.1:1984/api/frame.jpeg?src=living_room_xiaomi"]
+
+
+def test_xiaomi_live_uses_h264_compatibility_stream(monkeypatch):
+    class Headers:
+        @staticmethod
+        def get_content_type():
+            return "video/mp4"
+
+    class Upstream:
+        status = 200
+        headers = Headers()
+        chunks = [b"hevc", b""]
+
+        def read(self, size):
+            return self.chunks.pop(0)
+
+        def close(self):
+            pass
+
+    requested = []
+    monkeypatch.setenv("GO2RTC_API_URL", "http://127.0.0.1:1984")
+    monkeypatch.setattr(
+        providers.urllib.request,
+        "urlopen",
+        lambda request, timeout: requested.append(request.full_url) or Upstream(),
+    )
+    monkeypatch.setattr(
+        providers,
+        "StreamingResponse",
+        lambda content, **kwargs: SimpleNamespace(content=content, **kwargs),
+    )
+    spec = providers.CameraSpec(
+        id="xiaomi-camera-1", display_name="Living Room Camera", room="living_room",
+        vendor="Xiaomi", model="chuangmi.camera.ipc019", host="192.168.1.188", enabled=True,
+        provider="auto", rtsp_port=None, onvif_port=None, stream_path=None,
+        username_env=None, password_env=None,
+        declared_capabilities=frozenset({"live_stream"}), verification_status="verified",
+    )
+
+    response = providers._go2rtc_live_response(spec)
+
+    assert list(response.content) == [b"hevc"]
+    assert requested == ["http://127.0.0.1:1984/api/stream.mp4?src=living_room_xiaomi_h264"]
 
 
 def test_hls_proxy_uses_bounded_loopback_playlists_and_segments(monkeypatch):

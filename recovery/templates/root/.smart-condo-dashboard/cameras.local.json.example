@@ -33,8 +33,8 @@
       "onvif_port": null,
       "stream_path": null,
       "credentials": null,
-      "declared_capabilities": [],
-      "verification_status": "unverified"
+      "declared_capabilities": ["live_stream", "snapshot"],
+      "verification_status": "verified"
     }
   ]
 }

@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from scripts import render_go2rtc_config as renderer
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +25,29 @@ def _camera(path: Path):
         "credentials": {"username_env": "TAPO_C200_USERNAME", "password_env": "TAPO_C200_PASSWORD"},
         "declared_capabilities": ["live_stream", "snapshot"], "verification_status": "verified",
     }]}), encoding="utf-8")
+
+
+def _enable_xiaomi(path: Path):
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["cameras"].append({
+        "id": "xiaomi-camera-1", "display_name": "Living Room Camera", "room": "living_room",
+        "vendor": "Xiaomi", "model": "chuangmi.camera.ipc019", "host": "192.168.1.188",
+        "enabled": True, "provider": "auto", "rtsp_port": None, "onvif_port": None,
+        "stream_path": None, "credentials": None,
+        "declared_capabilities": ["live_stream", "snapshot"], "verification_status": "verified",
+    })
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _xiaomi_secret(path: Path, **updates):
+    payload = {
+        "schema_version": 1, "account_id": "1234567890", "token": "V1:unit-test-token-12345",
+        "region": "cn", "camera_id": "xiaomi-camera-1", "host": "192.168.1.188",
+        "did": "9876543210", "model": "chuangmi.camera.ipc019",
+    }
+    payload.update(updates)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    path.chmod(0o600)
 
 
 def _fixture(tmp_path: Path, artifact: bytes = b"official-binary"):
@@ -98,6 +123,46 @@ def test_environment_parser_never_executes_secret_value(tmp_path):
     values = renderer.read_environment_file(environment)
     assert values["TAPO_C200_PASSWORD"].startswith("$(touch ")
     assert not marker.exists()
+
+
+def test_renderer_adds_strict_root_only_xiaomi_stream(monkeypatch, tmp_path):
+    camera = tmp_path / "cameras.json"; _camera(camera); _enable_xiaomi(camera)
+    secret = tmp_path / "xiaomi.json"; _xiaomi_secret(secret)
+    environment = tmp_path / "dashboard.env"
+    environment.write_text(
+        f"CAMERA_CONFIG_FILE={camera}\nTAPO_C200_USERNAME=user\nTAPO_C200_PASSWORD=secret\n"
+    )
+    output = tmp_path / "private/go2rtc.yaml"
+    monkeypatch.setattr(renderer, "bounded_main_uri", lambda *_: "rtsp://safe-source")
+    monkeypatch.setattr(os.sys, "argv", [
+        "render", "--environment-file", str(environment), "--xiaomi-config", str(secret),
+        "--output", str(output),
+    ])
+
+    assert renderer.main() == 0
+    rendered = output.read_text()
+    assert '"1234567890": "V1:unit-test-token-12345"' in rendered
+    assert "living_room_xiaomi:" in rendered
+    assert "living_room_xiaomi_h264:" in rendered
+    assert 'ffmpeg:living_room_xiaomi#video=h264#width=640' in rendered
+    assert "xiaomi://1234567890:cn@192.168.1.188?" in rendered
+    assert "did=9876543210" in rendered
+    assert "model=chuangmi.camera.ipc019" in rendered
+    assert output.stat().st_mode & 0o777 == 0o600
+
+
+def test_xiaomi_secret_fails_closed_on_permissions_or_camera_mismatch(tmp_path):
+    camera = tmp_path / "cameras.json"; _camera(camera); _enable_xiaomi(camera)
+    xiaomi = renderer.xiaomi_camera_entry(camera)
+    assert xiaomi is not None
+    secret = tmp_path / "xiaomi.json"; _xiaomi_secret(secret)
+    secret.chmod(0o644)
+    with pytest.raises(renderer.ProvisioningError, match="xiaomi_config_permissions"):
+        renderer.xiaomi_source(secret, xiaomi)
+    secret.chmod(0o600)
+    _xiaomi_secret(secret, host="192.168.1.189")
+    with pytest.raises(renderer.ProvisioningError, match="xiaomi_camera_mismatch"):
+        renderer.xiaomi_source(secret, xiaomi)
 
 
 def test_idempotent_reinstall_does_not_restart(tmp_path):

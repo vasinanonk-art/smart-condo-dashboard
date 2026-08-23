@@ -11,7 +11,7 @@ The strict production template contains two enabled cameras:
 | Camera | Provider | Configuration |
 |---|---|---|
 | Bedroom Camera | ONVIF | Host configured; ONVIF port 2020; RTSP port 554 recorded but not used by the ONVIF provider; credentials referenced through environment variables |
-| Living Room Camera | Auto | Host and model recorded; no protocol, port, or credentials inferred |
+| Living Room Camera | Auto + go2rtc Xiaomi | Host and model match the verified Xiaomi cloud bridge; no local protocol ports or command capability |
 
 Production inspection found:
 
@@ -34,9 +34,12 @@ or device metadata discovery. The production service cannot complete ONVIF
 verification until the persistent config, compatible ONVIF dependency, and
 Tapo Camera Account variables are present.
 
-The Living Room Camera remains Unknown. The current framework has no verified
-ONVIF, RTSP, or Xiaomi-native configuration for this model and performs no
-network probe for the unverified `auto` entry.
+On 2026-08-23 an isolated loopback-only go2rtc v1.9.14 trial successfully
+loaded the configured `chuangmi.camera.ipc019` at `192.168.1.188`. Snapshot and
+the source HEVC stream returned valid media. A follow-up browser test exposed
+inconsistent HEVC parameter sets, so the isolated bridge now supplies an
+on-demand 640x360 H.264 HLS compatibility stream. The isolated bridge did not
+alter or restart the production dashboard or production go2rtc service.
 
 ## Expected endpoint state
 
@@ -44,16 +47,15 @@ After provisioning and a supported runtime deployment:
 
 - `/api/cameras` and `/api/camera-control/devices` return the safe read-only
   camera inventory and discovery metadata.
-- `/api/devices` projects Bedroom Camera as Online, Offline, or Unknown from
-  the ONVIF result and leaves Living Room Camera Unknown unless positively
-  identified.
+- `/api/devices` projects Bedroom Camera from ONVIF and Living Room Camera from
+  the verified named go2rtc stream.
 - `/api/device-health` uses the same semantic camera state.
 - Full serial numbers, credentials, profile tokens, and media URLs are not
   returned. The authenticated device-health contract may include the
   configured local IP address, consistent with EPIC 19.
 
-No snapshot, stream, PTZ, recording, motion, speaker, or microphone operation
-is enabled.
+Living Room snapshot and live stream are read-only. Xiaomi PTZ, recording,
+motion, speaker, and microphone operations remain disabled.
 
 ## Remaining unknowns
 
@@ -61,9 +63,10 @@ is enabled.
 2. ONVIF authentication and metadata enumeration have not been exercised
    against the production C200.
 3. A compatible ONVIF client dependency must be present in the runtime.
-4. No supported local protocol has been verified for the Xiaomi camera.
-5. The running service remains on `034e718`; candidate endpoint behavior
-   cannot be observed live without deployment.
+4. Xiaomi requires cloud reachability when go2rtc obtains stream encryption
+   keys, even though the media connection is local.
+5. Xiaomi H.264 compatibility transcoding uses roughly one CPU core while its
+   Live View is open; it is not suitable for multiple concurrent viewers.
 
 ## Recommended next actions
 
@@ -75,5 +78,5 @@ is enabled.
 5. Deploy through the protected runtime-only workflow.
 6. Use an authenticated dashboard session to verify the four read-only
    endpoints.
-7. Leave the Xiaomi camera Unknown until a supported protocol is positively
-   identified.
+7. Verify Xiaomi snapshot and H.264 HLS through the authenticated dashboard,
+   while confirming PTZ and all other Xiaomi command capabilities stay absent.

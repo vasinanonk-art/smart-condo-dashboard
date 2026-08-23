@@ -44,8 +44,8 @@ def test_migration_template_contains_known_inventory_without_invented_values():
     assert all(item["enabled"] is True for item in validated["cameras"])
     assert tapo["declared_capabilities"] == ["live_stream", "ptz_move", "ptz_stop", "snapshot"]
     assert tapo["verification_status"] == "verified"
-    assert xiaomi["declared_capabilities"] == []
-    assert xiaomi["verification_status"] == "unverified"
+    assert xiaomi["declared_capabilities"] == ["live_stream", "snapshot"]
+    assert xiaomi["verification_status"] == "verified"
 
 
 def test_literal_credentials_and_urls_are_rejected():

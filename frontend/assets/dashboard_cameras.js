@@ -162,7 +162,6 @@
     dialog.querySelectorAll('[data-camera-ptz]').forEach(button => button.onclick = () => sendPtz(button));
     video.addEventListener('error', () => {
       window.toast?.('Live View could not start.');
-      close();
     });
     if (typeof dialog.showModal === 'function') dialog.showModal();
     else dialog.setAttribute('open', '');
