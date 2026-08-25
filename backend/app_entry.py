@@ -75,6 +75,8 @@ from backend import notification_center as _notification_center  # noqa: F401,E4
 from backend import household_device_registry as _household_device_registry  # noqa: F401,E402
 # EPIC 19 adds a read-only heartbeat and latency projection over safe device IDs.
 from backend import device_health as _device_health  # noqa: F401,E402
+# Read a sanitized local backup-status record without mounting or waking the NAS.
+from backend import nas_backup_status as _nas_backup_status  # noqa: F401,E402
 # EPIC 17 exposes the inert TP-Link connector through authenticated read routes.
 from backend import tplink_dashboard as _tplink_dashboard  # noqa: F401,E402
 

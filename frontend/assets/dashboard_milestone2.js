@@ -6,7 +6,7 @@
     overview: 'overview',
     devices: 'devices', lighting: 'devices', climate: 'devices', entertainment: 'devices', presence: 'devices',
     electricity: 'electricity', camera: 'camera',
-    more: 'more', system: 'more', topology: 'more', history: 'more', settings: 'more', automation: 'more'
+    more: 'more', system: 'more', topology: 'more', history: 'more', settings: 'more', automation: 'more', backup: 'more'
   });
   const STATUS = Object.freeze({
     healthy: {label: 'Healthy', tone: 'success'}, online: {label: 'Online', tone: 'success'},

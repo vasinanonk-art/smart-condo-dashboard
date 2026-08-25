@@ -17,6 +17,7 @@
     history: {title: 'Electricity History', subtitle: 'History coverage and maintenance'},
     automation: {title: 'Automation', subtitle: 'Rule validation and safe simulation'},
     settings: {title: 'Settings', subtitle: 'Dashboard configuration and maintenance'},
+    backup: {title: 'Backup', subtitle: 'NAS backup health and verification'},
     more: {title: 'More', subtitle: 'System information and dashboard tools'}
   });
   const PAGE_PARENT = Object.freeze({
@@ -29,6 +30,7 @@
     history: {page:'more', label:'More'},
     automation: {page:'more', label:'More'},
     settings: {page:'more', label:'More'},
+    backup: {page:'more', label:'More'},
   });
 
   function applyBackButton(page) {

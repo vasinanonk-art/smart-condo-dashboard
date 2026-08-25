@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.0.23] - 2026-08-25
+
+### NAS backup visibility
+
+- Add an authenticated, read-only Backup page under More with last success,
+  next run, current phase, storage, checksum, and bounded recent-run fields.
+- Fall back to the local backup service and timer when detailed status metrics
+  are unavailable, without mounting, reading, or waking the NAS.
+- Keep backup, restore, delete, mount, and other storage commands unavailable
+  from the dashboard.
+
 ## [1.0.22] - 2026-08-23
 
 ### Xiaomi Living Room camera bridge
