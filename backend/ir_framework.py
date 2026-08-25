@@ -123,6 +123,12 @@ class TapoIRDriver(IRDriver):
     """
 
     driver_version = "2"
+    max_attempts = 1
+    reject_when_busy = True
+    repeat_guard_sec = max(
+        0.0,
+        min(5.0, float(os.getenv("TAPO_IR_REPEAT_GUARD_SEC", "0.75"))),
+    )
 
     def __init__(
         self,
@@ -135,6 +141,10 @@ class TapoIRDriver(IRDriver):
         self._last_command: str | None = None
         self._last_response: str | None = None
         self._last_latency_ms: float | None = None
+        self._last_outbound_attempts = 0
+        self._last_result_code = "not_attempted"
+        self._last_sent_code: str | None = None
+        self._last_sent_at = 0.0
         self._bridge_lock = threading.Lock()
 
     def register_verified_sender(self, sender: Callable[[str, float], Any] | None) -> None:
@@ -194,12 +204,36 @@ class TapoIRDriver(IRDriver):
             raise IRDriverUnavailable(self._last_error)
         started = time.monotonic()
         self._last_command = command.command_id
+        self._last_outbound_attempts = 0
+        self._last_result_code = "not_attempted"
         try:
             with self._bridge_lock:
+                now = time.monotonic()
+                if (
+                    command.code == self._last_sent_code
+                    and now - self._last_sent_at < self.repeat_guard_sec
+                ):
+                    self._last_result_code = "ir_command_rate_limited"
+                    raise IRRateLimited
                 self._sender(command.code, command.timeout)
+                self._last_outbound_attempts = int(
+                    getattr(self._sender, "last_outbound_attempts", 1)
+                )
+                self._last_sent_code = command.code
+                self._last_sent_at = time.monotonic()
             self._last_error = None
             self._last_response = "sent"
+            self._last_result_code = "success"
         except Exception as exc:
+            self._last_outbound_attempts = int(
+                getattr(self._sender, "last_outbound_attempts", 0)
+            )
+            if isinstance(exc, TimeoutError):
+                self._last_result_code = "ir_command_timeout"
+            elif isinstance(exc, IRRateLimited):
+                self._last_result_code = "ir_command_rate_limited"
+            else:
+                self._last_result_code = "ir_command_failed"
             self._last_error = type(exc).__name__
             self._last_response = "failed"
             raise

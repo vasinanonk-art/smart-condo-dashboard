@@ -131,6 +131,10 @@ from backend import tapo_ir_provider as _tapo_ir_provider  # noqa: F401,E402
 # HA-only provider. It is on-demand, read-only, and creates no worker thread.
 from backend import tapo_ir_local_bridge as _tapo_ir_local_bridge  # noqa: F401,E402
 
+# Register the guarded H110 stored-key sender only when the explicit runtime
+# enable flag, strict bridge identity, and checked-in selector map all pass.
+from backend import tapo_h110_sender as _tapo_h110_sender  # noqa: F401,E402
+
 # Expose read-only H110 modules, features, components, children and callable
 # signatures. This performs no IR command, pairing, learning, or deletion.
 from backend import tapo_ir_capability_debug as _tapo_ir_capability_debug  # noqa: F401,E402

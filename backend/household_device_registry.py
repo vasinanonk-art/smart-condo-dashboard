@@ -147,7 +147,11 @@ def _ir_devices() -> list[Dict[str, Any]]:
             for capability in metadata
             for command in capability.get("commands") or []
         ]
-        capabilities = {"ir": metadata} if commands else {}
+        capabilities = (
+            {"ir": metadata}
+            if commands and item.get("controllable") is True
+            else {}
+        )
         is_provider_neutral = identity.get("id") == "bed-room-air-conditioner"
         runtime_status = item.get("runtime_status") or {}
         remote = remote_by_kind.get(identity["type"])
@@ -159,7 +163,7 @@ def _ir_devices() -> list[Dict[str, Any]]:
                 else smartlife.get("discovery_reason")
                 or "provider_not_configured"
             )
-        if not commands:
+        if not commands or item.get("controllable") is not True:
             if not is_provider_neutral:
                 reason = (
                     "Configured Tapo IR remote discovered; transmit interface is not verified."
@@ -181,7 +185,12 @@ def _ir_devices() -> list[Dict[str, Any]]:
                 "configured_remote_name": remote.get("display_name"),
                 "reported_state": copy.deepcopy(remote.get("reported_state") or {}),
                 "stored_commands_present": remote.get("stored_commands_present") is True,
-                "verified_controls": [],
+                "verified_controls": [
+                    command.get("id")
+                    for command in commands
+                    if isinstance(command, dict) and command.get("id")
+                ] if item.get("controllable") is True else [],
+                "control_available": item.get("controllable") is True,
             })
         if is_provider_neutral:
             available_categories = (

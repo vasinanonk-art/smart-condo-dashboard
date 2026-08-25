@@ -7,8 +7,8 @@
       "room": "living_room",
       "type": "soundbar",
       "driver": "tapo_ir",
-      "profile": "unconfigured",
-      "capabilities": [],
+      "profile": "h110_samsung_soundbar",
+      "capabilities": ["power", "volume", "mute", "input", "custom"],
       "enabled": true
     },
     {
@@ -27,8 +27,8 @@
       "room": "living_room",
       "type": "fan",
       "driver": "tapo_ir",
-      "profile": "unconfigured",
-      "capabilities": [],
+      "profile": "h110_hitachi_fan",
+      "capabilities": ["power", "custom"],
       "enabled": true
     },
     {

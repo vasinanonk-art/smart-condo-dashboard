@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "h110_samsung_soundbar",
+  "brand": "Samsung",
+  "model": "Configured H110 remote",
+  "device_type": "soundbar",
+  "capabilities": [
+    {"id": "power", "type": "button", "label": "Power", "icon": "power", "group": "main", "confirm": true},
+    {"id": "volume", "type": "media", "label": "Volume", "icon": "volume", "group": "audio", "confirm": false},
+    {"id": "mute", "type": "button", "label": "Mute", "icon": "mute", "group": "audio", "confirm": false},
+    {"id": "input", "type": "button", "label": "Source", "icon": "input", "group": "source", "confirm": false},
+    {"id": "custom", "type": "custom", "label": "Sound", "icon": "settings", "group": "sound", "confirm": false}
+  ],
+  "commands": {
+    "power": {"capability": "power", "label": "Power", "icon": "power", "code": "soundbar_power"},
+    "volume_up": {"capability": "volume", "label": "Volume +", "icon": "volume-up", "code": "soundbar_volume_up"},
+    "volume_down": {"capability": "volume", "label": "Volume -", "icon": "volume-down", "code": "soundbar_volume_down"},
+    "mute": {"capability": "mute", "label": "Mute", "icon": "mute", "code": "soundbar_mute"},
+    "source": {"capability": "input", "label": "Source", "icon": "input", "code": "soundbar_source"},
+    "woofer_up": {"capability": "custom", "label": "Woofer +", "icon": "plus", "code": "soundbar_woofer_up"},
+    "woofer_down": {"capability": "custom", "label": "Woofer -", "icon": "minus", "code": "soundbar_woofer_down"},
+    "sound_mode": {"capability": "custom", "label": "Sound Mode", "icon": "audio", "code": "soundbar_sound_mode"},
+    "setting": {"capability": "custom", "label": "Setting", "icon": "settings", "code": "soundbar_setting"}
+  },
+  "metadata": {
+    "transport": "tapo_h110_local",
+    "state_feedback": false,
+    "verification": "sender_disabled_pending_physical_test"
+  }
+}

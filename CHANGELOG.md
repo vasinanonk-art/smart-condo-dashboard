@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Tapo H110 guarded local sender candidate
+
+- Add a local-LAN `control_child` / `sendIrCmdById` adapter for the configured
+  Samsung Soundbar and Hitachi fan stored keys.
+- Require exact host, model, and MAC matches plus device-ID matching when it is
+  configured; disable transport retries; serialize sends; and reject rapid
+  duplicate commands.
+- Keep the sender disabled by default until one separately approved physical
+  command test verifies the H110 response and appliance behavior.
+- Leave the H110 air-conditioner remote disabled because its state-blob command
+  contract has not been verified.
+
 ## [1.0.23] - 2026-08-25
 
 ### NAS backup visibility

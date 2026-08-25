@@ -179,7 +179,7 @@ def test_rejected_command_is_logged_once_with_untrusted_values_redacted(capsys, 
     assert "token-value" not in json.dumps(records)
 
 
-def test_timeout_retries_once_and_logs_one_final_failure(capsys, monkeypatch):
+def test_timeout_is_never_retried_and_logs_one_final_failure(capsys, monkeypatch):
     attempts = 0
 
     def timeout_sender(code, timeout):
@@ -204,13 +204,13 @@ def test_timeout_retries_once_and_logs_one_final_failure(capsys, monkeypatch):
     result = ir._execute_job(driver, job)
 
     assert result.status_code == 504
-    assert attempts == 2
-    assert ir._RUNTIME["living-room-tv"]["retry_count"] == 1
+    assert attempts == 1
+    assert ir._RUNTIME["living-room-tv"]["retry_count"] == 0
     records = _audit_records(capsys)
     assert len(records) == 1
     assert records[0]["outcome"] == "failed"
     assert records[0]["result_code"] == "ir_command_timeout"
-    assert records[0]["retry_count"] == 1
+    assert records[0]["retry_count"] == 0
 
 
 def test_default_registry_enables_no_unverified_ir_commands(monkeypatch):
@@ -231,9 +231,19 @@ def test_default_registry_enables_no_unverified_ir_commands(monkeypatch):
     assert {item["id"] for item in bedroom["capabilities"]} == {
         "power", "temperature",
     }
-    assert all(
-        device["capabilities"] == []
-        for device in devices
-        if device is not bedroom
-    )
+    tapo = [device for device in devices if device is not bedroom]
+    assert any(device["capabilities"] for device in tapo)
     assert all(device["controllable"] is False for device in devices)
+
+
+def test_repeat_guard_rejects_duplicate_without_second_outbound_attempt():
+    calls = []
+    driver = ir.TapoIRDriver(lambda: _bridge_status())
+    driver.register_verified_sender(lambda code, timeout: calls.append((code, timeout)))
+    driver.initialize()
+
+    driver.send(_dispatch())
+    with pytest.raises(ir.IRRateLimited):
+        driver.send(_dispatch())
+
+    assert calls == [("private-ir-code", 0.2)]

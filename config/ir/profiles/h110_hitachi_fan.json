@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "h110_hitachi_fan",
+  "brand": "Hitachi",
+  "model": "Configured H110 remote",
+  "device_type": "fan",
+  "capabilities": [
+    {"id": "power", "type": "button", "label": "Power", "icon": "power", "group": "main", "confirm": true},
+    {"id": "custom", "type": "custom", "label": "Fan", "icon": "fan", "group": "main", "confirm": false}
+  ],
+  "commands": {
+    "power": {"capability": "power", "label": "Power", "icon": "power", "code": "fan_power"},
+    "swing": {"capability": "custom", "label": "Swing", "icon": "swing", "code": "fan_swing"},
+    "mode": {"capability": "custom", "label": "Mode", "icon": "mode", "code": "fan_mode"}
+  },
+  "metadata": {
+    "transport": "tapo_h110_local",
+    "state_feedback": false,
+    "verification": "sender_disabled_pending_physical_test"
+  }
+}

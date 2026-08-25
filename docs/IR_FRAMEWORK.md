@@ -77,15 +77,24 @@ down all registered drivers.
 
 The production Tapo driver reads the verified H110 bridge status through the
 existing local `python-kasa` discovery path. This confirms bridge reachability,
-authentication, model, firmware, and discovery latency. The deployed
-`python-kasa 0.10.2` API does not expose an IR transmit callable or a verified
-command format, so the driver remains not ready for sends and reports
-`tapo_ir_send_unsupported`.
+authentication, model, firmware, and discovery latency. `python-kasa 0.10.2`
+does not expose an H110-specific IR API, but its generic child protocol can
+carry the H110's stored-key RPC envelope.
 
-An audited adapter may call `register_verified_sender()` only after its
-transport and command format are verified. No sender is registered by the
-default installation, no checked-in profile contains IR codes, and learning
-remains disabled.
+The guarded adapter resolves logical profile tokens to exact friendly
+remote/key selectors, then uses `control_child` with one nested
+`sendIrCmdById` request. It requires exact host, model, and MAC matches, plus a
+device-ID match when that optional value is configured. It sends with protocol
+retries disabled, serializes across the bridge, and rejects a rapid repeat of
+the same logical command. The adapter is not
+registered unless `TAPO_IR_SENDER_ENABLED` is explicitly true. It remains
+disabled by default pending one separately approved physical test. Checked-in
+profiles and mappings contain no raw IR payload, vendor key reference,
+credential, device ID, or MAC address. Learning remains disabled.
+
+Only stored-key controls for the configured Soundbar and fan are mapped. The
+H110 air-conditioner remote uses the separate `sendIrCmdByStatus` state-blob
+contract and remains unconfigured until that schema is independently verified.
 
 The authenticated read-only endpoint `/api/tapo-ir/existing-remotes` projects
 the H110's already-configured `SMART.TAPOREMOTE` children. It exposes only a
@@ -121,8 +130,10 @@ caller drains a device queue synchronously, so no unmanaged worker thread is
 created. Commands for different devices can drain independently. When full, the
 oldest waiting command receives `ir_queue_overflow`.
 
-Transient failures and timeouts retry once. Validation and permanent failures do
-not retry.
+Transient failures and timeouts retry once unless a driver explicitly lowers
+its attempt ceiling. The H110 driver uses one attempt only because retrying an
+IR transmit could duplicate a physical action. Validation and permanent
+failures do not retry.
 
 Runtime state tracks enabled, online and healthy state, internal driver/profile
 ownership, firmware version, last seen/command/success/failure, pending depth,

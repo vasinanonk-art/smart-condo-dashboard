@@ -56,8 +56,9 @@ certification pass remains a release follow-up.
   opened on-demand local live view, and bounded directional PTZ with automatic stop
 - Bedroom AC: verified Tuya IR Cloud power and target-temperature controls with
   assumed-state labeling and structured audit records
-- Tapo H110: bridge/inventory diagnostics only; unverified IR transmission is
-  disabled
+- Tapo H110: bridge/inventory diagnostics plus a guarded local stored-key
+  adapter for the Soundbar and fan; transmission remains disabled until an
+  approved physical verification passes
 - configured camera-control providers where persistent camera configuration is
   available
 
@@ -149,6 +150,13 @@ retention; leave it unset unless the destination enforces owner-only files.
 
 Never commit passwords, tokens, local keys, vendor account identifiers, camera
 URLs, IR data, device identifiers, MAC addresses, or client keys.
+
+The H110 sender is fail-closed. `TAPO_IR_SENDER_ENABLED` must remain unset or
+false until a physical command test is separately approved and passes. Enabling
+it also requires the existing `TAPO_IR_HOST`, credentials, model, and MAC to
+match the connected H110 exactly. `TAPO_IR_DEVICE_ID` is checked too when it is
+configured. The checked-in command map contains only friendly remote/key
+selectors, never raw IR data or vendor key references.
 
 ## Verification
 

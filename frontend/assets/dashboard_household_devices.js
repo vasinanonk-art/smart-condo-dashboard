@@ -197,8 +197,8 @@
         <div class="household-detail-item"><span>Last Result</span><strong>${safe(ir.last_response || ir.last_error || 'None')}</strong></div>
         <div class="household-detail-item"><span>Latency</span><strong>${safe(Number.isFinite(ir.latency_ms) ? `${ir.latency_ms} ms` : 'Not available')}</strong></div>
         ${ir.remote_discovered ? `<div class="household-detail-item"><span>Configured Remote</span><strong>${safe(ir.configured_remote_name || 'Discovered')}</strong></div>` : ''}
-        ${ir.remote_discovered ? `<div class="household-detail-item"><span>Stored Commands</span><strong>${safe(ir.stored_commands_present ? 'Present but unavailable' : 'Not reported')}</strong></div>` : ''}
-        ${ir.remote_discovered ? '<div class="household-detail-item"><span>Control Available</span><strong>No</strong></div>' : ''}
+        ${ir.remote_discovered ? `<div class="household-detail-item"><span>Stored Commands</span><strong>${safe(ir.stored_commands_present ? 'Present' : 'Not reported')}</strong></div>` : ''}
+        ${ir.remote_discovered ? `<div class="household-detail-item"><span>Control Available</span><strong>${safe(ir.control_available ? 'Yes' : 'No')}</strong></div>` : ''}
       ` : '';
     const details = UI.deviceDetails({
       content: `<div class="household-detail-grid">

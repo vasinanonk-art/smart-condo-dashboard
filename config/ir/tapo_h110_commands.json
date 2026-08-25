@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "commands": {
+    "soundbar_power": {"remote_name": "Sound Bar", "key_label": "power"},
+    "soundbar_volume_up": {"remote_name": "Sound Bar", "key_label": "VOL +"},
+    "soundbar_volume_down": {"remote_name": "Sound Bar", "key_label": "VOL -"},
+    "soundbar_mute": {"remote_name": "Sound Bar", "key_label": "MUTE"},
+    "soundbar_woofer_up": {"remote_name": "Sound Bar", "key_label": "WOOFER +"},
+    "soundbar_woofer_down": {"remote_name": "Sound Bar", "key_label": "WOOFER -"},
+    "soundbar_sound_mode": {"remote_name": "Sound Bar", "key_label": "Sound Mode"},
+    "soundbar_setting": {"remote_name": "Sound Bar", "key_label": "Setting"},
+    "soundbar_source": {"remote_name": "Sound Bar", "key_label": "SOURCE"},
+    "fan_power": {"remote_name": "Fan Remote Control hitachi", "key_label": "Power"},
+    "fan_swing": {"remote_name": "Fan Remote Control hitachi", "key_label": "Swing"},
+    "fan_mode": {"remote_name": "Fan Remote Control hitachi", "key_label": "Mode"}
+  }
+}
